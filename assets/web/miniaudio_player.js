@@ -224,6 +224,26 @@ let wasm_bindgen = (function(exports) {
     exports.rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer = rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer;
 
     /**
+     * Closes a Pull audio tap handle safely from Web JS (`try_read`/`try_write`, zero `Atomics.wait`).
+     * @param {number} tap_id
+     */
+    function wasm_close_pull_audio_tap(tap_id) {
+        wasm.wasm_close_pull_audio_tap(tap_id);
+    }
+    exports.wasm_close_pull_audio_tap = wasm_close_pull_audio_tap;
+
+    /**
+     * Returns cumulative dropped frames observed by a Pull tap handle as an exact JS number (`<= 2^53`).
+     * @param {number} tap_id
+     * @returns {number}
+     */
+    function wasm_get_audio_tap_dropped_frames(tap_id) {
+        const ret = wasm.wasm_get_audio_tap_dropped_frames(tap_id);
+        return ret;
+    }
+    exports.wasm_get_audio_tap_dropped_frames = wasm_get_audio_tap_dropped_frames;
+
+    /**
      * Returns the preferred output sample rate for initializing the Web `AudioContext`.
      * @returns {number}
      */
@@ -297,6 +317,19 @@ let wasm_bindgen = (function(exports) {
         wasm.wasm_notify_web_capture_failed(val2, val3, ptr0, len0);
     }
     exports.wasm_notify_web_capture_failed = wasm_notify_web_capture_failed;
+
+    /**
+     * Polls up to `max_frames` of encoded PCM bytes into caller-owned `dst` without heap allocations.
+     * @param {number} tap_id
+     * @param {Uint8Array} dst
+     * @param {number} max_frames
+     * @returns {number}
+     */
+    function wasm_poll_audio_tap_bytes(tap_id, dst, max_frames) {
+        const ret = wasm.wasm_poll_audio_tap_bytes(tap_id, dst, max_frames);
+        return ret >>> 0;
+    }
+    exports.wasm_poll_audio_tap_bytes = wasm_poll_audio_tap_bytes;
 
     /**
      * @param {number} slot_idx
@@ -650,6 +683,9 @@ let wasm_bindgen = (function(exports) {
                 const ret = Reflect.set(arg0, arg1, arg2);
                 return ret;
             }, arguments); },
+            __wbg_set_feb3714f475485ba: function(arg0, arg1, arg2) {
+                arg0.set(getArrayU8FromWasm0(arg1, arg2));
+            },
             __wbg_set_onerror_8346fd6e80c876c8: function(arg0, arg1) {
                 arg0.onerror = arg1;
             },
@@ -695,17 +731,17 @@ let wasm_bindgen = (function(exports) {
                 return ret;
             },
             __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2139, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2158, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
                 const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true_);
                 return ret;
             },
             __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2139, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__29);
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2158, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__32);
                 return ret;
             },
             __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2138, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2157, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
                 const ret = makeMutClosure(arg0, arg1, wasm_bindgen_c38f84564b507559___convert__closures_____invoke_______true_);
                 return ret;
             },
@@ -743,8 +779,8 @@ let wasm_bindgen = (function(exports) {
         wasm.wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true_(arg0, arg1, arg2);
     }
 
-    function wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__29(arg0, arg1, arg2) {
-        wasm.wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__29(arg0, arg1, arg2);
+    function wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__32(arg0, arg1, arg2) {
+        wasm.wasm_bindgen_c38f84564b507559___convert__closures_____invoke___web_sys_2ef8e776a7a8b8f0___features__gen_MessageEvent__MessageEvent______true__32(arg0, arg1, arg2);
     }
 
     const WorkerPoolFinalization = (typeof FinalizationRegistry === 'undefined')

@@ -87,6 +87,9 @@ public final class MiniaudioPlayerPlugin implements FlutterPlugin, MethodCallHan
             case "openContentFd":
                 exec.execute(() -> resolveContentUri(ctx, uriArg.trim(), result));
                 break;
+            case "openWritableContentFd":
+                exec.execute(() -> openWritableContentUri(ctx, uriArg.trim(), result));
+                break;
             case "openAndroidResource":
                 exec.execute(() -> resolveAndroidResourceUri(ctx, uriArg.trim(), result));
                 break;
@@ -190,6 +193,60 @@ public final class MiniaudioPlayerPlugin implements FlutterPlugin, MethodCallHan
                     result,
                     "FILE_NOT_FOUND",
                     "I/O failure opening Android content URI '" + rawUri + "': " + e.getMessage());
+        }
+    }
+
+    private void openWritableContentUri(
+            @NonNull Context ctx,
+            @NonNull String rawUri,
+            @NonNull Result result) {
+        final Uri uri;
+        try {
+            uri = Uri.parse(rawUri);
+        } catch (Exception e) {
+            postError(result, "INVALID_URI", "Malformed content URI '" + rawUri + "': " + e.getMessage());
+            return;
+        }
+
+        final ContentResolver resolver = ctx.getContentResolver();
+        final String[] modes = new String[] {"rwt", "wt", "rw", "w"};
+        Exception lastError = null;
+        for (String mode : modes) {
+            try {
+                final ParcelFileDescriptor pfd = resolver.openFileDescriptor(uri, mode);
+                if (pfd == null) {
+                    continue;
+                }
+                final int detachedFd = pfd.detachFd();
+                final Map<String, Object> out = new HashMap<>();
+                out.put("fd", detachedFd);
+                out.put("mode", mode);
+                postSuccess(result, out);
+                return;
+            } catch (SecurityException e) {
+                lastError = e;
+            } catch (FileNotFoundException e) {
+                postError(
+                        result,
+                        "FILE_NOT_FOUND",
+                        "Android content URI not found '" + rawUri + "': " + e.getMessage());
+                return;
+            } catch (IllegalArgumentException | UnsupportedOperationException e) {
+                lastError = e;
+            }
+        }
+
+        if (lastError instanceof SecurityException) {
+            postError(
+                    result,
+                    "ACCESS_DENIED",
+                    "Permission denied opening writable Android content URI '" + rawUri + "': " + lastError.getMessage());
+        } else {
+            postError(
+                    result,
+                    "UNSUPPORTED",
+                    "Content provider rejected writable file descriptor for '" + rawUri + "': "
+                            + (lastError != null ? lastError.getMessage() : "returned null"));
         }
     }
 

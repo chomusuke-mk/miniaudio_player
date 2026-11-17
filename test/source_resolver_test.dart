@@ -9,7 +9,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player/src/resolver/source_resolver.dart';
 import 'package:miniaudio_player/src/resolver/source_resolver_io.dart'
-    show resolveAndroidContentOrResourceForTest;
+    show
+        openWritableAndroidContentFdForTest,
+        resolveAndroidContentOrResourceForTest;
 import 'package:miniaudio_player/src/resolver/ws_stream_provider_common.dart';
 
 Uint8List _buildTestWavBytes({
@@ -640,6 +642,9 @@ void main() {
       // 2. MethodChannel responses & error code mapping
       messenger.setMockMethodCallHandler(channel, (call) async {
         final uri = (call.arguments as Map)['uri'] as String;
+        if (call.method == 'openWritableContentFd' && uri.endsWith('/ok_rw')) {
+          return <String, dynamic>{'fd': 77, 'mode': 'rwt'};
+        }
         if (call.method == 'openContentFd' && uri.endsWith('/ok_fd')) {
           return <String, dynamic>{
             'kind': 'fd',
@@ -720,6 +725,25 @@ void main() {
           errRes,
           isA<DartResolvedError>().having((e) => e.code, 'code', entry.value),
           reason: '${entry.key} must map to ${entry.value}',
+        );
+      }
+
+      // Writable content:// fd contract & error mapping (Phase 4)
+      final writableFd = await openWritableAndroidContentFdForTest(
+        'content://com.android.providers.downloads/document/ok_rw',
+      );
+      expect(writableFd, equals(77));
+
+      for (final entry in errorCases.entries) {
+        await expectLater(
+          () => openWritableAndroidContentFdForTest(entry.key),
+          throwsA(
+            isA<MiniaudioPlayerException>().having(
+              (e) => e.errorCode,
+              'errorCode',
+              entry.value,
+            ),
+          ),
         );
       }
     });

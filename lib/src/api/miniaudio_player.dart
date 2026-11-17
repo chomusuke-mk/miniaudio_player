@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data' show ByteData, Endian;
 
 import 'package:flutter/services.dart' show RootIsolateToken;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -9,6 +10,7 @@ import '../equalizer.dart';
 import '../infinite_mix.dart';
 import '../loader/custom_byte_provider.dart';
 import '../loader/platform_loader.dart';
+import '../loader/recording_sink.dart';
 import '../resolver/source_resolver.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
@@ -16,6 +18,7 @@ import '../rust/api/types.dart' as rust_types;
 import '../rust/frb_generated.dart';
 import 'audio_analysis_result.dart';
 import 'audio_device.dart';
+import 'audio_tap.dart';
 import 'buffer.dart';
 import 'crossfade_config.dart';
 import 'dsp_config.dart';
@@ -23,7 +26,8 @@ import 'logger.dart';
 import 'loop_mode.dart';
 import 'player_exception.dart';
 import 'player_models.dart';
-import 'recording.dart' show DuckingConfig;
+import 'recording.dart' show DuckingConfig, WavFormat;
+import 'recording_byte_buffer.dart';
 import 'silence_skip_config.dart';
 import 'spatial.dart';
 import 'visualizer_data.dart';
@@ -32,6 +36,7 @@ part 'audio_source.dart';
 part 'player_action.dart';
 part 'player_state.dart';
 part 'player_stream.dart';
+part 'recording_session.dart';
 part 'voice.dart';
 
 Future<void>? _rustInitFuture;
@@ -592,6 +597,15 @@ class MiniaudioPlayer<T> {
   /// Stream IDs belonging to internally managed resolvers (e.g. WebSockets).
   final Set<int> _managedProviderIds = {};
 
+  final Map<_PushTapKey, _PushTapEntry> _pushTaps = {};
+  final Map<int, AudioTapBuffer> _openPullTaps = {};
+  int _nextTapClientKey = 1;
+
+  late final int _configuredSampleRate;
+  late final int _configuredChannels;
+  _DartBufferRecordingSession<T>? _activeDartRecording;
+  bool _isStartingRecording = false;
+
   Future<void> _closeManagedProviders() async {
     if (_managedProviderIds.isEmpty) return;
     final ids = _managedProviderIds.toList(growable: false);
@@ -670,6 +684,9 @@ class MiniaudioPlayer<T> {
             ))
         .toList();
 
+    _configuredSampleRate = config.sampleRate > 0 ? config.sampleRate : 44100;
+    _configuredChannels = config.channels > 0 ? config.channels : 2;
+
     _rustPlayer = rust.RustMiniaudioPlayer(
       config: rust_types.RustPlayerConfig(
         bufferSizeFrames: state.bufferSize > 0 ? state.bufferSize : 1024,
@@ -684,8 +701,8 @@ class MiniaudioPlayer<T> {
             BigInt.from(_globalConfig.bufferNetworkDuration.inMilliseconds),
         visualizerSource: config.visualizerSource.value,
       ),
-      sampleRate: config.sampleRate > 0 ? config.sampleRate : 44100,
-      channels: config.channels > 0 ? config.channels : 2,
+      sampleRate: _configuredSampleRate,
+      channels: _configuredChannels,
       periodSize: state.bufferSize > 0 ? state.bufferSize : 1024,
       initialOutputs: rustOutputs,
     );
@@ -1182,6 +1199,180 @@ class MiniaudioPlayer<T> {
   }
 
   // =========================================================================
+  // Multi-Bus Audio Tap (Push Broadcast & Zero-Alloc Pull)
+  // =========================================================================
+
+  /// Bitmask of currently active tapped audio output buses (`0` when idle).
+  int get activeTapBusMask =>
+      _isDisposed ? 0 : _rustPlayer.getActiveTapBusMask();
+
+  /// Subscribes to a lock-free broadcast PCM stream for the specified audio bus.
+  ///
+  /// Multiple listeners sharing the same `(source, format, frameDuration)` key share
+  /// a single native SPSC-backed dispatcher stream and receive unmodifiable
+  /// [AudioPcmChunk] views without redundant FFI serialization or copies. The bus
+  /// automatically disables in the real-time engine when the last listener cancels.
+  Stream<AudioPcmChunk> watchAudioBus({
+    AudioOutputSource source = AudioOutputSource.all,
+    AudioTapFormat format = AudioTapFormat.float32,
+    Duration frameDuration = const Duration(milliseconds: 20),
+  }) {
+    _ensureNotDisposed();
+    final ms = frameDuration.inMilliseconds;
+    if (ms < 5 || ms > 200) {
+      throw RangeError.range(
+        ms,
+        5,
+        200,
+        'frameDuration',
+        'frameDuration must be between 5ms and 200ms',
+      );
+    }
+
+    final key = (source: source, format: format, frameDurationMs: ms);
+    final existing = _pushTaps[key];
+    if (existing != null) {
+      return existing.stream;
+    }
+
+    final entry = _PushTapEntry(key);
+    entry.controller = StreamController<AudioPcmChunk>.broadcast(
+      onListen: () => _startPushTapEntry(entry),
+      onCancel: () {
+        entry.pendingStop = _stopPushTapEntry(entry);
+      },
+    );
+    entry.stream = _AudioTapStream(entry);
+    _pushTaps[key] = entry;
+    return entry.stream;
+  }
+
+  void _startPushTapEntry(_PushTapEntry entry) {
+    if (_isDisposed || entry.controller.isClosed) return;
+    final gen = ++entry.generation;
+    final clientKey = BigInt.from(_nextTapClientKey++);
+    entry.activeClientKey = clientKey;
+    entry.pendingStop = null;
+
+    final nativeStream = _rustPlayer.openPushAudioTap(
+      clientKey: clientKey,
+      source: entry.key.source.value,
+      format: entry.key.format.value,
+      frameDurationMs: entry.key.frameDurationMs,
+    );
+
+    entry.nativeSub = nativeStream.listen(
+      (raw) {
+        if (_isDisposed || gen != entry.generation || entry.controller.isClosed) {
+          return;
+        }
+        entry.controller.add(
+          AudioPcmChunk(
+            source: AudioOutputSource.fromValue(raw.source),
+            format: AudioTapFormat.fromValue(raw.format),
+            sampleRate: raw.sampleRate,
+            channels: raw.channels,
+            frameCount: raw.frameCount,
+            droppedFrames: raw.droppedFrames.toInt(),
+            bytes: raw.bytes,
+          ),
+        );
+      },
+      onError: (Object error, StackTrace st) {
+        if (_isDisposed || gen != entry.generation || entry.controller.isClosed) {
+          return;
+        }
+        entry.controller.addError(error, st);
+      },
+    );
+  }
+
+  Future<void> _stopPushTapEntry(_PushTapEntry entry) async {
+    ++entry.generation;
+    final sub = entry.nativeSub;
+    entry.nativeSub = null;
+    final clientKey = entry.activeClientKey;
+    entry.activeClientKey = null;
+
+    if (clientKey != null && !_isDisposed) {
+      try {
+        await _rustPlayer.closePushAudioTap(clientKey: clientKey);
+      } catch (_) {}
+    }
+    if (sub != null) {
+      try {
+        await sub.cancel();
+      } catch (_) {}
+    }
+  }
+
+  /// Opens a zero-allocation reusable Pull buffer reading PCM frames directly from a bus.
+  Future<AudioTapBuffer> openAudioTapBuffer({
+    AudioOutputSource source = AudioOutputSource.all,
+    AudioTapFormat format = AudioTapFormat.float32,
+    int capacityFrames = 1024,
+  }) async {
+    _ensureNotDisposed();
+    if (capacityFrames <= 0) {
+      throw ArgumentError.value(
+        capacityFrames,
+        'capacityFrames',
+        'capacityFrames must be greater than 0',
+      );
+    }
+
+    final info = await _rustPlayer.createPullAudioTap(
+      source: source.value,
+      format: format.value,
+    );
+    if (_isDisposed) {
+      try {
+        await _rustPlayer.closePullAudioTap(tapId: info.tapId);
+      } catch (_) {}
+      throw StateError('MiniaudioPlayer was disposed while opening AudioTapBuffer');
+    }
+
+    final buf = AudioTapBuffer(
+      tapId: info.tapId,
+      source: source,
+      format: format,
+      sampleRate: info.sampleRate,
+      channels: info.channels,
+      capacityFrames: capacityFrames,
+      onExplicitClose: (id) {
+        _openPullTaps.remove(id);
+        if (!_isDisposed) {
+          unawaited(_rustPlayer.closePullAudioTap(tapId: id).catchError((_) {}));
+        }
+      },
+    );
+    _openPullTaps[info.tapId] = buf;
+    return buf;
+  }
+
+  Future<void> _disposeAudioTaps() async {
+    for (final pull in _openPullTaps.values.toList(growable: false)) {
+      try {
+        pull.close();
+      } catch (_) {}
+    }
+    _openPullTaps.clear();
+
+    for (final entry in _pushTaps.values.toList(growable: false)) {
+      ++entry.generation;
+      try {
+        await entry.nativeSub?.cancel();
+      } catch (_) {}
+      entry.nativeSub = null;
+      entry.activeClientKey = null;
+      try {
+        await entry.controller.close();
+      } catch (_) {}
+    }
+    _pushTaps.clear();
+  }
+
+  // =========================================================================
   // Lifecycle Disposal
   // =========================================================================
 
@@ -1195,6 +1386,14 @@ class MiniaudioPlayer<T> {
     state._duration = null;
     _eventSub?.cancel();
     _eventSub = null;
+    final activeRec = _activeDartRecording;
+    _activeDartRecording = null;
+    if (activeRec != null) {
+      try {
+        await activeRec.stop(suppressThrowOnDispose: true);
+      } catch (_) {}
+    }
+    await _disposeAudioTaps();
     await _closeManagedProviders();
     try {
       _rustPlayer.dispose();
@@ -1258,4 +1457,85 @@ class MiniaudioPlayer<T> {
       chromaprint: cp,
     );
   }
+}
+
+typedef _PushTapKey = ({
+  AudioOutputSource source,
+  AudioTapFormat format,
+  int frameDurationMs,
+});
+
+final class _PushTapEntry {
+  final _PushTapKey key;
+  late final StreamController<AudioPcmChunk> controller;
+  late final Stream<AudioPcmChunk> stream;
+  StreamSubscription<rust_types.RustAudioTapChunk>? nativeSub;
+  BigInt? activeClientKey;
+  Future<void>? pendingStop;
+  int generation = 0;
+
+  _PushTapEntry(this.key);
+}
+
+final class _AudioTapStream extends Stream<AudioPcmChunk> {
+  final _PushTapEntry _entry;
+
+  _AudioTapStream(this._entry);
+
+  @override
+  bool get isBroadcast => true;
+
+  @override
+  StreamSubscription<AudioPcmChunk> listen(
+    void Function(AudioPcmChunk event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    final inner = _entry.controller.stream.listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+    return _AudioTapSubscription(_entry, inner);
+  }
+}
+
+final class _AudioTapSubscription implements StreamSubscription<AudioPcmChunk> {
+  final _PushTapEntry _entry;
+  final StreamSubscription<AudioPcmChunk> _inner;
+
+  _AudioTapSubscription(this._entry, this._inner);
+
+  @override
+  Future<void> cancel() async {
+    await _inner.cancel();
+    final stop = _entry.pendingStop;
+    if (stop != null) {
+      await stop;
+    }
+  }
+
+  @override
+  void onData(void Function(AudioPcmChunk data)? handleData) =>
+      _inner.onData(handleData);
+
+  @override
+  void onError(Function? handleError) => _inner.onError(handleError);
+
+  @override
+  void onDone(void Function()? handleDone) => _inner.onDone(handleDone);
+
+  @override
+  void pause([Future<void>? resumeSignal]) => _inner.pause(resumeSignal);
+
+  @override
+  void resume() => _inner.resume();
+
+  @override
+  bool get isPaused => _inner.isPaused;
+
+  @override
+  Future<E> asFuture<E>([E? futureValue]) => _inner.asFuture<E>(futureValue);
 }

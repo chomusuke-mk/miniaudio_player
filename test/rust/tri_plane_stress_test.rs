@@ -604,11 +604,12 @@ fn scenario_5_hardware_hot_swap_and_recording_stop_under_load() {
     );
 
     let t_stop = Instant::now();
-    let (out_path, duration_ms, bytes_written, sample_count) =
+    let (out_path, duration_ms, bytes_written, sample_count, dropped_frames) =
         harness.hw.stop_recording().expect("stop_recording failed");
     assert_eq!(out_path, rec_str);
     assert!(duration_ms > 0);
     assert!(sample_count > 0);
+    assert_eq!(dropped_frames, 0);
     assert!(bytes_written > 44, "WAV file must contain PCM payload beyond header");
     assert!(
         t_stop.elapsed() < Duration::from_secs(2),

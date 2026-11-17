@@ -57,3 +57,11 @@ Future<DartResolvedSourceResult> resolveSourceAsync(
       );
   }
 }
+
+/// Throws [MiniaudioPlayerException] with [MapResult.errorUnsupported] on Web.
+Future<int> openWritableAndroidContentFd(String uri) async {
+  throw MiniaudioPlayerException(
+    'Android content:// recording URI "$uri" is not supported on Web.',
+    errorCode: MapResult.errorUnsupported,
+  );
+}

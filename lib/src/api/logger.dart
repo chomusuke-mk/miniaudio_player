@@ -48,6 +48,22 @@ abstract final class MapLogger {
   /// Logs a non-fatal warning message (`level = 2`).
   static void warn(String message) => log(MiniaudioLogLevel.warning, message);
 
+  /// Emits an API misuse or platform-compatibility warning even when global
+  /// [MiniaudioLogLevel] defaults to `none` (forwarding to [onLog] if installed).
+  static void warnImportant(String message) {
+    if (isEnabled(MiniaudioLogLevel.warning)) {
+      warn(message);
+      return;
+    }
+    final customHandler = MiniaudioPlayerGlobalConfig.onLog;
+    if (customHandler != null) {
+      customHandler(MiniaudioLogLevel.warning, message);
+      return;
+    }
+    // ignore: avoid_print
+    print('[miniaudio_player][WARN] $message');
+  }
+
   /// Logs a high-level lifecycle or state change event (`level = 3`).
   static void info(String message) => log(MiniaudioLogLevel.info, message);
 

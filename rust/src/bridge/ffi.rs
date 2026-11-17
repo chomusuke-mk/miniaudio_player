@@ -1395,6 +1395,47 @@ mod wasm_device_bridge {
         }
         MAP_SUCCESS
     }
+
+    /// Polls up to `max_frames` of encoded PCM bytes into caller-owned `dst` without heap allocations.
+    #[wasm_bindgen]
+    pub fn wasm_poll_audio_tap_bytes(
+        tap_id: u32,
+        dst: &js_sys::Uint8Array,
+        max_frames: u32,
+    ) -> u32 {
+        let Some(handle) = crate::core::tap::lookup_pull_tap_nonblocking(tap_id) else {
+            return 0;
+        };
+        let dst_len = dst.length() as usize;
+        let bpf = handle.channels.max(1) * handle.format.bytes_per_sample();
+        let wanted_bytes = ((dst_len / bpf).min(max_frames as usize)) * bpf;
+        if wanted_bytes == 0 {
+            return 0;
+        }
+        handle
+            .with_scratch_poll(wanted_bytes, max_frames, |frames, bytes| {
+                if !bytes.is_empty() {
+                    let target = dst.subarray(0, bytes.len() as u32);
+                    target.copy_from(bytes);
+                }
+                frames
+            })
+            .unwrap_or(0)
+    }
+
+    /// Returns cumulative dropped frames observed by a Pull tap handle as an exact JS number (`<= 2^53`).
+    #[wasm_bindgen]
+    pub fn wasm_get_audio_tap_dropped_frames(tap_id: u32) -> f64 {
+        crate::core::tap::lookup_pull_tap_nonblocking(tap_id)
+            .map(|h| h.total_dropped_frames() as f64)
+            .unwrap_or(0.0)
+    }
+
+    /// Closes a Pull audio tap handle safely from Web JS (`try_read`/`try_write`, zero `Atomics.wait`).
+    #[wasm_bindgen]
+    pub fn wasm_close_pull_audio_tap(tap_id: u32) {
+        crate::core::tap::close_global_pull_tap(tap_id);
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1540,4 +1581,108 @@ pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
         }
         Ok(devs)
     }
+}
+
+// =============================================================================
+// Zero-Allocation Pull Audio Tap C-ABI Entrypoints (Native dart:ffi + Finalizer)
+// =============================================================================
+
+/// Native 8-byte aligned pinned byte buffer backing zero-allocation Pull audio tap reads in Dart FFI.
+#[repr(C)]
+pub struct MapTapBuffer {
+    words: Box<[u64]>,
+    byte_len: usize,
+}
+
+/// Allocates a zeroed pinned buffer of at least `byte_len` bytes on the C/Rust heap (8-byte aligned).
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_alloc_buffer(byte_len: usize) -> *mut c_void {
+    let clamped = byte_len.max(1);
+    let word_count = (clamped + 7) / 8;
+    let words = vec![0u64; word_count].into_boxed_slice();
+    Box::into_raw(Box::new(MapTapBuffer {
+        words,
+        byte_len: clamped,
+    })) as *mut c_void
+}
+
+/// Returns the writable 8-byte aligned raw byte pointer inside a [`MapTapBuffer`] handle.
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_buffer_data_ptr(buf: *mut c_void) -> *mut u8 {
+    if buf.is_null() {
+        return std::ptr::null_mut();
+    }
+    let inner = &mut *(buf as *mut MapTapBuffer);
+    let _ = inner.byte_len;
+    inner.words.as_mut_ptr() as *mut u8
+}
+
+/// Frees a [`MapTapBuffer`] allocated by [`map_tap_alloc_buffer`].
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_free_buffer(buf: *mut c_void) {
+    if !buf.is_null() {
+        drop(Box::from_raw(buf as *mut MapTapBuffer));
+    }
+}
+
+/// Returns the C finalizer function pointer for `dart:ffi` `NativeFinalizer`.
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_free_buffer_callback() -> *mut c_void {
+    map_tap_free_buffer as *const () as *mut c_void
+}
+
+/// Polls up to `max_frames` into `dst[..byte_len]` directly from the RT/fan-out ring (0 heap allocs).
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_poll_bytes(
+    tap_id: u32,
+    dst: *mut u8,
+    byte_len: usize,
+    max_frames: u32,
+    out_dropped: *mut u64,
+) -> u32 {
+    if dst.is_null() || byte_len == 0 {
+        if !out_dropped.is_null() {
+            *out_dropped = 0;
+        }
+        return 0;
+    }
+    let Some(handle) = crate::core::tap::lookup_pull_tap_nonblocking(tap_id) else {
+        if !out_dropped.is_null() {
+            *out_dropped = 0;
+        }
+        return 0;
+    };
+    let slice = std::slice::from_raw_parts_mut(dst, byte_len);
+    let (frames, dropped) = handle.poll_into_bytes(slice, max_frames);
+    if !out_dropped.is_null() {
+        *out_dropped = dropped;
+    }
+    frames
+}
+
+/// Queries cumulative dropped frames for a Pull tap handle.
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_get_dropped(tap_id: u32) -> u64 {
+    crate::core::tap::lookup_pull_tap_nonblocking(tap_id)
+        .map(|h| h.total_dropped_frames())
+        .unwrap_or(0)
+}
+
+/// Explicitly closes a Pull audio tap handle from Native Dart FFI.
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_close_pull(tap_id: u32) {
+    crate::core::tap::close_global_pull_tap(tap_id);
+}
+
+/// GC `NativeFinalizer` callback taking the Pull `tap_id` encoded as `Pointer.fromAddress(tapId)`.
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_close_pull_token(token: *mut c_void) {
+    let tap_id = token as usize as u32;
+    crate::core::tap::close_global_pull_tap(tap_id);
+}
+
+/// Returns the `NativeFinalizer` callback address for automatic Pull handle cleanup.
+#[no_mangle]
+pub unsafe extern "C" fn map_tap_close_pull_callback() -> *mut c_void {
+    map_tap_close_pull_token as *const () as *mut c_void
 }

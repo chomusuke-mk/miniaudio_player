@@ -27,3 +27,8 @@ Future<DartResolvedSourceResult> resolveSourceAsync(
     'Platform source resolver stub is unavailable.',
   );
 }
+
+/// Opens a writable detached POSIX file descriptor for an Android `content://` URI.
+Future<int> openWritableAndroidContentFd(String uri) {
+  throw UnsupportedError('Writable content:// descriptors are only supported on Android.');
+}

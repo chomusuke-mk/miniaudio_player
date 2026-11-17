@@ -16,6 +16,7 @@ pub mod output_manager;
 pub mod recording;
 pub mod renderer;
 pub mod simd_mixer;
+pub mod tap;
 pub mod types;
 pub mod voice_pool;
 

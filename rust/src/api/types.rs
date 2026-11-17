@@ -1257,6 +1257,8 @@ pub struct RustRecordingResult {
     pub bytes_written: usize,
     /// Total PCM audio samples captured.
     pub sample_count: u64,
+    /// Total audio frames dropped due to writer ring backpressure.
+    pub dropped_frames: u64,
 }
 
 /// High-level event emitted over the Flutter Rust Bridge stream to Dart listeners.
@@ -1396,4 +1398,38 @@ pub enum RustPlayerEvent {
         /// Numeric error categorization code.
         code: i32,
     },
+}
+
+/// Real-time PCM audio chunk pushed from an audio bus tap stream.
+#[derive(Debug, Clone)]
+pub struct RustAudioTapChunk {
+    /// Source audio bus (`0`: All, `1`: MusicMix, `2`: ActiveTrack, `3`: StandbyTrack, `4`: VoiceOnly).
+    pub source: i32,
+    /// Sample encoding format (`0`: Float32, `1`: Pcm16).
+    pub format: i32,
+    /// Audio sample rate in Hertz (e.g., 48000).
+    pub sample_rate: u32,
+    /// Interleaved channel count (e.g., 2).
+    pub channels: u32,
+    /// Number of audio frames contained in `bytes`.
+    pub frame_count: u32,
+    /// Cumulative dropped frames since this tap opened due to consumer backpressure.
+    pub dropped_frames: u64,
+    /// Little-endian interleaved PCM bytes (`frame_count * channels * bytes_per_sample`).
+    pub bytes: Vec<u8>,
+}
+
+/// Descriptor returned when opening a zero-allocation Pull audio tap buffer.
+#[derive(Debug, Clone)]
+pub struct RustPullAudioTapInfo {
+    /// Unique native handle ID used by zero-alloc poll/close entrypoints.
+    pub tap_id: u32,
+    /// Source audio bus (`0`: All .. `4`: VoiceOnly).
+    pub source: i32,
+    /// Sample encoding format (`0`: Float32, `1`: Pcm16).
+    pub format: i32,
+    /// Audio sample rate in Hertz.
+    pub sample_rate: u32,
+    /// Interleaved channel count.
+    pub channels: u32,
 }

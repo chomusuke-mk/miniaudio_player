@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import 'package:open_file/open_file.dart';
 
 import '../../controllers/audio_analyzer_controller.dart';
 import '../../controllers/audio_engine_controller.dart';
@@ -14,12 +16,46 @@ import '../painters/waveform_painter.dart';
 class PlaybackEngineCard extends StatelessWidget {
   final AudioEngineController controller;
   final AudioAnalyzerController? analyzerController;
+  @visibleForTesting
+  final bool? showWebOptionsOverride;
 
   const PlaybackEngineCard({
     super.key,
     required this.controller,
     this.analyzerController,
+    @visibleForTesting this.showWebOptionsOverride,
   });
+
+  Future<void> _openLastRecording(BuildContext context) async {
+    try {
+      final result = await controller.openLastRecording();
+      if (context.mounted && result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF2D0B14),
+            content: Text(
+              'Could not open recording (${result.type.name}): ${result.message}',
+              style: const TextStyle(color: StudioColors.accentRose),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF2D0B14),
+            content: Text(
+              'Failed to open recording: $e',
+              style: const TextStyle(color: StudioColors.accentRose),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -718,6 +754,8 @@ class PlaybackEngineCard extends StatelessWidget {
 
   /// Small recording control bar directly below transport controls
   Widget _buildRecordingMenu(BuildContext context) {
+    final isWebUi = showWebOptionsOverride ?? kIsWeb;
+
     return ListenableBuilder(
       listenable: controller.recordingListenable,
       builder: (context, _) {
@@ -747,7 +785,13 @@ class PlaybackEngineCard extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  isRec ? 'RECORDING IN PROGRESS' : 'LIVE DISK RECORDER',
+                  isRec
+                      ? 'RECORDING IN PROGRESS'
+                      : (isWebUi
+                          ? (controller.useWebOpfs
+                              ? 'LIVE OPFS RECORDER'
+                              : 'LIVE MEMORY RECORDER')
+                          : 'LIVE DISK RECORDER'),
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
@@ -836,24 +880,42 @@ class PlaybackEngineCard extends StatelessWidget {
                   ),
                 ),
                 onPressed: () async {
-                  if (isRec) {
-                    final res = await controller.stopRecording();
+                  try {
+                    if (isRec) {
+                      final res = await controller.stopRecording();
+                      if (context.mounted) {
+                        final fileLabel = res.path.split(RegExp(r'[/\\]')).last;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: const Color(0xFF0E172A),
+                            content: Text(
+                              'Recorded ${_formatDuration(res.duration)} (${(res.bytesWritten / 1024).round()} KB)${fileLabel.isNotEmpty ? ' to $fileLabel' : ''}',
+                              style: const TextStyle(
+                                color: StudioColors.accentEmerald,
+                              ),
+                            ),
+                            duration: const Duration(seconds: 4),
+                          ),
+                        );
+                      }
+                    } else {
+                      await controller.startRecording();
+                    }
+                  } catch (e) {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          backgroundColor: const Color(0xFF0E172A),
+                          backgroundColor: const Color(0xFF2D0B14),
                           content: Text(
-                            'Recorded ${_formatDuration(res.duration)} (${(res.bytesWritten / 1024).round()} KB) to ${res.path.split("/").last}',
+                            'Recording failed: $e',
                             style: const TextStyle(
-                              color: StudioColors.accentEmerald,
+                              color: StudioColors.accentRose,
                             ),
                           ),
                           duration: const Duration(seconds: 4),
                         ),
                       );
                     }
-                  } else {
-                    await controller.startRecording();
                   }
                 },
               ),
@@ -873,11 +935,16 @@ class PlaybackEngineCard extends StatelessWidget {
                       isDense: true,
                       icon: const Icon(Icons.arrow_drop_down, size: 16),
                       dropdownColor: const Color(0xFF0E172A),
-                      items: AudioFileFormat.values.map((f) {
+                      items: const [
+                        AudioFileFormat.wav,
+                        AudioFileFormat.wavFloat32,
+                      ].map((f) {
                         return DropdownMenuItem(
                           value: f,
                           child: Text(
-                            f.name.toUpperCase(),
+                            f == AudioFileFormat.wavFloat32
+                                ? 'WAV 32F'
+                                : 'WAV 16',
                             style: const TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
@@ -966,16 +1033,121 @@ class PlaybackEngineCard extends StatelessWidget {
                   ),
                 ),
 
-              if (controller.lastRecordingResult != null && !isRec)
-                Flexible(
-                  child: Text(
-                    'Last: ${controller.lastRecordingResult!.path.split("/").last} (${_formatDuration(controller.lastRecordingResult!.duration)})',
-                    style: const TextStyle(
-                      fontSize: 9.5,
-                      color: StudioColors.textMuted,
-                      fontFamily: 'monospace',
+              if (isWebUi && !isRec)
+                Tooltip(
+                  message:
+                      'Most recommended for large files, though not available in all browsers.',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () =>
+                          controller.setUseWebOpfs(!controller.useWebOpfs),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.only(
+                          left: 4,
+                          right: 8,
+                          top: 3,
+                          bottom: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF070B14),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: controller.useWebOpfs
+                                ? StudioColors.accentCyan
+                                : StudioColors.cardBorder,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: Checkbox(
+                                value: controller.useWebOpfs,
+                                onChanged: (checked) =>
+                                    controller.setUseWebOpfs(checked ?? false),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                                activeColor: StudioColors.accentCyan,
+                                checkColor: const Color(0xFF070B14),
+                                side: const BorderSide(
+                                  color: StudioColors.textMuted,
+                                  width: 1.4,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              'Use OPFS',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: controller.useWebOpfs
+                                    ? StudioColors.accentCyan
+                                    : StudioColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+
+              if (controller.lastRecordingResult != null && !isRec)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 280),
+                  child: Tooltip(
+                    message: 'Open last recording',
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _openLastRecording(context),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF070B14),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: StudioColors.accentCyan
+                                  .withValues(alpha: 0.45),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.open_in_new,
+                                size: 12,
+                                color: StudioColors.accentCyan,
+                              ),
+                              const SizedBox(width: 5),
+                              Flexible(
+                                child: Text(
+                                  'Last: ${controller.lastRecordingResult!.path.split(RegExp(r'[/\\]')).last} (${_formatDuration(controller.lastRecordingResult!.duration)})',
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
+                                    color: StudioColors.accentCyan,
+                                    fontFamily: 'monospace',
+                                    decoration: TextDecoration.underline,
+                                    decorationColor: StudioColors.accentCyan,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
             ],

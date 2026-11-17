@@ -31,9 +31,43 @@ use crate::sync::{lock_unpoisoned, read_unpoisoned, write_unpoisoned};
 
 use super::types::*;
 
+#[flutter_rust_bridge::frb(ignore)]
+struct FrbTapChunkSink {
+    sink: StreamSink<RustAudioTapChunk>,
+}
+
+#[flutter_rust_bridge::frb(ignore)]
+impl crate::core::tap::TapChunkSink for FrbTapChunkSink {
+    fn send_chunk(&self, chunk: crate::core::tap::TapChunk) -> bool {
+        let msg = RustAudioTapChunk {
+            source: chunk.source,
+            format: chunk.format as i32,
+            sample_rate: chunk.sample_rate,
+            channels: chunk.channels as u32,
+            frame_count: chunk.frame_count,
+            dropped_frames: chunk.dropped_frames,
+            bytes: chunk.bytes,
+        };
+        self.sink.add(msg).is_ok()
+    }
+}
+
+#[flutter_rust_bridge::frb(ignore)]
 const SENTINEL_NONE: i64 = i64::MIN;
 const OPT_BOOL_FALSE: u8 = 1;
 const OPT_BOOL_TRUE: u8 = 2;
+
+#[flutter_rust_bridge::frb(ignore)]
+fn parse_recording_wav_format(format: i32) -> Result<WavFormat, String> {
+    match format {
+        0 => Ok(WavFormat::Pcm16),
+        1 => Ok(WavFormat::Float32),
+        _ => Err(format!(
+            "Unsupported recording format code {}: only PCM16 (0) and Float32 (1) WAV are supported (code: -9)",
+            format
+        )),
+    }
+}
 
 #[inline]
 fn encode_opt_bool(v: bool) -> u8 {
@@ -784,6 +818,14 @@ impl RustMiniaudioPlayer {
                             current_track_id,
                             remaining_tracks,
                         });
+                    }
+                    RtEngineNotice::RecordingError { message, code } => {
+                        edge_events.push(RustPlayerEvent::IsRecording(false));
+                        edge_events.push(RustPlayerEvent::RecordingState {
+                            is_recording: false,
+                            source: 0,
+                        });
+                        edge_events.push(RustPlayerEvent::Error { message, code });
                     }
                 }
             }
@@ -1802,10 +1844,7 @@ impl RustMiniaudioPlayer {
 
     /// Begins recording rendered audio to a WAV file at `path` with a selective source.
     pub fn start_recording(&self, path: String, format: i32, source: i32) -> Result<(), String> {
-        let fmt = match format {
-            1 => WavFormat::Float32,
-            _ => WavFormat::Pcm16,
-        };
+        let fmt = parse_recording_wav_format(format)?;
         let src = AudioOutputSource::from(source);
         self.hw.start_recording(path, fmt, src)?;
         self.reporter.emit_batch([
@@ -1819,9 +1858,32 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
+    /// Starts live lock-free WAV recording targeting a detached POSIX file descriptor (Android `content://`).
+    pub fn start_recording_fd(
+        &self,
+        display_path: String,
+        fd: i32,
+        format: i32,
+        source: i32,
+    ) -> Result<(), String> {
+        let fmt = parse_recording_wav_format(format)?;
+        let src = AudioOutputSource::from(source);
+        self.hw.start_recording_fd(display_path, fd, fmt, src)?;
+        self.reporter.emit_batch([
+            RustPlayerEvent::RecordedDuration(0),
+            RustPlayerEvent::IsRecording(true),
+            RustPlayerEvent::RecordingState {
+                is_recording: true,
+                source,
+            },
+        ]);
+        Ok(())
+    }
+
     /// Stops active file recording and returns the finalization metrics.
     pub fn stop_recording(&self) -> Result<RustRecordingResult, String> {
-        let (path, dur_ms, bytes_written, sample_count) = self.hw.stop_recording()?;
+        let (path, dur_ms, bytes_written, sample_count, dropped_frames) =
+            self.hw.stop_recording()?;
         self.reporter.emit_batch([
             RustPlayerEvent::RecordedDuration(dur_ms),
             RustPlayerEvent::IsRecording(false),
@@ -1836,6 +1898,7 @@ impl RustMiniaudioPlayer {
             duration_ms: dur_ms,
             bytes_written,
             sample_count,
+            dropped_frames,
         })
     }
 
@@ -2022,6 +2085,78 @@ impl RustMiniaudioPlayer {
     }
 
     // =========================================================================
+    // Multi-Bus Audio Tap (Push Broadcast & Zero-Alloc Pull)
+    // =========================================================================
+
+    /// Opens a lock-free Push stream on an audio output bus (`0`: All .. `4`: VoiceOnly).
+    pub fn open_push_audio_tap(
+        &self,
+        client_key: u64,
+        source: i32,
+        format: i32,
+        frame_duration_ms: u32,
+        sink: StreamSink<RustAudioTapChunk>,
+    ) -> Result<(), String> {
+        if self.disposed.load(Ordering::Acquire) {
+            return Err("AudioEngineDisposed: engine has been disposed".to_string());
+        }
+        let fmt = crate::core::tap::TapSampleFormat::from_i32(format)?;
+        self.engine.tap_registry().add_push_tap(
+            client_key,
+            source,
+            fmt,
+            frame_duration_ms,
+            Arc::new(FrbTapChunkSink { sink }),
+        )
+    }
+
+    /// Unregisters a Push audio tap stream subscriber by its client key.
+    pub fn close_push_audio_tap(&self, client_key: u64) -> Result<(), String> {
+        self.engine.tap_registry().remove_push_tap(client_key);
+        Ok(())
+    }
+
+    /// Creates a zero-allocation Pull audio tap handle for reusable buffer polling.
+    pub fn create_pull_audio_tap(
+        &self,
+        source: i32,
+        format: i32,
+    ) -> Result<RustPullAudioTapInfo, String> {
+        if self.disposed.load(Ordering::Acquire) {
+            return Err("AudioEngineDisposed: engine has been disposed".to_string());
+        }
+        let fmt = crate::core::tap::TapSampleFormat::from_i32(format)?;
+        let handle = self.engine.tap_registry().create_pull_tap(source, fmt)?;
+        Ok(RustPullAudioTapInfo {
+            tap_id: handle.tap_id,
+            source,
+            format: fmt as i32,
+            sample_rate: handle.sample_rate,
+            channels: handle.channels as u32,
+        })
+    }
+
+    /// Explicitly closes a Pull audio tap handle by ID and updates the active bus bitmask.
+    pub fn close_pull_audio_tap(&self, tap_id: u32) -> Result<(), String> {
+        self.engine.tap_registry().close_pull_tap(tap_id);
+        Ok(())
+    }
+
+    /// Returns cumulative dropped frames observed by a Pull tap handle (wait/block-free).
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_pull_audio_tap_dropped(&self, tap_id: u32) -> u64 {
+        crate::core::tap::lookup_pull_tap_nonblocking(tap_id)
+            .map(|h| h.total_dropped_frames())
+            .unwrap_or(0)
+    }
+
+    /// Returns the bitmask of active tapped buses (`0` when no taps are open).
+    #[flutter_rust_bridge::frb(sync)]
+    pub fn get_active_tap_bus_mask(&self) -> u8 {
+        self.engine.tap_registry().active_bus_mask()
+    }
+
+    // =========================================================================
     // Lifecycle Disposal
     // =========================================================================
 
@@ -2036,6 +2171,7 @@ impl RustMiniaudioPlayer {
         self.custom_registry.abort_all();
         self.resolve_registry.cancel_all();
         self.reporter.clear_sink();
+        self.engine.tap_registry().shutdown();
         self.coordinator.shutdown();
         if let Some(jh) = lock_unpoisoned(&self.monitor_thread).take() {
             let _ = jh.join();

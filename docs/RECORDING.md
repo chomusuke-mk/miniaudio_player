@@ -136,38 +136,64 @@ Los navegadores modernos exponen **OPFS** (`navigator.storage.getDirectory()`), 
 
 ---
 
-### Comparativa y Recomendación de Arquitectura para Web + Virtual Filesystems
+### Comparativa y Recomendación de Arquitectura para Web + `RecordingByteBuffer`
 
-| Criterio | Enfoque 1 (Sink/Stream → Dart) | Enfoque 2 (OPFS en Worker) | Enfoque 3 (JS `Blob` / RAM) | **Híbrido Recomendado (2 + 3 + 1 opcional)** |
+| Criterio | Enfoque 1 (Sink/Stream → Dart) | Enfoque 2 (OPFS en Worker) | Enfoque 3 (JS `Blob` / RAM) | **Diseño Final (`String` OPFS + `RecordingByteBuffer`)** |
 |---|---|---|---|---|
-| **RAM para grabaciones largas** | Depende del destino Dart | ✅ **$O(1)$ RAM** (disco sandbox) | ❌ $O(T)$ RAM (~11.5 MB/min PCM16) | ✅ $O(1)$ en OPFS / memoria controlada en RAM |
-| **Compatibilidad navegadores** | ✅ Universal | ⚠️ Muy alta (con fallback en viejos) | ✅ Universal | ✅ OPFS con fallback automático a `Blob` RAM |
-| **Compatible con `startRecording(path)` existente** | ⚠️ Solo si Dart mapea `path` a `FileSystem` | ✅ `path` es clave en OPFS | ✅ `path` como nombre lógico del `Blob` | ✅ Cero ruptura en `startRecording(path)` |
-| **Compatible con `package:file` `MemoryFileSystem`** | ✅ Directo | ❌ OPFS es separado | ⚠️ Solo devolviendo bytes al final | ✅ Si se añade `RecordingDestination.memory` / `stream` |
-| **Reproducir / descargar luego en Web** | ✅ Si guarda en `Uint8List`/`Blob` | ✅ `blob:` URL desde `FileHandle` | ✅ `blob:` URL directo | ✅ `RecordingResult` entrega `bytes` / `uri` (`blob:`) |
+| **RAM para grabaciones largas** | Depende del destino Dart | ✅ **$O(1)$ RAM** (disco sandbox) | ❌ $O(T)$ RAM (~11.5 MB/min PCM16) | ✅ $O(1)$ en OPFS (`String`) / chunks fijos sin realocar en `MemoryRecordingBuffer` |
+| **Compatibilidad navegadores** | ✅ Universal | ⚠️ Alta en modernos, falla en WebKit privado / cuota 0 / iframes | ✅ Universal | ⚠️ `String` usa OPFS (con warning; fallo claro si no soporta) / `RecordingByteBuffer` 100% universal |
+| **Compatible con `startRecording(path)` existente** | ⚠️ Solo si Dart mapea `path` a `FileSystem` | ✅ `path` es ruta virtual en OPFS | ✅ `path` como nombre lógico del `Blob` | ✅ Mantiene `String`, y añade `{RecordingByteBuffer? buffer}` |
+| **Tipado estático y sin `dynamic`** | Depende de interfaz | ✅ | ✅ | ✅ **Cero `dynamic`:** `abstract interface class RecordingByteBuffer` |
+| **Extensible a `package:file`, HTTP, IndexedDB, etc.** | ✅ | ❌ | ❌ | ✅ Cualquier usuario hace `implements RecordingByteBuffer` |
+| **Reproducir / descargar luego en Web** | ✅ Si guarda en `Uint8List`/`Blob` | ✅ `blob:` URL desde `FileHandle` | ✅ `blob:` URL directo | ✅ `RecordingResult` entrega `uri` (`blob:`) en OPFS y chunks/`toBytes()`/`toBlobUrl()` en memoria |
 
-**Arquitectura recomendada:**
-1. Refactorizar `LiveRecorder` para escribir sobre una abstracción **`RecordingBackend` (`std::fs::File` en Nativo, `OpfsOrChunkedWebWriter` en Web, y `StreamSink` opcional cuando se grabe a destino custom/memoria)** manteniendo intacto el `rtrb` SPSC lock-free desde `OutputManager::dispatch`.
-2. Para **`startRecording(path)` estándar en Web**:
-   * Usar **OPFS** en el Web Worker (`SyncAccessHandle`) por defecto cuando esté disponible (evita gastar RAM del navegador), devolviendo en `RecordingResult` una `blob:` URL utilizable (`result.uri` o `result.path` accesible) **o** permitiendo recuperar sus bytes (`RecordingResult.bytes` / helper de lectura/descarga); con **fallback automático a `Blob` en memoria JS** (chunks movidos fuera de WASM) si OPFS no está disponible o falla por cuota.
-3. Para **soportar explícitamente grabación en memoria / `package:file` / streams** en todas las plataformas:
-   * Añadir destino en memoria/stream (ver Sección 4.2 y Sección 5.4), donde Dart recibe los bloques o los bytes finales ya con header WAV válido y puede escribirlos directamente en un `MemoryFile` de `package:file` (por ejemplo en el `example`) o cualquier almacenamiento virtual propio sin hacks de `std::fs`.
+**Arquitectura definitiva recomendada:**
+1. **En Nativo con `String path`:** `LiveRecorder` Rust OS-thread directo a disco (`path`, `file://`, o `content://` `fd` en Android) con $O(1)$ RAM y sin pasar bloques por Dart.
+2. **En Web con `String path` (cuando NO se pasa `RecordingByteBuffer`):** el motor usa **Enfoque 2 (OPFS `SyncAccessHandle`)** en el Web Worker **respetando exactamente el `path` enviado** dentro del árbol OPFS del origen (creando subdirectorios intermedios vía `getDirectoryHandle(..., { create: true })` + `getFileHandle(name, { create: true })`), emitiendo un **warning único (`MapLogger.warn`)** sobre soporte parcial OPFS y recomendando `RecordingByteBuffer` (`RecordingByteBuffer.memory()` o `implements RecordingByteBuffer`) para portabilidad total; devuelve `blob:` URL en `RecordingResult.uri` o `errorUnsupported` si OPFS no está disponible en ese navegador.
+3. **Con `RecordingByteBuffer` (en Web y Nativo):**
+   * `RecordingByteBuffer` es la interfaz mínima fuertemente tipada (sin `dynamic`, espejo en escritura de [CustomByteProvider](../lib/src/loader/custom_byte_provider.dart)) y trae su implementación growable lista para usar: **`MemoryRecordingBuffer`** (accesible como `RecordingByteBuffer.memory()` / `MemoryRecordingBuffer()`), basada en chunks de 64 KiB con `writeAt(4/40)` sin realocar megabytes previos.
+   * Quien desee grabar hacia **`package:file` (`MemoryFile` / `LocalFile`)**, IndexedDB, subida HTTP o cifrado propio solo escribe `class MiDestino implements RecordingByteBuffer` e implementa los 4 métodos del contrato.
 
-### 3.1 Evaluación de `package:file` condicionado ("try import") para Web
+### 3.1 Diseño del Contrato `RecordingByteBuffer` y Reglas de OPFS por `path` en Web
 
-Se evaluó la posibilidad de hacer un *"try import"* condicional de `package:file` únicamente en Web (y, si el paquete `file` no estuviera instalado en la app consumidora, deshabilitar la grabación Web con un aviso en inglés como `"To enable recording on Web, add package:file (`flutter pub add file`)..."`).
+#### A. Por qué `RecordingByteBuffer` supera tanto a las clases nativas de Dart como a *duck typing* (`Object? file`)
+1. **Limitaciones de las clases nativas del SDK de Dart (verificadas en SDK `dart:typed_data` / `dart:io`):**
+   * `Uint8List`: longitud fija (`UnsupportedError` al hacer `add`).
+   * `List<int>`: crece usando 8 bytes por byte de audio en VM 64-bit / float64 en JS.
+   * `BytesBuilder` (`dart:typed_data`): es *append-only* (`add`/`takeBytes`/`toBytes`); carece de `writeAt(offset, bytes)` para actualizar offsets `4` y `40` del WAV (salvo re-copiar toda la grabación en `stopRecording()` cuando `copy: true`) y obliga a fusionar un único `Uint8List` contiguo en `toBytes()` en vez de armar un `Blob` Web directo por chunks.
+   * `IOSink`: sin acceso aleatorio (`setPosition` / `writeAt`).
+2. **Limitaciones verificadas de aceptar `Object? file` por *duck typing* (`package:file` / `dart:io`):**
+   * En Dart no existe *structural typing* estático: pedir métodos arbitrarios sin interfaz exige `dynamic`, perdiendo chequeo en compilación y tree-shaking en `dart2js`/`dart2wasm`, y además tanto `dart:io.File` como `package:file.MemoryFile` requieren `io.FileMode.write` en `open(...)`.
+   * Como en `package:file` `7.0.1` `MemoryFile implements io.File`, en Nativo no se puede distinguir por tipo `is io.File` si un archivo es disco real o memoria virtual, y su `MemoryRandomAccessFile` lanza `FileSystemException('An async operation is currently pending')` ante escrituras async concurrentes.
+   * **Con `implements RecordingByteBuffer`:** se eliminan `dynamic`, `dart:io` en la firma pública y `package:file` en [pubspec.yaml](../pubspec.yaml); quien use `package:file` solo envuelve `open` / `writeFrom` / `setPosition` / `flush` / `close` en ~15 líneas tipadas (y `example/` puede incluir ese adaptador directamente).
 
-**Restricción técnica real del compilador Dart:**
-1. **En Dart NO existe `try import` ni imports opcionales por paquete:** todos los `import` (`dart2js`, `dart2wasm`, `dart analyze`, VM) se resuelven estáticamente al compilar. Los *conditional imports* (`import '...' if (dart.library.js_interop) '...'`) solo inspeccionan librerías núcleo del SDK (`dart.library.*`), **nunca** paquetes externos como `package:file`.
-2. Si cualquier archivo en `lib/` contiene `import 'package:file/...'` (aunque sea en `..._web.dart`), entonces **`file:` es obligatorio en `dependencies:` del [pubspec.yaml](../pubspec.yaml) de `miniaudio_player`**; de lo contrario fallará la compilación en toda app usuaria (y si se añade a `pubspec.yaml`, siempre estará instalado y nunca aplicaría el check de paquete ausente).
-3. **Problema de aislamiento de instancia en `MemoryFileSystem`:** además, si `miniaudio_player` creara un `MemoryFileSystem()` propio interno en Web al recibir un `String path`, ese archivo virtual quedaría aislado en otro `MemoryFileSystem` distinto al de la app consumidora (como [audio_engine_controller.dart](../example/lib/controllers/audio_engine_controller.dart)), salvo que el usuario pase su propio destino/objeto o reciba `bytes`/`blob:`.
+#### B. Contrato mínimo `RecordingByteBuffer` + `MemoryRecordingBuffer`
+Los helpers de RAM (`toBytes()`, `takeBytes()`, `chunks`, `clear()`) viven **únicamente** en la clase concreta `MemoryRecordingBuffer`, manteniendo mínimo el contrato para quienes implementen destinos custom:
 
-**Alternativas reales y compilables en Dart:**
-* **Alternativa 1 (Recomendada — Cero dependencias extra, Web funciona sin instalar `package:file`):** `miniaudio_player` no necesita `package:file` para grabar en Web ni en memoria: `AudioTap` (`Uint8List`/`Float32List`), OPFS y JS `Blob` usan únicamente librerías integradas del SDK (`dart:typed_data`, `dart:js_interop`). Las apps que sí usen `package:file` (como `example/`) simplemente escriben los chunks del tap o `RecordingResult.bytes` en su propio `MemoryFile` usando los métodos estándar de Dart (`Stream<List<int>>` / callback / bytes), sin acoplar el paquete principal.
-* **Alternativa 2 (Si se desea expresamente ese comportamiento modular de paquete opcional):** definir un puerto/interfaz en `miniaudio_player` (p. ej. `WebRecordingStorageAdapter`) sin importar `package:file`. Si alguien intenta usar la variante de archivo virtual sin haber registrado adaptador ni estar usando el backend integrado OPFS/Blob, se lanza un `UnsupportedError` / `MiniaudioPlayerException(errorUnsupported)` con el mensaje explícito en inglés: `"Web filesystem recording is not configured. Use RecordingDestination.memory() / AudioTap, enable OPFS/Blob Web recording, or install package:file (`flutter pub add file`) with an adapter."`
-* **Alternativa 3 (Dependencia directa en `pubspec.yaml`):** añadir `file: ^7.0.1` (pure-Dart oficial de `dart.dev`) al paquete principal si se quisiera exponer sobrecargas tipadas sobre `package:file` `File` directamente (siempre disponible, sin error de paquete faltante).
+```dart
+abstract interface class RecordingByteBuffer {
+  /// Implementación growable por chunks (64 KiB) lista para usar en memoria.
+  static MemoryRecordingBuffer memory({int chunkSize = 65536}) =>
+      MemoryRecordingBuffer(chunkSize: chunkSize);
 
-> **Decisión para el plan:** usar la **Alternativa 1** como base (grabación Web nativa con **Audio Tap / Bytes + OPFS / JS `Blob`** sin exigir paquetes extra) y permitir pasar/escribir fácilmente sobre `MemoryFile` en `example/` mediante una interfaz estándar `Sink`/stream sin atar `pubspec.yaml` a `package:file`.
+  FutureOr<void> write(Uint8List bytes);
+  FutureOr<void> writeAt(int offset, Uint8List bytes); // Ej. parcheo RIFF en 4 y 40
+  FutureOr<void> flush();
+  FutureOr<void> close();
+  String? get path;       // Etiqueta o path informativo para RecordingResult.path
+  int get lengthInBytes;  // Total escrito en bytes
+}
+```
+
+* **Validación temprana (*fail-fast* en 0 ms) en `startRecording()`:** antes de activar el Audio Tap, `startRecording` prueba `buffer.write(header44Bytes)` + `buffer.writeAt(0, ...)` para verificar permisos/contrato al instante, y serializa todas las llamadas `FutureOr<void>` en cola FIFO estricta (evitando errores de concurrencia en wrappers async como `MemoryRandomAccessFile`).
+
+#### C. Comportamiento exacto en Web cuando NO se pasa `RecordingByteBuffer` (`String path` → OPFS)
+1. **Emite warning único (`MapLogger.warn`):** advierte que grabar usando solo `String path` en Web emplea **OPFS**, el cual puede no estar disponible en todos los navegadores o contextos privados/iframes, sugiriendo pasar un `RecordingByteBuffer` (`RecordingByteBuffer.memory()` o `implements RecordingByteBuffer` sobre `package:file` u otro backend) si se necesita portabilidad total.
+2. **Resolución del `path` enviado dentro de OPFS:** como `FileSystemDirectoryHandle.getFileHandle(name)` en Web **no acepta `/` ni rutas anidadas** (lanza `TypeError` si recibe `'a/b.wav'`), el puente JS/OPFS normaliza `path` (`\` → `/`, recorta `/` inicial/final, rechaza vacío o `..` con `errorInvalidArgs`), crea cada carpeta intermedia mediante `dir = await dir.getDirectoryHandle(seg, { create: true })` y abre el archivo final con `dir.getFileHandle(fileName, { create: true })` y `createSyncAccessHandle()`.
+   * Así rutas tipo `'studio_recording_123.wav'` o `'/.tmp/miniaudio_player_example_abc/rec.wav'` funcionan respetando la jerarquía enviada en `path`.
+   * Al finalizar en `stopRecording()`, cierra el `SyncAccessHandle`, obtiene `await fileHandle.getFile()` y expone **`RecordingResult.path`** (ruta OPFS normalizada) + **`RecordingResult.uri`** (`blob:` URL lista para reproducir/descargar), además de un helper opcional en Web para leer/borrar archivos guardados en OPFS por ese mismo `path`.
+3. **Si el navegador no soporta OPFS / `createSyncAccessHandle()` (ej. WebKit privado o cuota 0):** falla de inmediato en `startRecording()` con `MiniaudioPlayerException(MapResult.errorUnsupported)` indicando en inglés cómo usar `RecordingByteBuffer`.
+4. **Desventaja conocida (acotada explícitamente):** cualquier `MemoryRecordingBuffer` (o `MemoryFile` envuelto) acumula el WAV en RAM (~11.5 MB/min a 48 kHz estéreo PCM16); para grabaciones largas en Web conviene OPFS (`String`), dejando `RecordingByteBuffer` para clips en memoria, descarga/stream directo o almacenamiento propio.
 
 ---
 
@@ -308,15 +334,15 @@ flowchart LR
 | **App de Llamadas / VoIP (`VoiceOnly`)** | Se suscribe a `AudioOutputSource.voiceOnly` en paquetes de 20 ms (`Int16`/`Float32`). | Funciona incluso con `directMonitoring = false` (no se escucha eco propio en bocinas), respeta `micVolume` y mezcla múltiples micrófonos activos. Dart envía los paquetes directo a Opus / WebRTC DataChannel / WebSocket / UDP. |
 | **Llamada con música de fondo ("Radio / Karaoke")** | Se suscribe a `AudioOutputSource.all` (o abre 2 taps: `voiceOnly` + `musicMix`). | Incluye Auto-Ducking, Reverb, Limiter y SFX mezclados automáticamente por el motor Rust. |
 | **Llamada WebRTC pura en Navegador (`RTCPeerConnection`)** | Dos caminos según arquitectura del caller: **(1)** Tap PCM hacia DataChannel / WebSocket / WebCodecs; **(2)** en JS WebAudio conectar un nodo destino `MediaStreamAudioDestinationNode` para entregar un `MediaStreamTrack` nativo directo a `RTCPeerConnection.addTrack(...)` sin convertir a Dart. | En el caso (2) JS mantiene toda la negociación WebRTC nativa del navegador usando el audio ya procesado por Rust/WASM. |
-| **Grabación en Dart hacia `package:file` (`MemoryFileSystem`) o Streams** | Dart escribe cabecera RIFF de 44 bytes al abrir y añade cada chunk del Tap (`PCM16`/`Float32`) al `File` virtual o `BytesBuilder`; al terminar parcha offsets `4` y `40`. | Resuelve al instante [AudioEngineController.startRecording](../example/lib/controllers/audio_engine_controller.dart) en Web sobre `MemoryFileSystem` y cualquier filesystem virtual sin `std::fs` en WASM. |
+| **Grabación hacia `RecordingByteBuffer` (`MemoryRecordingBuffer` o `package:file` vía `implements`)** | Dart escribe cabecera RIFF de 44 bytes al abrir y añade cada chunk WAV/PCM desde el Audio Tap; al terminar parcha offsets `4` y `40` con `writeAt`. | Resuelve al instante [AudioEngineController.startRecording](../example/lib/controllers/audio_engine_controller.dart) en Web sobre `MemoryFileSystem`, memoria pura o streaming propio sin `std::fs` en WASM. |
 
 #### ⚠️ Por qué NO conviene eliminar `LiveRecorder` / OPFS y dejar TODA grabación solo en Dart
 Aunque el **Audio Tap** unifica maravillosamente llamadas y destinos virtuales en Dart, para grabación formal conviene mantener **dos carriles complementarios**:
 1. **Grabación directa a almacenamiento (`startRecording(pathOrContentUri)`):**
    * En **Nativo (archivo local y Android `content://`)**: `LiveRecorder` en Rust escribe en un hilo OS dedicado sin cruzar FFI cada 20 ms y sin depender de pausas de GC o bloqueos de UI en Dart.
-   * En **Web (grabaciones largas)**: OPFS (`SyncAccessHandle` en Web Worker) sigue siendo muy superior a acumular en RAM Dart (`MemoryFileSystem`) porque mantiene **$O(1)$ de memoria** incluso durante horas.
-2. **Audio Tap / Streaming Sink (`watchAudioBus` / `startRecordingToMemory`):**
-   * Se encarga de **VoIP/llamadas**, transmisión por red, visualización/análisis custom en Dart, y grabación en **memoria / `package:file` / archivos pequeños en Web**.
+   * En **Web (grabaciones largas usando `String path`)**: OPFS (`SyncAccessHandle` en Web Worker) sigue siendo muy superior a acumular en RAM Dart (`MemoryRecordingBuffer` / `MemoryFileSystem`) porque mantiene **$O(1)$ de memoria** incluso durante horas.
+2. **Audio Tap / `RecordingByteBuffer` (`watchAudioBus` / `startRecording(..., buffer: ...)`):**
+   * Se encarga de **VoIP/llamadas**, transmisión por red, visualización/análisis custom en Dart, y grabación hacia **memoria (`RecordingByteBuffer.memory()`) / `package:file` (`implements RecordingByteBuffer`) / Web universal**.
 
 ---
 
@@ -361,18 +387,18 @@ Actualmente:
 4. **Cierre ordenado en `dispose()`:**
    * Garantizar que si `player.dispose()` se invoca mientras hay una grabación en curso, `OutputManager::dispose()` drene los últimos frames pendientes del `rtrb`, cierre el escritor (`finalize_wav_header` o cierre OPFS) y libere recursos sin dejar headers WAV en `0` bytes ni handles abiertos.
 
-### 5.4 Evolución de la API pública (`RecordingOutput` / `RecordingResult` / Controles extra)
+### 5.4 Evolución de la API pública (`RecordingByteBuffer` / `RecordingResult` / Controles extra)
 
 Para mantener **100% retrocompatibilidad** con código existente (`await player.action.startRecording(path, format: ..., source: ...)`):
 
-1. **Mantener `startRecording(String path, ...)`** añadiendo internamente:
-   * Normalización de `file://...` en Nativo.
-   * Resolución transparente de `content://...` en Android (`MiniaudioPlayerPlugin.java` → `fd` validado seekable → Rust `File::from_raw_fd`).
-   * Ejecución funcional en **Web** vía OPFS (con fallback a `Blob` RAM).
-2. **Agregar soporte explícito para memoria, streams y destinos virtuales (opcional, aditivo):**
-   * Un método complementario (p. ej. `startRecordingToMemory(...)` o `startRecordingSink(...)` / `RecordingDestination`) donde:
-     * `RecordingDestination.memory()` grabe sin archivo en disco (Web y Nativo) y devuelva los bytes en `RecordingResult.bytes`.
-     * `RecordingDestination.stream(FutureOr<void> Function(Uint8List chunk, {int? offset}) onWrite, ...)` o `Stream<Uint8List>` permita conectar directamente cualquier **`File` de `package:file` (`MemoryFileSystem`), IndexedDB, WebSocket o uploader S3** sin depender de `std::fs`.
+1. **Mantener `startRecording([String? path], {RecordingByteBuffer? buffer, ...})` retrocompatible:**
+   * **`path` (`String`):**
+     * En Nativo: normaliza `file://...`, resuelve `content://...` en Android (`MiniaudioPlayerPlugin.java` → `fd`), y usa `LiveRecorder` Rust OS-thread.
+     * En Web (sin `buffer`): usa **OPFS** emitiendo warning único (`MapLogger.warn`) sobre compatibilidad de navegadores y recomendando `RecordingByteBuffer`; devuelve `blob:` URL en `RecordingResult.uri` o `errorUnsupported` si OPFS no está disponible en ese navegador.
+   * **`buffer` (`RecordingByteBuffer`, ej. `RecordingByteBuffer.memory()` o clase del usuario con `implements RecordingByteBuffer`):**
+     * Se valida al instante en `startRecording` (prueba `write` de cabecera 44 B + `writeAt(0)`), escribe chunks por cola FIFO secuencial desde **Audio Tap** (`PCM16` / `Float32`) y finaliza offsets `4` y `40` en `stopRecording()`. Si llegan ambos (`path` y `buffer`), prioriza `buffer` emitiendo warning; si faltan ambos, lanza `ArgumentError`.
+2. **Helper opcional para `package:file` en el ejemplo / apps usuarias:**
+   * Cualquier app que use `package:file` puede escribir una clase `implements RecordingByteBuffer` (~15 líneas delegando `write`/`writeAt`/`flush`/`close` al `RandomAccessFile`) sin que `miniaudio_player` importe `package:file` ni `dart:io`.
 3. **Enriquecer `RecordingResult` sin romper campos actuales:**
    * Mantener `path`, `duration`, `bytesWritten`, `sampleCount`.
    * Añadir campos opcionales:
@@ -401,13 +427,14 @@ El plan reordena la ejecución priorizando el **Audio Tap universal** (ex-Fase 3
 3. **Tests Rust & Dart multiplataforma:**
    * Verificar `VoiceOnly` + `MusicMix` simultáneos, `VoiceOnly` suscrito 3 veces con cancelación parcial (`3 -> 2 -> 1 -> 0` sin cortes), `droppedFrames`, cero *data races*, cero allocaciones en el hilo RT y paridad Web + Nativo.
 
-### Fase 2 — Grabación en Web (`wasm32`) y Destinos Virtuales / `package:file`
-1. **Abstracción `RecordingBackend` en `LiveRecorder` ([recording.rs](../rust/src/core/recording.rs)):**
-   * Desacoplar la codificación WAV de `std::fs::File` para admitir `NativeFile`, `OpfsWebFile`, `JsBlobAccumulator` y `AudioTap/DartSink`.
-2. **Soporte Web nativo de serie (sin exigir dependencias pub extra):**
-   * En Web Worker (`crate::sync::thread`), implementar escritura en **OPFS** (`FileSystemSyncAccessHandle` con $O(1)$ RAM y `write(buf, { at: 4/40 })` para finalizar WAV), con **fallback transparente a acumulador JS `Blob`** (chunks movidos fuera del heap WASM) devolviendo `blob:` URL (`RecordingResult.uri`) y/o `RecordingResult.bytes` para reproducir o descargar al instante.
-3. **Integración limpia con destinos virtuales (`package:file` / memoria / streams):**
-   * Exponer `startRecordingToMemory()` y `startRecordingToSink(FutureOr<void> Function(int offset, Uint8List bytes) writeAt, ...)` (construidos sobre el backend stream/tap sin importar `package:file` en `pubspec.yaml`, dado que Dart no soporta *try-import* en tiempo de compilación), e integrar `example/` ([audio_engine_controller.dart](../example/lib/controllers/audio_engine_controller.dart)) escribiendo directamente al `MemoryFile` de `package:file` en Web.
+### Fase 2 — Grabación en Web (`wasm32`: OPFS usando `path` + `RecordingByteBuffer` / `MemoryRecordingBuffer`)
+1. **Soporte Web vía `String path` usando únicamente Enfoque 2 (OPFS) + Warning explícito:**
+   * En Web Worker (`crate::sync::thread`), resolver la jerarquía de `path` en OPFS (normalizando separadores, rechazando vacío/`..`, creando carpetas intermedias con `getDirectoryHandle(..., { create: true })` y el archivo con `getFileHandle(..., { create: true })`), escribir WAV con `FileSystemSyncAccessHandle` ($O(1)$ RAM y `write(buf, { at: 4/40 })` al cerrar) y devolver esa ruta normalizada en `RecordingResult.path` más su `blob:` URL en `RecordingResult.uri` (+ helper opcional para leer/borrar archivos OPFS por `path`).
+   * Cuando no se pase `RecordingByteBuffer` en Web (solo `String`), emitir warning único (`MapLogger.warn`) advirtiendo que OPFS depende del navegador/contexto privado y sugiriendo usar `RecordingByteBuffer`; si el navegador carece de OPFS, fallar claramente con `MiniaudioPlayerException(errorUnsupported)` con esa recomendación en inglés.
+2. **Interfaz `RecordingByteBuffer` + `MemoryRecordingBuffer` (`RecordingByteBuffer.memory()`) en Nativo y Web:**
+   * Definir `abstract interface class RecordingByteBuffer` (`write`, `writeAt`, `flush`, `close`, `path`, `lengthInBytes`) + implementación chunked de 64 KiB `MemoryRecordingBuffer` (`toBytes()`, `takeBytes()`, `chunks`, `clear()`, y helper `Blob`/descarga en Web sin concatenar toda la RAM), completamente tipada (cero `dynamic`, cero dependencias en [`pubspec.yaml`](../pubspec.yaml)).
+   * Integrar en `startRecording([String? path], {RecordingByteBuffer? buffer, ...})` con validación de entrada (`path == null && buffer == null` → `ArgumentError`; ambos → warning y prioridad a `buffer`), **validación *fail-fast* en 0 ms** (`write` + `writeAt(0)` al iniciar), cola secuencial FIFO sobre **Audio Tap**, y patching RIFF (`4` y `40`) al cerrar.
+   * Actualizar `example/` ([audio_engine_controller.dart](../example/lib/controllers/audio_engine_controller.dart)) implementando un adaptador `implements RecordingByteBuffer` sobre el `MemoryFile` de `package:file` (o usando `RecordingByteBuffer.memory()`) para validar la grabación real en Web!
 
 ### Fase 3 — Robustez del Núcleo (`LiveRecorder` + `PlayerAction` + `AudioFileFormat`)
 1. **Corregir bug `AudioFileFormat` vs `WavFormat`:**

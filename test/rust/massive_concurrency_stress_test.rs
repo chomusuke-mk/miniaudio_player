@@ -1203,7 +1203,8 @@ fn scenario_5_hardware_routing_capture_ducking_and_mid_crossfade_recording() {
         "Mid-crossfade live recording did not accumulate >= 60ms deterministically"
     );
 
-    let (_p, dur_ms, bytes_written, sample_count) = hw.stop_recording().expect("hw stop_recording failed");
+    let (_p, dur_ms, bytes_written, sample_count, _dropped_frames) =
+        hw.stop_recording().expect("hw stop_recording failed");
     assert!(dur_ms >= 50);
     assert!(bytes_written > 44);
     assert!(sample_count > 0);

@@ -286,6 +286,10 @@ pub enum RtEngineNotice {
         current_track_id: i64,
         remaining_tracks: u32,
     },
+    RecordingError {
+        message: String,
+        code: i32,
+    },
 }
 
 /// Non-blocking hints emitted from `map-engine-clock` to `ControlCoordinator`.
@@ -526,6 +530,12 @@ fn tick_music_lifecycle(
     hint_tx: &crossbeam_channel::Sender<RtControlHint>,
     hint_state: &mut LifecycleHintState,
 ) {
+    if let Some(err_msg) = ply.output_manager.poll_async_recording_error() {
+        notices.push(RtEngineNotice::RecordingError {
+            message: err_msg,
+            code: -1,
+        });
+    }
     let xfade_trans = ply.music_manager.inner.crossfade.transition();
     let is_xfade_active = xfade_trans != QueueTransition::Idle;
     let mut xfade_done = ply
@@ -800,6 +810,7 @@ pub struct EngineActorHandle {
     snapshots: Arc<EngineUiSnapshots>,
     effects: EffectsControl,
     reaper: ReaperHandle,
+    tap_registry: Arc<crate::core::tap::TapBusRegistry>,
     disposed: Arc<AtomicBool>,
     clock_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
@@ -844,6 +855,7 @@ impl EngineActorHandle {
         player.effects_manager.attach_reaper(&reaper);
 
         let effects = player.effects_manager.control();
+        let tap_registry = player.output_manager.tap_registry.clone();
         let snapshots = Arc::new(EngineUiSnapshots::from_player(&player));
         let cmd_queue = Arc::new(WakeQueue::<RtActorMsg>::new());
         let cmd_queue_worker = cmd_queue.clone();
@@ -1056,6 +1068,7 @@ impl EngineActorHandle {
                 snapshots,
                 effects,
                 reaper,
+                tap_registry,
                 disposed: Arc::new(AtomicBool::new(false)),
                 clock_thread: Arc::new(Mutex::new(clock_jh)),
             },
@@ -1080,6 +1093,12 @@ impl EngineActorHandle {
     #[inline]
     pub fn reaper(&self) -> &ReaperHandle {
         &self.reaper
+    }
+
+    /// Returns the lock-free Multi-Bus Audio Tap registry without touching the RT clock thread.
+    #[inline]
+    pub fn tap_registry(&self) -> &Arc<crate::core::tap::TapBusRegistry> {
+        &self.tap_registry
     }
 
     /// Executes a command synchronously against the single-owner engine actor, waking the clock
@@ -1135,6 +1154,7 @@ impl EngineActorHandle {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
+        self.tap_registry.shutdown();
         let ack = Arc::new((Mutex::new(false), Condvar::new()));
         if self.cmd_queue.send(RtActorMsg::Shutdown(ack.clone()))
             && crate::sync::can_block_current_thread()

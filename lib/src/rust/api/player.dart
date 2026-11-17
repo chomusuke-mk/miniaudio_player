@@ -7,10 +7,10 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AtomicTelemetryFilter`, `ComplexTelemetryCache`, `EventSinkState`
+// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `parse_recording_wav_format`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AtomicTelemetryFilter`, `ComplexTelemetryCache`, `EventSinkState`, `FrbTapChunkSink`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `default`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `default`, `send_chunk`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 /// Sets the global native diagnostic logging verbosity level.
@@ -63,13 +63,26 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Clears pending tracks from the queue, optionally preserving the currently active track.
   Future<void> clearQueue({required bool keepCurrent});
 
+  /// Explicitly closes a Pull audio tap handle by ID and updates the active bus bitmask.
+  Future<void> closePullAudioTap({required int tapId});
+
+  /// Unregisters a Push audio tap stream subscriber by its client key.
+  Future<void> closePushAudioTap({required BigInt clientKey});
+
   /// Configures runtime parameters for an existing capture node without reopening hardware.
   Future<void> configureInput(
       {required String deviceId, required RustAudioInputConfig config});
 
+  /// Creates a zero-allocation Pull audio tap handle for reusable buffer polling.
+  Future<RustPullAudioTapInfo> createPullAudioTap(
+      {required int source, required int format});
+
   /// Releases all native audio devices, worker threads, DSP chains, and memory.
   @override
   void dispose();
+
+  /// Returns the bitmask of active tapped buses (`0` when no taps are open).
+  int getActiveTapBusMask();
 
   /// Returns the current number of concurrently playing sound effect voices.
   int getActiveVoicesCount();
@@ -101,6 +114,9 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   static List<RustAudioDevice> getOutputDevicesSync() => RustLib.instance.api
       .crateApiPlayerRustMiniaudioPlayerGetOutputDevicesSync();
 
+  /// Returns cumulative dropped frames observed by a Pull tap handle (wait/block-free).
+  BigInt getPullAudioTapDropped({required int tapId});
+
   /// Inserts an audio source directly after the currently playing track.
   Future<void> insertNext({required RustAudioSource source});
 
@@ -120,6 +136,13 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
 
   /// Skips to the next track in the queue, optionally overriding crossfade duration.
   Future<void> next({BigInt? crossfadeDurationMs});
+
+  /// Opens a lock-free Push stream on an audio output bus (`0`: All .. `4`: VoiceOnly).
+  Stream<RustAudioTapChunk> openPushAudioTap(
+      {required BigInt clientKey,
+      required int source,
+      required int format,
+      required int frameDurationMs});
 
   /// Pauses playback on the active audio deck without releasing resources.
   Future<void> pause();
@@ -279,6 +302,13 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Begins recording rendered audio to a WAV file at `path` with a selective source.
   Future<void> startRecording(
       {required String path, required int format, required int source});
+
+  /// Starts live lock-free WAV recording targeting a detached POSIX file descriptor (Android `content://`).
+  Future<void> startRecordingFd(
+      {required String displayPath,
+      required int fd,
+      required int format,
+      required int source});
 
   /// Stops playback and resets elapsed position to the beginning.
   Future<void> stop();

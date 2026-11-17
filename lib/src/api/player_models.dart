@@ -2,6 +2,7 @@ import '../equalizer.dart';
 import '../reverb.dart';
 import 'crossfade_config.dart';
 import 'miniaudio_player.dart';
+import 'player_exception.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
 import 'spatial.dart';
 
@@ -10,19 +11,32 @@ enum AudioFileFormat {
   /// Uncompressed 16-bit signed PCM WAV.
   wav,
 
-  /// MP3 compressed audio stream.
+  /// MP3 compressed audio stream (currently unsupported for live recording).
   mp3,
 
-  /// FLAC lossless compressed audio stream.
-  flac;
+  /// FLAC lossless compressed audio stream (currently unsupported for live recording).
+  flac,
 
-  /// Converts this [AudioFileFormat] to its corresponding native [WavFormat].
+  /// Uncompressed 32-bit IEEE floating-point PCM WAV.
+  wavFloat32;
+
+  /// Converts this [AudioFileFormat] to its corresponding [WavFormat].
+  ///
+  /// Throws [MiniaudioPlayerException] with [MapResult.errorUnsupported] when
+  /// the requested format cannot yet be encoded directly during live recording.
   WavFormat toWavFormat() {
     switch (this) {
       case AudioFileFormat.wav:
+        return WavFormat.pcm16;
+      case AudioFileFormat.wavFloat32:
+        return WavFormat.float32;
       case AudioFileFormat.mp3:
       case AudioFileFormat.flac:
-        return WavFormat.pcm16;
+        throw MiniaudioPlayerException(
+          'Live recording to ${name.toUpperCase()} is not supported yet. '
+          'Use AudioFileFormat.wav (PCM16) or AudioFileFormat.wavFloat32 (IEEE Float32).',
+          errorCode: MapResult.errorUnsupported,
+        );
     }
   }
 }
@@ -494,17 +508,23 @@ class PlayerConfig {
 
 /// Immutable record summarizing the metrics of a completed audio recording.
 class RecordingResult {
-  /// The file path on disk where the recording was saved.
+  /// The file path (or normalized OPFS / `content://` URI) where the recording was saved.
   final String path;
 
   /// The total duration of the recorded audio.
   final Duration duration;
 
-  /// The total number of bytes written to the file.
+  /// The total number of encoded audio payload bytes written to the sink.
   final int bytesWritten;
 
-  /// The total number of PCM frames/samples written.
+  /// The total number of PCM channel samples captured.
   final int sampleCount;
+
+  /// Number of PCM frames dropped due to writer backpressure or ring overflow.
+  final int droppedFrames;
+
+  /// Optional platform-specific URI (such as a Web `blob:` URL pointing at the finalized WAV).
+  final Uri? uri;
 
   /// Creates a [RecordingResult] summarizing a completed recording.
   const RecordingResult({
@@ -512,5 +532,7 @@ class RecordingResult {
     required this.duration,
     required this.bytesWritten,
     required this.sampleCount,
+    this.droppedFrames = 0,
+    this.uri,
   });
 }

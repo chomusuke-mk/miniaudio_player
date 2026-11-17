@@ -140,6 +140,7 @@ String _platformLibraryFileName() {
 /// isolate counter before `RustLib.init()` runs (preventing multi-isolate
 /// shutdown hangs in flutter_rust_bridge 2.x).
 void registerIsolateWithLibrary(ExternalLibrary library) {
+  _loadedNativeLibrary ??= library.ffiDynamicLibrary;
   if (_isolateRegistration != null) return;
   try {
     final createShutdownCallback = library.ffiDynamicLibrary.lookupFunction<
@@ -151,6 +152,11 @@ void registerIsolateWithLibrary(ExternalLibrary library) {
     // Non-fatal if symbol is absent in mock mode.
   }
 }
+
+ffi.DynamicLibrary? _loadedNativeLibrary;
+
+/// Returns the native dynamic library bound during engine initialization, if available.
+ffi.DynamicLibrary? get loadedNativeDynamicLibrary => _loadedNativeLibrary;
 
 _IsolateRegistration? _isolateRegistration;
 

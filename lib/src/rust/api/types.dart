@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Configuration parameters for offline acoustic and metadata analysis.
 class RustAnalysisConfig {
@@ -735,6 +735,63 @@ class RustAudioSource {
           replayGainDb == other.replayGainDb &&
           replayPeak == other.replayPeak &&
           resolveInDart == other.resolveInDart;
+}
+
+/// Real-time PCM audio chunk pushed from an audio bus tap stream.
+class RustAudioTapChunk {
+  /// Source audio bus (`0`: All, `1`: MusicMix, `2`: ActiveTrack, `3`: StandbyTrack, `4`: VoiceOnly).
+  final int source;
+
+  /// Sample encoding format (`0`: Float32, `1`: Pcm16).
+  final int format;
+
+  /// Audio sample rate in Hertz (e.g., 48000).
+  final int sampleRate;
+
+  /// Interleaved channel count (e.g., 2).
+  final int channels;
+
+  /// Number of audio frames contained in `bytes`.
+  final int frameCount;
+
+  /// Cumulative dropped frames since this tap opened due to consumer backpressure.
+  final BigInt droppedFrames;
+
+  /// Little-endian interleaved PCM bytes (`frame_count * channels * bytes_per_sample`).
+  final Uint8List bytes;
+
+  const RustAudioTapChunk({
+    required this.source,
+    required this.format,
+    required this.sampleRate,
+    required this.channels,
+    required this.frameCount,
+    required this.droppedFrames,
+    required this.bytes,
+  });
+
+  @override
+  int get hashCode =>
+      source.hashCode ^
+      format.hashCode ^
+      sampleRate.hashCode ^
+      channels.hashCode ^
+      frameCount.hashCode ^
+      droppedFrames.hashCode ^
+      bytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustAudioTapChunk &&
+          runtimeType == other.runtimeType &&
+          source == other.source &&
+          format == other.format &&
+          sampleRate == other.sampleRate &&
+          channels == other.channels &&
+          frameCount == other.frameCount &&
+          droppedFrames == other.droppedFrames &&
+          bytes == other.bytes;
 }
 
 /// Bitrate encoding mode of an audio stream.
@@ -1983,6 +2040,51 @@ sealed class RustPlayerEvent with _$RustPlayerEvent {
   }) = RustPlayerEvent_Error;
 }
 
+/// Descriptor returned when opening a zero-allocation Pull audio tap buffer.
+class RustPullAudioTapInfo {
+  /// Unique native handle ID used by zero-alloc poll/close entrypoints.
+  final int tapId;
+
+  /// Source audio bus (`0`: All .. `4`: VoiceOnly).
+  final int source;
+
+  /// Sample encoding format (`0`: Float32, `1`: Pcm16).
+  final int format;
+
+  /// Audio sample rate in Hertz.
+  final int sampleRate;
+
+  /// Interleaved channel count.
+  final int channels;
+
+  const RustPullAudioTapInfo({
+    required this.tapId,
+    required this.source,
+    required this.format,
+    required this.sampleRate,
+    required this.channels,
+  });
+
+  @override
+  int get hashCode =>
+      tapId.hashCode ^
+      source.hashCode ^
+      format.hashCode ^
+      sampleRate.hashCode ^
+      channels.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RustPullAudioTapInfo &&
+          runtimeType == other.runtimeType &&
+          tapId == other.tapId &&
+          source == other.source &&
+          format == other.format &&
+          sampleRate == other.sampleRate &&
+          channels == other.channels;
+}
+
 /// Finalized summary metrics of a completed audio recording.
 class RustRecordingResult {
   /// File path where recorded audio was stored.
@@ -1997,11 +2099,15 @@ class RustRecordingResult {
   /// Total PCM audio samples captured.
   final BigInt sampleCount;
 
+  /// Total audio frames dropped due to writer ring backpressure.
+  final BigInt droppedFrames;
+
   const RustRecordingResult({
     required this.path,
     required this.durationMs,
     required this.bytesWritten,
     required this.sampleCount,
+    required this.droppedFrames,
   });
 
   @override
@@ -2009,7 +2115,8 @@ class RustRecordingResult {
       path.hashCode ^
       durationMs.hashCode ^
       bytesWritten.hashCode ^
-      sampleCount.hashCode;
+      sampleCount.hashCode ^
+      droppedFrames.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2019,7 +2126,8 @@ class RustRecordingResult {
           path == other.path &&
           durationMs == other.durationMs &&
           bytesWritten == other.bytesWritten &&
-          sampleCount == other.sampleCount;
+          sampleCount == other.sampleCount &&
+          droppedFrames == other.droppedFrames;
 }
 
 /// Configuration governing ReplayGain track loudness normalization.

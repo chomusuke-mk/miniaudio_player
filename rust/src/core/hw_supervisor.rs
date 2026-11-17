@@ -315,6 +315,7 @@ impl HardwareDeviceSupervisor {
     }
 
     /// Opens WAV file and spawns `miniaudio-wav-writer` off-clock, then installs producer in <1us.
+    /// Prepares and attaches a live WAV file recording session safely off the RT clock thread.
     pub fn start_recording(
         &self,
         path: String,
@@ -322,13 +323,25 @@ impl HardwareDeviceSupervisor {
         source: AudioOutputSource,
     ) -> Result<(), String> {
         let _guard = lock_unpoisoned(&self.tx_guard);
-        let (sr, ch) = self
-            .engine
-            .exec(|ply| (ply.output_manager.sample_rate, ply.output_manager.channels))?;
-        let (rec, prod) = LiveRecorder::prepare_start(sr, ch, format, &path)?;
-        let (prev_rec, prev_prod) = self
-            .engine
-            .exec(move |ply| ply.output_manager.attach_prepared_recording(path, source, rec, prod))?;
+        let (sr, ch, already_active) = self.engine.exec(|ply| {
+            (
+                ply.output_manager.sample_rate,
+                ply.output_manager.channels,
+                ply.output_manager.live_recorder.is_some(),
+            )
+        })?;
+        if already_active {
+            return Err(
+                "Recording is already in progress. Call stopRecording() before starting a new session. (code: -6)"
+                    .to_string(),
+            );
+        }
+        let normalized = crate::core::recording::normalize_recording_path(&path)?;
+        let (rec, prod) = LiveRecorder::prepare_start(sr, ch, format, &normalized)?;
+        let (prev_rec, prev_prod) = self.engine.exec(move |ply| {
+            ply.output_manager
+                .attach_prepared_recording(normalized, source, rec, prod)
+        })?;
         self.reaper.reap_value(prev_prod);
         if let Some(mut old) = prev_rec {
             let _ = old.stop();
@@ -336,19 +349,74 @@ impl HardwareDeviceSupervisor {
         Ok(())
     }
 
+    /// Validates a detached POSIX file descriptor (Android `content://`) and attaches a live WAV recorder.
+    #[cfg(unix)]
+    pub fn start_recording_fd(
+        &self,
+        display_path: String,
+        fd: i32,
+        format: WavFormat,
+        source: AudioOutputSource,
+    ) -> Result<(), String> {
+        use std::os::unix::io::FromRawFd;
+        let _guard = lock_unpoisoned(&self.tx_guard);
+        let (sr, ch, already_active) = self.engine.exec(|ply| {
+            (
+                ply.output_manager.sample_rate,
+                ply.output_manager.channels,
+                ply.output_manager.live_recorder.is_some(),
+            )
+        })?;
+        if already_active {
+            if fd >= 0 {
+                unsafe {
+                    drop(std::fs::File::from_raw_fd(fd));
+                }
+            }
+            return Err(
+                "Recording is already in progress. Call stopRecording() before starting a new session. (code: -6)"
+                    .to_string(),
+            );
+        }
+        let (rec, prod) = LiveRecorder::prepare_start_fd(sr, ch, format, fd)?;
+        let (prev_rec, prev_prod) = self.engine.exec(move |ply| {
+            ply.output_manager
+                .attach_prepared_recording(display_path, source, rec, prod)
+        })?;
+        self.reaper.reap_value(prev_prod);
+        if let Some(mut old) = prev_rec {
+            let _ = old.stop();
+        }
+        Ok(())
+    }
+
+    /// Returns an unsupported error on non-POSIX platforms for raw file descriptor recording.
+    #[cfg(not(unix))]
+    pub fn start_recording_fd(
+        &self,
+        display_path: String,
+        fd: i32,
+        format: WavFormat,
+        source: AudioOutputSource,
+    ) -> Result<(), String> {
+        let _ = (display_path, fd, format, source);
+        Err("File descriptor recording is only supported on POSIX/Android platforms (code: -9)".to_string())
+    }
+
     /// Detaches recording atomically from RT engine, then joins writer and flushes WAV off-clock.
-    pub fn stop_recording(&self) -> Result<(String, u64, usize, u64), String> {
+    pub fn stop_recording(&self) -> Result<(String, u64, usize, u64, u64), String> {
         let _guard = lock_unpoisoned(&self.tx_guard);
         let mut detached = self
             .engine
             .exec(|ply| ply.output_manager.detach_recording_for_stop())??;
         drop(detached.producer);
-        let bytes_written = detached.recorder.stop().unwrap_or(0) as usize;
+        let bytes_written = detached.recorder.stop()? as usize;
         Ok((
             detached.path,
             detached.duration_ms,
             bytes_written,
             detached.sample_count,
+            detached.dropped_frames,
         ))
     }
 }

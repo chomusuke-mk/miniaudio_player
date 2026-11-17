@@ -61,6 +61,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
+  RustStreamSink<RustAudioTapChunk>
+      dco_decode_StreamSink_rust_audio_tap_chunk_Sse(dynamic raw);
+
+  @protected
   RustStreamSink<RustPlayerEvent> dco_decode_StreamSink_rust_player_event_Sse(
       dynamic raw);
 
@@ -344,6 +348,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioSource dco_decode_rust_audio_source(dynamic raw);
 
   @protected
+  RustAudioTapChunk dco_decode_rust_audio_tap_chunk(dynamic raw);
+
+  @protected
   RustBitrateMode dco_decode_rust_bitrate_mode(dynamic raw);
 
   @protected
@@ -408,6 +415,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustPlayerEvent dco_decode_rust_player_event(dynamic raw);
+
+  @protected
+  RustPullAudioTapInfo dco_decode_rust_pull_audio_tap_info(dynamic raw);
 
   @protected
   RustRecordingResult dco_decode_rust_recording_result(dynamic raw);
@@ -488,6 +498,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustMiniaudioPlayer
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
+          SseDeserializer deserializer);
+
+  @protected
+  RustStreamSink<RustAudioTapChunk>
+      sse_decode_StreamSink_rust_audio_tap_chunk_Sse(
           SseDeserializer deserializer);
 
   @protected
@@ -814,6 +829,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustAudioSource sse_decode_rust_audio_source(SseDeserializer deserializer);
 
   @protected
+  RustAudioTapChunk sse_decode_rust_audio_tap_chunk(
+      SseDeserializer deserializer);
+
+  @protected
   RustBitrateMode sse_decode_rust_bitrate_mode(SseDeserializer deserializer);
 
   @protected
@@ -890,6 +909,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustPlayerEvent sse_decode_rust_player_event(SseDeserializer deserializer);
+
+  @protected
+  RustPullAudioTapInfo sse_decode_rust_pull_audio_tap_info(
+      SseDeserializer deserializer);
 
   @protected
   RustRecordingResult sse_decode_rust_recording_result(
@@ -980,6 +1003,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer(
           RustMiniaudioPlayer self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_StreamSink_rust_audio_tap_chunk_Sse(
+      RustStreamSink<RustAudioTapChunk> self, SseSerializer serializer);
 
   @protected
   void sse_encode_StreamSink_rust_player_event_Sse(
@@ -1320,6 +1347,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustAudioSource self, SseSerializer serializer);
 
   @protected
+  void sse_encode_rust_audio_tap_chunk(
+      RustAudioTapChunk self, SseSerializer serializer);
+
+  @protected
   void sse_encode_rust_bitrate_mode(
       RustBitrateMode self, SseSerializer serializer);
 
@@ -1403,6 +1434,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_player_event(
       RustPlayerEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rust_pull_audio_tap_info(
+      RustPullAudioTapInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_recording_result(

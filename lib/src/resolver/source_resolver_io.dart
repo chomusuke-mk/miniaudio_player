@@ -346,3 +346,66 @@ Future<DartResolvedSourceResult> resolveAndroidContentOrResourceForTest(
   final scheme = extractUriScheme(uri) ?? 'content';
   return _resolveAndroidContentOrResource(uri, scheme);
 }
+
+/// Opens a writable detached POSIX file descriptor for an Android `content://` URI
+/// (e.g. from Storage Access Framework or `MediaStore`).
+///
+/// Requires `Platform.isAndroid` and a valid [RootIsolateToken] when invoked from
+/// a background isolate.
+Future<int> openWritableAndroidContentFd(String uri) async {
+  if (!Platform.isAndroid) {
+    throw MiniaudioPlayerException(
+      'Writable content:// URI "$uri" is only supported on Android.',
+      errorCode: MapResult.errorUnsupported,
+    );
+  }
+  return _openWritableAndroidContentFdChannel(uri);
+}
+
+@visibleForTesting
+Future<int> openWritableAndroidContentFdForTest(String uri) {
+  return _openWritableAndroidContentFdChannel(uri);
+}
+
+Future<int> _openWritableAndroidContentFdChannel(String uri) async {
+  try {
+    final result = await _androidResolverChannel.invokeMapMethod<String, dynamic>(
+      'openWritableContentFd',
+      <String, dynamic>{'uri': uri},
+    );
+    final fd = (result?['fd'] as num?)?.toInt();
+    if (fd == null || fd < 0) {
+      throw MiniaudioPlayerException(
+        'Android resolver returned invalid writable file descriptor ($fd) for "$uri".',
+        errorCode: MapResult.errorFileNotFound,
+      );
+    }
+    return fd;
+  } on PlatformException catch (e) {
+    final code = switch (e.code) {
+      'ACCESS_DENIED' || 'SECURITY_ERROR' => MapResult.errorAccessDenied,
+      'FILE_NOT_FOUND' || 'RESOURCE_NOT_FOUND' => MapResult.errorFileNotFound,
+      'INVALID_URI' || 'INVALID_ARGS' => MapResult.errorInvalidArgs,
+      'UNSUPPORTED' => MapResult.errorUnsupported,
+      _ => MapResult.errorGeneric,
+    };
+    throw MiniaudioPlayerException(
+      e.message ?? 'Failed to open writable Android content URI "$uri" (${e.code}).',
+      errorCode: code,
+    );
+  } on MissingPluginException {
+    throw MiniaudioPlayerException(
+      'Android source resolver plugin is not registered for "$uri". Rebuild the '
+      'Android application so MiniaudioPlayerPlugin is attached.',
+      errorCode: MapResult.errorUnsupported,
+    );
+  } on StateError catch (e) {
+    throw MiniaudioPlayerException(
+      'Cannot resolve Android content URI "$uri" in a background isolate because '
+      'RootIsolateToken has not been initialized. Obtain RootIsolateToken.instance '
+      'on the main isolate and pass it to MiniaudioPlayer.ensureInitialized('
+      'rootIsolateToken: token). ($e)',
+      errorCode: MapResult.errorInvalidState,
+    );
+  }
+}

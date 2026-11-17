@@ -943,29 +943,226 @@ class PlayerAction<T> {
     );
   }
 
-  /// Starts live lock-free recording of rendered audio to disk with a selective source.
+  /// Starts live recording of rendered audio to a file path (Native/OPFS) or [RecordingByteBuffer].
+  ///
+  /// Parameters:
+  /// - [pathOrBuffer]: Either a local filesystem path / `file://` URI / Android writable
+  ///   `content://` URI / Web OPFS path (`String`), a [RecordingByteBuffer], or `null` when
+  ///   passing [buffer] explicitly.
+  /// - [buffer]: Optional [RecordingByteBuffer] (such as [MemoryRecordingBuffer]).
+  ///   When both a [String] path and [buffer] are supplied, a warning is logged and
+  ///   [buffer] takes precedence.
+  /// - [format]: Container/sample preset ([AudioFileFormat.wav] for 16-bit PCM or
+  ///   [AudioFileFormat.wavFloat32] for 32-bit IEEE float). Unimplemented formats such
+  ///   as MP3/FLAC throw [MiniaudioPlayerException] with [MapResult.errorUnsupported].
+  /// - [source]: Engine audio bus to record.
+  /// - [wavFormat]: Optional explicit [WavFormat] override (`pcm16` or `float32`).
   Future<void> startRecording(
-    String path, {
+    Object? pathOrBuffer, {
+    RecordingByteBuffer? buffer,
     AudioFileFormat format = AudioFileFormat.wav,
     AudioOutputSource source = AudioOutputSource.all,
+    WavFormat? wavFormat,
   }) async {
     _player._ensureNotDisposed();
-    await _rust.startRecording(
-      path: path,
-      format: format.index,
-      source: source.value,
+
+    String? resolvedPath;
+    RecordingByteBuffer? resolvedBuffer = buffer;
+
+    if (pathOrBuffer != null) {
+      if (pathOrBuffer is String) {
+        resolvedPath = pathOrBuffer;
+      } else if (pathOrBuffer is RecordingByteBuffer) {
+        if (resolvedBuffer == null) {
+          resolvedBuffer = pathOrBuffer;
+        } else {
+          MapLogger.warnImportant(
+            'RecordingByteBuffer passed both positionally and via `buffer:`; prioritizing named `buffer:`.',
+          );
+        }
+      } else {
+        throw ArgumentError.value(
+          pathOrBuffer,
+          'pathOrBuffer',
+          'Expected a String path, a RecordingByteBuffer, or null',
+        );
+      }
+    }
+
+    if (resolvedPath == null && resolvedBuffer == null) {
+      throw ArgumentError(
+        'Either a String path or a RecordingByteBuffer must be provided to startRecording().',
+      );
+    }
+
+    // Validate container format before acquiring OS or JS handles.
+    final formatWav = format.toWavFormat();
+    final effectiveWav = wavFormat ?? formatWav;
+
+    if (resolvedPath != null && resolvedBuffer != null) {
+      MapLogger.warnImportant(
+        'Both path ("$resolvedPath") and buffer were provided to startRecording(). '
+        'Prioritizing RecordingByteBuffer and ignoring path.',
+      );
+    }
+
+    if (_player._isStartingRecording ||
+        _player._activeDartRecording != null ||
+        _player.state.isRecording) {
+      throw const MiniaudioPlayerException(
+        'Recording is already in progress. Call stopRecording() before starting a new session.',
+        errorCode: MapResult.errorInvalidState,
+      );
+    }
+
+    _player._isStartingRecording = true;
+    try {
+      if (resolvedBuffer != null) {
+        final session = _DartBufferRecordingSession<T>(
+          player: _player,
+          buffer: resolvedBuffer,
+          displayPath: resolvedBuffer.path ?? resolvedPath ?? '',
+          source: source,
+          wavFormat: effectiveWav,
+          initialSampleRate: _player._configuredSampleRate,
+          initialChannels: _player._configuredChannels,
+        );
+        await session.start();
+        _player._activeDartRecording = session;
+        return;
+      }
+
+      if (isWebOpfsEnvironment()) {
+        final opfs = await openWebOpfsRecordingSession(resolvedPath!);
+        final session = _DartBufferRecordingSession<T>(
+          player: _player,
+          buffer: opfs.buffer,
+          displayPath: opfs.normalizedPath,
+          source: source,
+          wavFormat: effectiveWav,
+          initialSampleRate: _player._configuredSampleRate,
+          initialChannels: _player._configuredChannels,
+          finalizeUri: opfs.finalizeBlobUri,
+        );
+        await session.start();
+        _player._activeDartRecording = session;
+        return;
+      }
+
+      final trimmedPath = resolvedPath!.trim();
+      if (trimmedPath.isEmpty) {
+        throw const MiniaudioPlayerException(
+          'Recording path cannot be empty.',
+          errorCode: MapResult.errorInvalidArgs,
+        );
+      }
+
+      if (trimmedPath.toLowerCase().startsWith('content://')) {
+        final fd = await openWritableAndroidContentFd(trimmedPath);
+        try {
+          await _rust.startRecordingFd(
+            displayPath: trimmedPath,
+            fd: fd,
+            format: effectiveWav.index,
+            source: source.value,
+          );
+        } catch (e) {
+          throw MiniaudioPlayerException.fromRustError(
+            e,
+            prefix: 'Failed to start content:// recording',
+            defaultErrorCode: MapResult.errorGeneric,
+          );
+        }
+        return;
+      }
+
+      try {
+        await _rust.startRecording(
+          path: resolvedPath,
+          format: effectiveWav.index,
+          source: source.value,
+        );
+      } catch (e) {
+        throw MiniaudioPlayerException.fromRustError(
+          e,
+          prefix: 'Failed to start recording',
+          defaultErrorCode: MapResult.errorGeneric,
+        );
+      }
+    } finally {
+      _player._isStartingRecording = false;
+    }
+  }
+
+  /// Convenience alias starting live WAV recording directly into a [RecordingByteBuffer].
+  Future<void> startRecordingToBuffer(
+    RecordingByteBuffer buffer, {
+    AudioFileFormat format = AudioFileFormat.wav,
+    AudioOutputSource source = AudioOutputSource.all,
+    WavFormat? wavFormat,
+  }) {
+    return startRecording(
+      null,
+      buffer: buffer,
+      format: format,
+      source: source,
+      wavFormat: wavFormat,
     );
   }
 
-  /// Stops live disk recording and returns an immutable [RecordingResult].
+  /// Stops live recording, finalizes headers, and returns an immutable [RecordingResult].
   Future<RecordingResult> stopRecording() async {
     _player._ensureNotDisposed();
-    final res = await _rust.stopRecording();
-    return RecordingResult(
-      path: res.path,
-      duration: Duration(milliseconds: res.durationMs.toInt()),
-      bytesWritten: res.bytesWritten.toInt(),
-      sampleCount: res.sampleCount.toInt(),
+    final dartSession = _player._activeDartRecording;
+    if (dartSession != null) {
+      _player._activeDartRecording = null;
+      return await dartSession.stop();
+    }
+
+    try {
+      final res = await _rust.stopRecording();
+      return RecordingResult(
+        path: res.path,
+        duration: Duration(milliseconds: res.durationMs.toInt()),
+        bytesWritten: res.bytesWritten.toInt(),
+        sampleCount: res.sampleCount.toInt(),
+        droppedFrames: res.droppedFrames.toInt(),
+      );
+    } catch (e) {
+      throw MiniaudioPlayerException.fromRustError(
+        e,
+        prefix: 'Failed to stop recording',
+        defaultErrorCode: MapResult.errorGeneric,
+      );
+    }
+  }
+
+  /// Subscribes to a lock-free broadcast Push PCM stream for the given audio bus.
+  ///
+  /// Multiple listeners sharing the same `(source, format, frameDuration)` key reuse
+  /// a single native dispatcher stream and unmodifiable chunk view without extra copies.
+  Stream<AudioPcmChunk> watchAudioBus({
+    AudioOutputSource source = AudioOutputSource.all,
+    AudioTapFormat format = AudioTapFormat.float32,
+    Duration frameDuration = const Duration(milliseconds: 20),
+  }) {
+    return _player.watchAudioBus(
+      source: source,
+      format: format,
+      frameDuration: frameDuration,
+    );
+  }
+
+  /// Opens a zero-allocation reusable PCM Pull buffer reading directly from an audio bus.
+  Future<AudioTapBuffer> openAudioTapBuffer({
+    AudioOutputSource source = AudioOutputSource.all,
+    AudioTapFormat format = AudioTapFormat.float32,
+    int capacityFrames = 1024,
+  }) {
+    return _player.openAudioTapBuffer(
+      source: source,
+      format: format,
+      capacityFrames: capacityFrames,
     );
   }
 

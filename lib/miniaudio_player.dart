@@ -10,6 +10,7 @@ export 'package:flutter/services.dart' show RootIsolateToken;
 
 export 'src/api/audio_analysis_result.dart';
 export 'src/api/audio_device.dart';
+export 'src/api/audio_tap.dart';
 export 'src/api/audio_info.dart';
 export 'src/api/audio_metadata.dart';
 export 'src/api/buffer.dart';
@@ -22,6 +23,7 @@ export 'src/api/need_more_tracks_event.dart';
 export 'src/api/player_exception.dart';
 export 'src/api/player_models.dart';
 export 'src/api/recording.dart';
+export 'src/api/recording_byte_buffer.dart';
 export 'src/api/silence_skip_config.dart';
 export 'src/api/spatial.dart';
 export 'src/api/visualizer_data.dart';

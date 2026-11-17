@@ -16,6 +16,7 @@ use crate::bridge::ffi::{
 };
 use crate::core::recording::LiveRecorder;
 use crate::core::renderer::PcmRendererHeader;
+use crate::core::tap::{create_tap_pair, TapBusRegistry, TapRtMatrix};
 use crate::dsp::visualizer::{Visualizer, VisualizerData};
 use crate::map_log;
 use crate::sync::seqlock::CachePaddedSeqlock;
@@ -131,6 +132,7 @@ pub struct DetachedRecording {
     pub producer: Option<rtrb::Producer<f32>>,
     pub sample_count: u64,
     pub duration_ms: u64,
+    pub dropped_frames: u64,
 }
 
 /// Domain manager governing output routing, live selective disk recording, and visualizer.
@@ -150,7 +152,9 @@ pub struct OutputManager {
     pub recording_source: AudioOutputSource,
     pub is_recording: Arc<AtomicBool>,
     pub recorded_frames: Arc<AtomicU64>,
+    pub recording_dropped_frames: Arc<AtomicU64>,
     pub recording_path: Option<String>,
+    recording_error_reported: bool,
 
     // =========================================================================
     // Visualizer Subsystem (first-class)
@@ -159,6 +163,12 @@ pub struct OutputManager {
     pub visualizer_enabled: Arc<AtomicBool>,
     pub visualizer_source: Arc<AtomicU8>,
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
+
+    // =========================================================================
+    // Multi-Bus Audio Tap Matrix (Lock-free Push Broadcast & Zero-Alloc Pull)
+    // =========================================================================
+    tap_rt: TapRtMatrix,
+    pub tap_registry: Arc<TapBusRegistry>,
 
     pub pause_on_device_change: Arc<AtomicBool>,
     pub sample_rate: u32,
@@ -178,6 +188,7 @@ impl OutputManager {
         channels: usize,
         device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
     ) -> Self {
+        let (tap_rt, tap_registry) = create_tap_pair(sample_rate, channels);
         Self {
             outputs: Vec::new(),
             active_devices: Vec::new(),
@@ -187,11 +198,15 @@ impl OutputManager {
             recording_source: AudioOutputSource::All,
             is_recording: Arc::new(AtomicBool::new(false)),
             recorded_frames: Arc::new(AtomicU64::new(0)),
+            recording_dropped_frames: Arc::new(AtomicU64::new(0)),
             recording_path: None,
+            recording_error_reported: false,
             visualizer: Visualizer::new(channels, sample_rate),
             visualizer_enabled: Arc::new(AtomicBool::new(false)),
             visualizer_source: Arc::new(AtomicU8::new(AudioOutputSource::All as u8)),
             visualizer_seqlock: Arc::new(CachePaddedSeqlock::new(VisualizerData::default())),
+            tap_rt,
+            tap_registry,
             pause_on_device_change: Arc::new(AtomicBool::new(false)),
             sample_rate,
             channels,
@@ -477,8 +492,22 @@ impl OutputManager {
         self.recording_source = source;
         self.recording_path = Some(path);
         self.recorded_frames.store(0, Ordering::Release);
+        self.recording_dropped_frames.store(0, Ordering::Release);
+        self.recording_error_reported = false;
         self.is_recording.store(true, Ordering::Release);
         (prev_rec, prev_prod)
+    }
+
+    /// Wait-free poll for any asynchronous recording disk/finalize failure.
+    pub fn poll_async_recording_error(&mut self) -> Option<String> {
+        if self.recording_error_reported {
+            return None;
+        }
+        let rec = self.live_recorder.as_ref()?;
+        let msg = rec.poll_async_error()?;
+        self.recording_error_reported = true;
+        self.is_recording.store(false, Ordering::Release);
+        Some(msg)
     }
 
     /// Extracts the active recording handles atomically without joining the writer thread.
@@ -488,20 +517,22 @@ impl OutputManager {
         let path = self
             .recording_path
             .take()
-            .ok_or_else(|| "Recording was not active".to_string())?;
+            .ok_or_else(|| "Recording was not active (code: -6)".to_string())?;
         let recorder = self
             .live_recorder
             .take()
-            .ok_or_else(|| "Live recorder was not initialized".to_string())?;
+            .ok_or_else(|| "Live recorder was not initialized (code: -6)".to_string())?;
         let sample_count = self.recorded_frames.load(Ordering::Relaxed) * self.channels as u64;
         let duration_ms = (sample_count * 1000)
             / (self.sample_rate as u64 * self.channels as u64).max(1);
+        let dropped_frames = self.recording_dropped_frames.load(Ordering::Relaxed);
         Ok(DetachedRecording {
             path,
             recorder,
             producer,
             sample_count,
             duration_ms,
+            dropped_frames,
         })
     }
 
@@ -509,7 +540,7 @@ impl OutputManager {
     pub fn stop_recording(&mut self) -> Result<(String, u64, usize, u64), String> {
         let mut detached = self.detach_recording_for_stop()?;
         drop(detached.producer);
-        let bytes_written = detached.recorder.stop().unwrap_or(0) as usize;
+        let bytes_written = detached.recorder.stop()? as usize;
         Ok((
             detached.path,
             detached.duration_ms,
@@ -619,8 +650,10 @@ impl OutputManager {
         if self.is_recording.load(Ordering::Relaxed) {
             if let Some(ref mut prod) = self.record_producer {
                 let rec_slice = select_source(self.recording_source);
-                let valid = rec_slice.len().min(sample_count);
-                let to_write = prod.slots().min(valid);
+                let ch = self.channels.max(1);
+                let valid = (rec_slice.len().min(sample_count) / ch) * ch;
+                let to_write = (prod.slots().min(valid) / ch) * ch;
+                let written_frames = (to_write / ch) as u64;
                 if to_write > 0 {
                     if let Ok(mut chunk) = prod.write_chunk(to_write) {
                         let (s1, s2) = chunk.as_mut_slices();
@@ -631,7 +664,12 @@ impl OutputManager {
                         }
                         chunk.commit_all();
                     }
-                    self.recorded_frames.fetch_add(frame_count as u64, Ordering::Relaxed);
+                    self.recorded_frames.fetch_add(written_frames, Ordering::Relaxed);
+                }
+                let expected_frames = (valid / ch) as u64;
+                if expected_frames > written_frames {
+                    self.recording_dropped_frames
+                        .fetch_add(expected_frames - written_frames, Ordering::Relaxed);
                 }
             }
         }
@@ -648,10 +686,23 @@ impl OutputManager {
             let vis_data = self.visualizer.get_data();
             self.visualizer_seqlock.write(|d| *d = vis_data);
         }
+
+        // 4. Multi-Bus Lock-Free Audio Taps (idle ~0.27 ns via active_bus_mask atomic load)
+        self.tap_rt.write_buses(
+            [
+                all_buffer,
+                music_mix_buffer,
+                active_buffer,
+                standby_buffer,
+                voice_buffer,
+            ],
+            sample_count,
+        );
     }
 
     /// Stops all live recording sessions and releases all physical output audio devices.
     pub fn dispose(&mut self) {
+        self.tap_registry.shutdown();
         let _ = self.stop_recording();
         self.active_devices.clear();
     }
