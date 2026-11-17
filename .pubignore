@@ -39,10 +39,13 @@ migrate_working_dir/
 /.agents/
 /.github/
 /.vscode/
+/.venv/
+/.gitmodules
 
-# Pub specific ignores
+# Pub specific ignores (0 bytes of sample audio published to pub.dev)
 /cspell.yaml
 /test/
+/example/assets/music/
 
 /pictures/icons/
 /pictures/screenshots/

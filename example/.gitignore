@@ -49,4 +49,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
-/assets/music/
+
+# NOTE: `assets/music` will be tracked as a Git submodule (`chomusuke-mk/miniaudio_player_assets`).
+# Keep `/assets/music/` unignored here so `.gitmodules` tracks the gitlink without `--force`.

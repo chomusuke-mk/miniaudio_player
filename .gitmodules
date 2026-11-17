@@ -1,0 +1,3 @@
+[submodule "example/assets/music"]
+	path = example/assets/music
+	url = git@github.com:chomusuke-mk/miniaudio_player_assets.git
