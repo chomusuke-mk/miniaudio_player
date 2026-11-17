@@ -643,12 +643,19 @@ impl BusHub {
         let _ = self.reconcile_unlocked(&mut subs);
     }
 
+    fn encode_tap_chunk(src: &[f32], format: TapSampleFormat) -> Vec<u8> {
+        let mut buf = vec![0u8; src.len() * format.bytes_per_sample()];
+        let written = encode_f32_into_bytes(src, format, &mut buf);
+        buf.truncate(written);
+        buf
+    }
+
     fn pump_fanout(
         &self,
         sample_rate: u32,
         channels: usize,
         scratch_f32: &mut Vec<f32>,
-        encoded_cache: &mut HashMap<(TapSampleFormat, usize), Vec<u8>>,
+        encoded_cache: &mut HashMap<(TapSampleFormat, usize, usize), Vec<u8>>,
         pending_sends: &mut Vec<PendingPushSend>,
     ) -> (bool, bool) {
         if !self.fanout_active.load(Ordering::Acquire) {
@@ -683,31 +690,33 @@ impl BusHub {
             pull.push_fanout_samples(scratch_f32);
         }
 
-        // Accumulate into Push subscribers and coalesce identical `(format, target_samples)` encodings.
+        // Accumulate into Push subscribers and coalesce identical
+        // `(format, target_samples, scratch_offset)` encodings across aligned peers.
         encoded_cache.clear();
         let rt_dropped = self.rt_dropped_frames.load(Ordering::Relaxed);
         let ch = channels.max(1);
 
         for sub in &mut subs.push_subs {
+            let prior_len = sub.accum_f32.len();
             sub.accum_f32.extend_from_slice(scratch_f32);
             let req_samples = sub.target_samples;
             if req_samples == 0 {
                 continue;
             }
             let frame_count = (req_samples / ch) as u32;
+            let mut drained = 0usize;
             while sub.accum_f32.len() >= req_samples {
-                let encoded = encoded_cache
-                    .entry((sub.format, req_samples))
-                    .or_insert_with(|| {
-                        let mut buf = vec![0u8; req_samples * sub.format.bytes_per_sample()];
-                        let written = encode_f32_into_bytes(
-                            &sub.accum_f32[..req_samples],
-                            sub.format,
-                            &mut buf,
-                        );
-                        buf.truncate(written);
-                        buf
-                    });
+                let bytes = if drained >= prior_len {
+                    let src_offset = drained - prior_len;
+                    encoded_cache
+                        .entry((sub.format, req_samples, src_offset))
+                        .or_insert_with(|| {
+                            Self::encode_tap_chunk(&sub.accum_f32[..req_samples], sub.format)
+                        })
+                        .clone()
+                } else {
+                    Self::encode_tap_chunk(&sub.accum_f32[..req_samples], sub.format)
+                };
 
                 pending_sends.push((
                     self.bus_idx,
@@ -720,11 +729,12 @@ impl BusHub {
                         channels: ch,
                         frame_count,
                         dropped_frames: rt_dropped.saturating_sub(sub.dropped_baseline),
-                        bytes: encoded.clone(),
+                        bytes,
                     },
                 ));
 
                 sub.accum_f32.drain(..req_samples);
+                drained += req_samples;
             }
         }
 
@@ -966,7 +976,7 @@ struct DispatcherCtx {
 
 fn run_tap_dispatcher(ctx: DispatcherCtx) {
     let mut scratch_f32: Vec<f32> = Vec::with_capacity(TAP_RING_CAPACITY_SAMPLES);
-    let mut encoded_cache: HashMap<(TapSampleFormat, usize), Vec<u8>> = HashMap::new();
+    let mut encoded_cache: HashMap<(TapSampleFormat, usize, usize), Vec<u8>> = HashMap::new();
     let mut pending_sends: Vec<PendingPushSend> = Vec::with_capacity(16);
 
     loop {
@@ -1210,6 +1220,50 @@ mod tests {
         assert!(!pull.hub.fanout_active.load(Ordering::Acquire));
         reg.close_pull_tap(pull.tap_id);
         assert_eq!(reg.active_bus_mask(), 0);
+        reg.shutdown();
+    }
+
+    #[test]
+    fn push_fanout_burst_emits_distinct_sequential_chunks_without_duplication() {
+        let (mut rt, reg) = create_tap_pair(44_100, 2);
+        let sink = RecordingSink::new();
+        // 20ms @ 44.1kHz stereo = 882 frames = 1764 samples per chunk.
+        reg.add_push_tap(99, 0, TapSampleFormat::Pcm16, 20, sink.clone())
+            .expect("add push tap");
+
+        // Push 4 chunks (7056 samples = 3528 frames) with strictly monotonic ramp values
+        // in a single burst so pump_fanout drains >= 2 chunks in one iteration.
+        let total_samples = 1764 * 4;
+        let ramp: Vec<f32> = (0..total_samples)
+            .map(|i| (i as f32 / total_samples as f32) * 0.9)
+            .collect();
+        let zeros = vec![0.0f32; total_samples];
+        rt.write_buses([&ramp, &zeros, &zeros, &zeros, &zeros], total_samples);
+
+        for _ in 0..100 {
+            if lock_unpoisoned(&sink.chunks).len() >= 4 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let chunks = lock_unpoisoned(&sink.chunks);
+        assert_eq!(chunks.len(), 4);
+        for (idx, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.frame_count, 882);
+            let first_sample = i16::from_le_bytes(chunk.bytes[0..2].try_into().unwrap());
+            let expected = (ramp[idx * 1764].clamp(-1.0, 1.0) * 32767.0).round() as i16;
+            assert_eq!(
+                first_sample, expected,
+                "chunk {idx} first sample mismatch (cache collision / duplication)"
+            );
+            if idx > 0 {
+                assert_ne!(chunk.bytes, chunks[idx - 1].bytes);
+            }
+        }
+        drop(chunks);
+
+        reg.remove_push_tap(99);
         reg.shutdown();
     }
 }
