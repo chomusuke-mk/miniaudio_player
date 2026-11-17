@@ -224,6 +224,9 @@ words:
   - evictable
   - EXITSTATUS
   - Expansor
+  - externref
+  - Externref
+  - externrefs
   - EXTM
   - fabs
   - fabsf
@@ -332,6 +335,7 @@ words:
   - itheta
   - jetbrains
   - Jezar
+  - jsval
   - kbps
   - Keepalive
   - keyformat
@@ -494,12 +498,14 @@ words:
   - preasignación
   - Preasignación
   - Preasignar
+  - prebuffering
   - preclipped
   - Preconfigurar
   - preemph
   - premultiplies
   - println
   - prio
+  - prototypesetcall
   - PSHR
   - pthread
   - PTHREADS
@@ -743,6 +749,7 @@ words:
   - WAVEHDR
   - wavicle
   - wavpack
+  - wbindgen
   - webaudio
   - webp
   - Werror
@@ -752,6 +759,7 @@ words:
   - winmm
   - wmode
   - Wodo
+  - workerpool
   - worklet
   - Worklet
   - Worklets

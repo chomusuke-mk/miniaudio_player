@@ -19,7 +19,7 @@ use crate::core::engine_actor::{
     TrackTransitionSnapshot,
 };
 use crate::core::hw_supervisor::{device_id_matches, HardwareDeviceSupervisor};
-use crate::core::recording::WavFormat;
+use crate::core::recording::RecordingEncoding;
 use crate::core::types::PlaybackState;
 use crate::core::voice_pool::{EffectCatalogItem, EffectConfig};
 use crate::dsp::equalizer::EqualizerParams;
@@ -58,15 +58,8 @@ const OPT_BOOL_FALSE: u8 = 1;
 const OPT_BOOL_TRUE: u8 = 2;
 
 #[flutter_rust_bridge::frb(ignore)]
-fn parse_recording_wav_format(format: i32) -> Result<WavFormat, String> {
-    match format {
-        0 => Ok(WavFormat::Pcm16),
-        1 => Ok(WavFormat::Float32),
-        _ => Err(format!(
-            "Unsupported recording format code {}: only PCM16 (0) and Float32 (1) WAV are supported (code: -9)",
-            format
-        )),
-    }
+fn parse_recording_format(format: i32) -> Result<RecordingEncoding, String> {
+    RecordingEncoding::from_wire_code(format)
 }
 
 #[inline]
@@ -1842,9 +1835,9 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Begins recording rendered audio to a WAV file at `path` with a selective source.
+    /// Begins recording rendered audio to a supported container at `path` with a selective source.
     pub fn start_recording(&self, path: String, format: i32, source: i32) -> Result<(), String> {
-        let fmt = parse_recording_wav_format(format)?;
+        let fmt = parse_recording_format(format)?;
         let src = AudioOutputSource::from(source);
         self.hw.start_recording(path, fmt, src)?;
         self.reporter.emit_batch([
@@ -1858,7 +1851,7 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Starts live lock-free WAV recording targeting a detached POSIX file descriptor (Android `content://`).
+    /// Starts live lock-free recording targeting a detached POSIX file descriptor (Android `content://`).
     pub fn start_recording_fd(
         &self,
         display_path: String,
@@ -1866,7 +1859,7 @@ impl RustMiniaudioPlayer {
         format: i32,
         source: i32,
     ) -> Result<(), String> {
-        let fmt = parse_recording_wav_format(format)?;
+        let fmt = parse_recording_format(format)?;
         let src = AudioOutputSource::from(source);
         self.hw.start_recording_fd(display_path, fd, fmt, src)?;
         self.reporter.emit_batch([
@@ -2210,4 +2203,22 @@ pub fn analyze_audio_source_sync(
     config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
     crate::dsp::analysis::analyze_audio_source(source.into(), config)
+}
+
+/// Encodes one lossless WavPack (`.wv`) stream block from interleaved little-endian PCM bytes
+/// (`pcm16` i16-LE or `float32` f32-LE) for Web OPFS and custom Dart recording buffers.
+pub fn encode_wavpack_block(
+    sample_rate: u32,
+    channels: u16,
+    is_float: bool,
+    block_index: u64,
+    pcm_bytes: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    crate::core::recording::encode_wavpack_block_wire_bytes(
+        sample_rate,
+        channels,
+        is_float,
+        block_index,
+        &pcm_bytes,
+    )
 }

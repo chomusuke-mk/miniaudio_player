@@ -99,11 +99,16 @@ void main() {
       'PlaybackEngineCard renders Web OPFS checkbox (unchecked by default + hover tooltip) and clickable Last recording',
       (tester) async {
     final openedPaths = <String>[];
+    final downloadedCalls = <(String, String?)>[];
     var nextOpenResult = OpenResult(type: ResultType.done, message: 'done');
     final controller = AudioEngineController(
       fileOpener: (path, {type}) async {
         openedPaths.add(path);
         return nextOpenResult;
+      },
+      webDownloader: (uri, {fileName}) {
+        downloadedCalls.add((uri, fileName));
+        return true;
       },
     );
     addTearDown(controller.dispose);
@@ -159,10 +164,21 @@ void main() {
     final lastFinder = find.textContaining('Last: studio_recording_');
     expect(lastFinder, findsOneWidget);
     expect(find.byIcon(Icons.open_in_new), findsOneWidget);
+    expect(find.text('Download'), findsOneWidget);
 
     await tester.tap(lastFinder);
     await tester.pump();
     expect(openedPaths, equals([controller.lastRecordingResult!.path]));
+
+    await tester.tap(find.text('Download'));
+    await tester.pump();
+    expect(
+      downloadedCalls,
+      equals([
+        (controller.lastRecordingResult!.path, controller.lastRecordingFileName),
+      ]),
+    );
+    expect(controller.lastRecordingFileName!.endsWith('.wav'), isTrue);
 
     nextOpenResult = OpenResult(
       type: ResultType.noAppToOpen,
@@ -171,5 +187,49 @@ void main() {
     await tester.tap(lastFinder);
     await tester.pump();
     expect(find.textContaining('Could not open recording'), findsOneWidget);
+  });
+
+  test('AudioEngineController tracks extension and MIME type per recording format',
+      () async {
+    final openedCalls = <(String, String?)>[];
+    final downloadedCalls = <(String, String?)>[];
+    final controller = AudioEngineController(
+      fileOpener: (path, {type}) async {
+        openedCalls.add((path, type));
+        return OpenResult(type: ResultType.done, message: 'done');
+      },
+      webDownloader: (uri, {fileName}) {
+        downloadedCalls.add((uri, fileName));
+        return true;
+      },
+    );
+    addTearDown(controller.dispose);
+
+    controller.setRecordingFormat(AudioFileFormat.wavPack);
+    await controller.startRecording();
+    await Future<void>.delayed(const Duration(milliseconds: 90));
+    final wvRes = await controller.stopRecording();
+    addTearDown(() {
+      final f = File(wvRes.path);
+      if (f.parent.existsSync()) {
+        f.parent.deleteSync(recursive: true);
+      }
+    });
+
+    expect(wvRes.path.endsWith('.wv'), isTrue);
+    expect(controller.lastRecordingFileName?.endsWith('.wv'), isTrue);
+    expect(File(wvRes.path).readAsBytesSync().sublist(0, 4), equals([0x77, 0x76, 0x70, 0x6B]));
+
+    // Changing dropdown after stopping must keep opening/downloading the last recorded file with its MIME & name.
+    controller.setRecordingFormat(AudioFileFormat.cafFloat32);
+    final openRes = await controller.openLastRecording();
+    expect(openRes.type, equals(ResultType.done));
+    expect(openedCalls, equals([(wvRes.path, 'audio/x-wavpack')]));
+
+    expect(await controller.downloadLastRecording(), isTrue);
+    expect(
+      downloadedCalls,
+      equals([(wvRes.path, controller.lastRecordingFileName)]),
+    );
   });
 }

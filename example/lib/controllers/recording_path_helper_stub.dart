@@ -4,7 +4,12 @@ Future<String> createTempRecordingFilePath(String fileName) {
   throw UnsupportedError('Temporary filesystem recording paths are only created on IO targets.');
 }
 
-Uri? createWebRecordingBlobUri(Uint8List wavBytes) => null;
+Uri? createWebRecordingBlobUri(
+  Uint8List bytes, {
+  String mimeType = 'audio/wav',
+  String? fileName,
+}) =>
+    null;
 
 void revokeWebRecordingBlobUri(Uri? uri) {}
 

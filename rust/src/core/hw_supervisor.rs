@@ -16,7 +16,7 @@ use crate::core::dual_source::STATE_PLAYING;
 use crate::core::engine_actor::EngineActorHandle;
 use crate::core::input_manager::InputManager;
 use crate::core::output_manager::OutputManager;
-use crate::core::recording::{LiveRecorder, WavFormat};
+use crate::core::recording::{LiveRecorder, RecordingEncoding};
 use crate::map_log;
 use crate::sync::{lock_unpoisoned, ReaperHandle};
 
@@ -319,9 +319,10 @@ impl HardwareDeviceSupervisor {
     pub fn start_recording(
         &self,
         path: String,
-        format: WavFormat,
+        format: impl Into<RecordingEncoding>,
         source: AudioOutputSource,
     ) -> Result<(), String> {
+        let encoding = format.into();
         let _guard = lock_unpoisoned(&self.tx_guard);
         let (sr, ch, already_active) = self.engine.exec(|ply| {
             (
@@ -337,7 +338,7 @@ impl HardwareDeviceSupervisor {
             );
         }
         let normalized = crate::core::recording::normalize_recording_path(&path)?;
-        let (rec, prod) = LiveRecorder::prepare_start(sr, ch, format, &normalized)?;
+        let (rec, prod) = LiveRecorder::prepare_start(sr, ch, encoding, &normalized)?;
         let (prev_rec, prev_prod) = self.engine.exec(move |ply| {
             ply.output_manager
                 .attach_prepared_recording(normalized, source, rec, prod)
@@ -349,16 +350,17 @@ impl HardwareDeviceSupervisor {
         Ok(())
     }
 
-    /// Validates a detached POSIX file descriptor (Android `content://`) and attaches a live WAV recorder.
+    /// Validates a detached POSIX file descriptor (Android `content://`) and attaches a live recorder.
     #[cfg(unix)]
     pub fn start_recording_fd(
         &self,
         display_path: String,
         fd: i32,
-        format: WavFormat,
+        format: impl Into<RecordingEncoding>,
         source: AudioOutputSource,
     ) -> Result<(), String> {
         use std::os::unix::io::FromRawFd;
+        let encoding = format.into();
         let _guard = lock_unpoisoned(&self.tx_guard);
         let (sr, ch, already_active) = self.engine.exec(|ply| {
             (
@@ -378,7 +380,7 @@ impl HardwareDeviceSupervisor {
                     .to_string(),
             );
         }
-        let (rec, prod) = LiveRecorder::prepare_start_fd(sr, ch, format, fd)?;
+        let (rec, prod) = LiveRecorder::prepare_start_fd(sr, ch, encoding, fd)?;
         let (prev_rec, prev_prod) = self.engine.exec(move |ply| {
             ply.output_manager
                 .attach_prepared_recording(display_path, source, rec, prod)
@@ -396,10 +398,10 @@ impl HardwareDeviceSupervisor {
         &self,
         display_path: String,
         fd: i32,
-        format: WavFormat,
+        format: impl Into<RecordingEncoding>,
         source: AudioOutputSource,
     ) -> Result<(), String> {
-        let _ = (display_path, fd, format, source);
+        let _ = (display_path, fd, format.into(), source);
         Err("File descriptor recording is only supported on POSIX/Android platforms (code: -9)".to_string())
     }
 

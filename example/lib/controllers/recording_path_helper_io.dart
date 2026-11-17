@@ -19,7 +19,12 @@ Future<String> createTempRecordingFilePath(String fileName) async {
   return '$dirPath$fileName';
 }
 
-Uri? createWebRecordingBlobUri(Uint8List wavBytes) => null;
+Uri? createWebRecordingBlobUri(
+  Uint8List bytes, {
+  String mimeType = 'audio/wav',
+  String? fileName,
+}) =>
+    null;
 
 void revokeWebRecordingBlobUri(Uri? uri) {}
 

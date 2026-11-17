@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `parse_recording_wav_format`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
+// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `parse_recording_format`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AtomicTelemetryFilter`, `ComplexTelemetryCache`, `EventSinkState`, `FrbTapChunkSink`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `default`, `send_chunk`
@@ -31,6 +31,21 @@ RustAudioAnalysisResult analyzeAudioSourceSync(
         required RustAnalysisConfig config}) =>
     RustLib.instance.api
         .crateApiPlayerAnalyzeAudioSourceSync(source: source, config: config);
+
+/// Encodes one lossless WavPack (`.wv`) stream block from interleaved little-endian PCM bytes
+/// (`pcm16` i16-LE or `float32` f32-LE) for Web OPFS and custom Dart recording buffers.
+Future<Uint8List> encodeWavpackBlock(
+        {required int sampleRate,
+        required int channels,
+        required bool isFloat,
+        required BigInt blockIndex,
+        required List<int> pcmBytes}) =>
+    RustLib.instance.api.crateApiPlayerEncodeWavpackBlock(
+        sampleRate: sampleRate,
+        channels: channels,
+        isFloat: isFloat,
+        blockIndex: blockIndex,
+        pcmBytes: pcmBytes);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<EventReporter>>
 abstract class EventReporter implements RustOpaqueInterface {
@@ -299,11 +314,11 @@ abstract class RustMiniaudioPlayer implements RustOpaqueInterface {
   /// Sets the master output volume level (0.0 to 1.0+).
   Future<void> setVolume({required double volume});
 
-  /// Begins recording rendered audio to a WAV file at `path` with a selective source.
+  /// Begins recording rendered audio to a supported container at `path` with a selective source.
   Future<void> startRecording(
       {required String path, required int format, required int source});
 
-  /// Starts live lock-free WAV recording targeting a detached POSIX file descriptor (Android `content://`).
+  /// Starts live lock-free recording targeting a detached POSIX file descriptor (Android `content://`).
   Future<void> startRecordingFd(
       {required String displayPath,
       required int fd,

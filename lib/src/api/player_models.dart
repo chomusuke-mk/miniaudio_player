@@ -6,38 +6,265 @@ import 'player_exception.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
 import 'spatial.dart';
 
-/// Formats supported for real-time audio file recording sinks.
+/// Formats defined for live audio recording sinks.
 enum AudioFileFormat {
-  /// Uncompressed 16-bit signed PCM WAV.
-  wav,
+  /// Uncompressed 16-bit signed PCM WAV (`RIFF`/`WAVE`).
+  wav(
+    wireCode: 0,
+    extension: 'wav',
+    mimeType: 'audio/wav',
+    shortLabel: 'WAV 16',
+    displayLabel: 'WAV (PCM 16-bit)',
+    isFloat32: false,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
 
-  /// MP3 compressed audio stream (currently unsupported for live recording).
-  mp3,
+  /// MP3 compressed audio stream (unsupported — no MP3 encoder in current crates).
+  mp3(
+    wireCode: -1,
+    extension: 'mp3',
+    mimeType: 'audio/mpeg',
+    shortLabel: 'MP3',
+    displayLabel: 'MP3',
+    isFloat32: false,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
 
-  /// FLAC lossless compressed audio stream (currently unsupported for live recording).
-  flac,
+  /// FLAC lossless compressed audio stream (unsupported — no FLAC encoder in current crates).
+  flac(
+    wireCode: -1,
+    extension: 'flac',
+    mimeType: 'audio/flac',
+    shortLabel: 'FLAC',
+    displayLabel: 'FLAC',
+    isFloat32: false,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
 
-  /// Uncompressed 32-bit IEEE floating-point PCM WAV.
-  wavFloat32;
+  /// Uncompressed 32-bit IEEE floating-point PCM WAV (`RIFF`/`WAVE`).
+  wavFloat32(
+    wireCode: 1,
+    extension: 'wav',
+    mimeType: 'audio/wav',
+    shortLabel: 'WAV 32F',
+    displayLabel: 'WAV (Float 32-bit)',
+    isFloat32: true,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
+
+  /// 64-bit extended WAV (`RF64` + `ds64`), 16-bit signed integer PCM (>4 GiB safe).
+  rf64(
+    wireCode: 2,
+    extension: 'rf64',
+    mimeType: 'audio/x-rf64',
+    shortLabel: 'RF64 16',
+    displayLabel: 'RF64 (>4GB PCM 16)',
+    isFloat32: false,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
+
+  /// 64-bit extended WAV (`RF64` + `ds64`), 32-bit IEEE float PCM (>4 GiB safe).
+  rf64Float32(
+    wireCode: 3,
+    extension: 'rf64',
+    mimeType: 'audio/x-rf64',
+    shortLabel: 'RF64 32F',
+    displayLabel: 'RF64 (>4GB Float 32)',
+    isFloat32: true,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
+
+  /// Sony Wave64 (`w64` GUID chunks), 16-bit signed integer PCM (>4 GiB safe).
+  w64(
+    wireCode: 4,
+    extension: 'w64',
+    mimeType: 'audio/x-w64',
+    shortLabel: 'W64 16',
+    displayLabel: 'Wave64 (PCM 16)',
+    isFloat32: false,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
+
+  /// Sony Wave64 (`w64` GUID chunks), 32-bit IEEE float PCM (>4 GiB safe).
+  w64Float32(
+    wireCode: 5,
+    extension: 'w64',
+    mimeType: 'audio/x-w64',
+    shortLabel: 'W64 32F',
+    displayLabel: 'Wave64 (Float 32)',
+    isFloat32: true,
+    isBigEndian: false,
+    isWavPack: false,
+  ),
+
+  /// Audio Interchange File Format (`FORM`/`AIFF`), big-endian 16-bit signed PCM.
+  aiff(
+    wireCode: 6,
+    extension: 'aiff',
+    mimeType: 'audio/aiff',
+    shortLabel: 'AIFF 16',
+    displayLabel: 'AIFF (PCM 16-bit)',
+    isFloat32: false,
+    isBigEndian: true,
+    isWavPack: false,
+  ),
+
+  /// Apple Core Audio Format (`caff`/`lpcm`), big-endian 16-bit signed PCM (>4 GiB safe).
+  caf(
+    wireCode: 7,
+    extension: 'caf',
+    mimeType: 'audio/x-caf',
+    shortLabel: 'CAF 16',
+    displayLabel: 'CAF (PCM 16-bit)',
+    isFloat32: false,
+    isBigEndian: true,
+    isWavPack: false,
+  ),
+
+  /// Apple Core Audio Format (`caff`/`lpcm`), big-endian 32-bit IEEE float PCM (>4 GiB safe).
+  cafFloat32(
+    wireCode: 8,
+    extension: 'caf',
+    mimeType: 'audio/x-caf',
+    shortLabel: 'CAF 32F',
+    displayLabel: 'CAF (Float 32-bit)',
+    isFloat32: true,
+    isBigEndian: true,
+    isWavPack: false,
+  ),
+
+  /// Lossless compressed WavPack (`.wv`) 16-bit signed integer PCM.
+  wavPack(
+    wireCode: 9,
+    extension: 'wv',
+    mimeType: 'audio/x-wavpack',
+    shortLabel: 'WV 16',
+    displayLabel: 'WavPack (Lossless 16)',
+    isFloat32: false,
+    isBigEndian: false,
+    isWavPack: true,
+  ),
+
+  /// Lossless compressed WavPack (`.wv`) 32-bit IEEE float PCM.
+  wavPackFloat32(
+    wireCode: 10,
+    extension: 'wv',
+    mimeType: 'audio/x-wavpack',
+    shortLabel: 'WV 32F',
+    displayLabel: 'WavPack (Lossless F32)',
+    isFloat32: true,
+    isBigEndian: false,
+    isWavPack: true,
+  );
+
+  /// Stable wire identifier matching Rust `RecordingEncoding` (`-1` when unsupported).
+  final int wireCode;
+
+  /// Canonical file extension without a leading dot (e.g., `'wav'`, `'rf64'`, `'wv'`).
+  final String extension;
+
+  /// Standard MIME type used when exporting Web Blobs or launching viewers.
+  final String mimeType;
+
+  /// Compact badge label for narrow dropdown triggers (e.g., `'WAV 16'`, `'WV 32F'`).
+  final String shortLabel;
+
+  /// Human-readable display label for UI selectors.
+  final String displayLabel;
+
+  /// Whether samples are stored as 32-bit IEEE floating point instead of 16-bit integer PCM.
+  final bool isFloat32;
+
+  /// Whether raw sample bytes use big-endian byte order (AIFF, CAF).
+  final bool isBigEndian;
+
+  /// Whether blocks are compressed losslessly with WavPack (`wavicle`).
+  final bool isWavPack;
+
+  const AudioFileFormat({
+    required this.wireCode,
+    required this.extension,
+    required this.mimeType,
+    required this.shortLabel,
+    required this.displayLabel,
+    required this.isFloat32,
+    required this.isBigEndian,
+    required this.isWavPack,
+  });
+
+  /// Whether this format can be encoded during live recording.
+  bool get isSupportedForRecording => wireCode >= 0;
+
+  /// Bits per uncompressed PCM sample (`16` or `32`).
+  int get bitsPerSample => isFloat32 ? 32 : 16;
+
+  /// Maximum payload byte limit for 32-bit containers, or `null` when >4 GiB safe.
+  int? get maxPayloadBytes {
+    if (this == wav || this == wavFloat32) return 0xFFFFFFFF - 36;
+    if (this == aiff) return 0xFFFFFFFF - 46;
+    return null;
+  }
+
+  /// All formats supported by the built-in real-time encoders.
+  static List<AudioFileFormat> get supportedRecordingFormats =>
+      values.where((f) => f.isSupportedForRecording).toList(growable: false);
+
+  static const Map<AudioFileFormat, AudioFileFormat> _float32Pairs = {
+    wav: wavFloat32,
+    rf64: rf64Float32,
+    w64: w64Float32,
+    caf: cafFloat32,
+    wavPack: wavPackFloat32,
+  };
+
+  static const Map<AudioFileFormat, AudioFileFormat> _pcm16Pairs = {
+    wavFloat32: wav,
+    rf64Float32: rf64,
+    w64Float32: w64,
+    cafFloat32: caf,
+    wavPackFloat32: wavPack,
+    aiff: aiff,
+  };
+
+  /// Validates this format for live recording and resolves an optional [wavFormat] bit-depth override.
+  ///
+  /// Throws [MiniaudioPlayerException] with [MapResult.errorUnsupported] when the format
+  /// (or requested bit depth for that container, e.g. 32-bit float AIFF) cannot be encoded.
+  AudioFileFormat resolveForRecording({WavFormat? wavFormat}) {
+    if (!isSupportedForRecording) {
+      throw MiniaudioPlayerException(
+        'Live recording to ${name.toUpperCase()} is not supported yet. '
+        'Supported formats: WAV, RF64, W64, AIFF, CAF, WavPack.',
+        errorCode: MapResult.errorUnsupported,
+      );
+    }
+    if (wavFormat == null) return this;
+    final resolved = wavFormat == WavFormat.float32
+        ? (_float32Pairs[this] ?? (isFloat32 ? this : null))
+        : (_pcm16Pairs[this] ?? (!isFloat32 ? this : null));
+    if (resolved == null) {
+      throw MiniaudioPlayerException(
+        'Container ${name.toUpperCase()} does not support ${wavFormat.name}.',
+        errorCode: MapResult.errorUnsupported,
+      );
+    }
+    return resolved;
+  }
 
   /// Converts this [AudioFileFormat] to its corresponding [WavFormat].
   ///
   /// Throws [MiniaudioPlayerException] with [MapResult.errorUnsupported] when
-  /// the requested format cannot yet be encoded directly during live recording.
+  /// the requested format cannot be encoded directly during live recording.
   WavFormat toWavFormat() {
-    switch (this) {
-      case AudioFileFormat.wav:
-        return WavFormat.pcm16;
-      case AudioFileFormat.wavFloat32:
-        return WavFormat.float32;
-      case AudioFileFormat.mp3:
-      case AudioFileFormat.flac:
-        throw MiniaudioPlayerException(
-          'Live recording to ${name.toUpperCase()} is not supported yet. '
-          'Use AudioFileFormat.wav (PCM16) or AudioFileFormat.wavFloat32 (IEEE Float32).',
-          errorCode: MapResult.errorUnsupported,
-        );
-    }
+    resolveForRecording();
+    return isFloat32 ? WavFormat.float32 : WavFormat.pcm16;
   }
 }
 

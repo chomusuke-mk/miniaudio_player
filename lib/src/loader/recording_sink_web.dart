@@ -218,6 +218,7 @@ JSArray<JSAny> _singleJsArray(JSAny item) =>
 final class _OpfsBuffer implements RecordingByteBuffer, WebOpfsRecordingSession {
   @override
   final String normalizedPath;
+  final String _mimeType;
   final _JSWorker _worker;
   final String _blobUrlWorker;
   final Map<int, Completer<_WorkerMsg>> _pending = {};
@@ -229,9 +230,11 @@ final class _OpfsBuffer implements RecordingByteBuffer, WebOpfsRecordingSession 
 
   _OpfsBuffer._({
     required this.normalizedPath,
+    required String mimeType,
     required _JSWorker worker,
     required String workerBlobUrl,
-  })  : _worker = worker,
+  })  : _mimeType = mimeType,
+        _worker = worker,
         _blobUrlWorker = workerBlobUrl {
     _worker.onmessage = ((JSAny ev) {
       final data = (_jsGetProp(ev, 'data') as _WorkerMsg?);
@@ -347,7 +350,7 @@ final class _OpfsBuffer implements RecordingByteBuffer, WebOpfsRecordingSession 
       if (ab != null) {
         final blob = _JSBlob(
           _singleJsArray(ab),
-          _JSBlobOptions(type: 'audio/wav'),
+          _JSBlobOptions(type: _mimeType),
         );
         _finalBlobUri = Uri.parse(_createObjectUrl(blob));
       }
@@ -370,7 +373,10 @@ external JSAny? _jsGetProp(JSAny target, String key);
 
 bool _opfsWarningEmitted = false;
 
-Future<WebOpfsRecordingSession> openWebOpfsRecordingSession(String path) async {
+Future<WebOpfsRecordingSession> openWebOpfsRecordingSession(
+  String path, {
+  String mimeType = 'audio/wav',
+}) async {
   final segments = _parseOpfsSegments(path);
   final normalized = segments.join('/');
 
@@ -401,6 +407,7 @@ Future<WebOpfsRecordingSession> openWebOpfsRecordingSession(String path) async {
 
   final session = _OpfsBuffer._(
     normalizedPath: normalized,
+    mimeType: mimeType,
     worker: worker,
     workerBlobUrl: workerUrl,
   );
@@ -424,12 +431,15 @@ Future<WebOpfsRecordingSession> openWebOpfsRecordingSession(String path) async {
   return session;
 }
 
-Uri? createWavBlobUriFromBytes(Uint8List wavBytes) {
+Uri? createWavBlobUriFromBytes(
+  Uint8List wavBytes, {
+  String mimeType = 'audio/wav',
+}) {
   if (wavBytes.isEmpty) return null;
   final copy = Uint8List.fromList(wavBytes);
   final blob = _JSBlob(
     _singleJsArray(copy.buffer.toJS),
-    _JSBlobOptions(type: 'audio/wav'),
+    _JSBlobOptions(type: mimeType),
   );
   return Uri.parse(_createObjectUrl(blob));
 }

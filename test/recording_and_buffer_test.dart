@@ -378,5 +378,114 @@ void main() {
       expect(memBd.getUint32(4, Endian.little), equals(memBytes.length - 8));
       expect(memBd.getUint32(40, Endian.little), equals(memBytes.length - 44));
     });
+
+    test(
+        'Encodes RF64, W64, AIFF, CAF, and WavPack via disk & RecordingByteBuffer and round-trips through decoder',
+        () async {
+      final supported = AudioFileFormat.supportedRecordingFormats;
+      expect(supported, hasLength(11));
+      expect(supported, isNot(contains(AudioFileFormat.mp3)));
+      expect(supported, isNot(contains(AudioFileFormat.flac)));
+
+      expect(
+        () => AudioFileFormat.aiff.resolveForRecording(wavFormat: WavFormat.float32),
+        throwsA(
+          isA<MiniaudioPlayerException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            equals(MapResult.errorUnsupported),
+          ),
+        ),
+      );
+
+      final tempDir = await Directory.systemTemp.createTemp('miniaudio_rec_formats_');
+      addTearDown(() async {
+        if (tempDir.existsSync()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final wavBytes = _generateWavSine(
+        sampleRate: 48000,
+        channels: 2,
+        durationSeconds: 1.5,
+        frequencyHz: 440.0,
+      );
+      final player = MiniaudioPlayer(
+        queue: [AudioSource(wavBytes, data: 'sine440')],
+        outputs: const {},
+        config: const PlayerConfig(sampleRate: 48000, channels: 2),
+      );
+      addTearDown(player.dispose);
+      await player.action.play();
+
+      final expectedContainer = <AudioFileFormat, String>{
+        AudioFileFormat.rf64: 'RF64',
+        AudioFileFormat.rf64Float32: 'RF64',
+        AudioFileFormat.w64: 'W64',
+        AudioFileFormat.w64Float32: 'W64',
+        AudioFileFormat.aiff: 'AIFF',
+        AudioFileFormat.caf: 'CAF',
+        AudioFileFormat.cafFloat32: 'CAF',
+        AudioFileFormat.wavPack: 'WavPack',
+        AudioFileFormat.wavPackFloat32: 'WavPack',
+      };
+
+      for (final entry in expectedContainer.entries) {
+        final fmt = entry.key;
+        final memBuf = MemoryRecordingBuffer(path: 'mem://rec.${fmt.extension}');
+        await player.action.startRecordingToBuffer(memBuf, format: fmt);
+        await Future<void>.delayed(const Duration(milliseconds: 90));
+        final res = await player.action.stopRecording();
+        expect(res.bytesWritten, greaterThan(0), reason: 'zero bytes for $fmt');
+
+        final recorded = memBuf.toBytes();
+        final info = (await MiniaudioPlayer.analyzeAudio(
+          AudioSource(recorded, data: fmt.name),
+          replayGain: false,
+          waveform: false,
+        ))
+            .audioInfo;
+        expect(info.sampleRate, equals(48000), reason: 'sampleRate $fmt');
+        expect(info.channels, equals(2), reason: 'channels $fmt');
+        expect(info.bitsPerSample, equals(fmt.bitsPerSample), reason: 'bps $fmt');
+        expect(
+          info.containerFormat,
+          contains(entry.value),
+          reason: 'container $fmt',
+        );
+        expect(info.duration, greaterThan(Duration.zero), reason: 'dur $fmt');
+      }
+
+      for (final fmt in const [
+        AudioFileFormat.rf64Float32,
+        AudioFileFormat.w64,
+        AudioFileFormat.aiff,
+        AudioFileFormat.cafFloat32,
+        AudioFileFormat.wavPack,
+      ]) {
+        final filePath = '${tempDir.path}/native_${fmt.name}.${fmt.extension}';
+        await player.action.startRecording(filePath, format: fmt);
+        await Future<void>.delayed(const Duration(milliseconds: 90));
+        final res = await player.action.stopRecording();
+        expect(res.bytesWritten, greaterThan(0), reason: 'disk bytes $fmt');
+        expect(File(filePath).existsSync(), isTrue, reason: 'disk exists $fmt');
+
+        final info = (await MiniaudioPlayer.analyzeAudio(
+          filePath,
+          replayGain: false,
+          waveform: false,
+        ))
+            .audioInfo;
+        expect(info.sampleRate, equals(48000), reason: 'disk sr $fmt');
+        expect(info.channels, equals(2), reason: 'disk ch $fmt');
+        expect(info.bitsPerSample, equals(fmt.bitsPerSample), reason: 'disk bps $fmt');
+        expect(
+          info.containerFormat,
+          contains(expectedContainer[fmt]!),
+          reason: 'disk container $fmt',
+        );
+      }
+    });
   });
 }

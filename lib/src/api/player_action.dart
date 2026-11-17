@@ -952,11 +952,13 @@ class PlayerAction<T> {
   /// - [buffer]: Optional [RecordingByteBuffer] (such as [MemoryRecordingBuffer]).
   ///   When both a [String] path and [buffer] are supplied, a warning is logged and
   ///   [buffer] takes precedence.
-  /// - [format]: Container/sample preset ([AudioFileFormat.wav] for 16-bit PCM or
-  ///   [AudioFileFormat.wavFloat32] for 32-bit IEEE float). Unimplemented formats such
-  ///   as MP3/FLAC throw [MiniaudioPlayerException] with [MapResult.errorUnsupported].
+  /// - [format]: Container/sample preset (e.g., [AudioFileFormat.wav],
+  ///   [AudioFileFormat.wavFloat32], [AudioFileFormat.rf64], [AudioFileFormat.w64],
+  ///   [AudioFileFormat.aiff], [AudioFileFormat.caf], or [AudioFileFormat.wavPack]).
+  ///   Formats without an active encoder ([AudioFileFormat.mp3], [AudioFileFormat.flac])
+  ///   throw [MiniaudioPlayerException] with [MapResult.errorUnsupported].
   /// - [source]: Engine audio bus to record.
-  /// - [wavFormat]: Optional explicit [WavFormat] override (`pcm16` or `float32`).
+  /// - [wavFormat]: Optional bit-depth override (`pcm16` or `float32`) when supported by [format].
   Future<void> startRecording(
     Object? pathOrBuffer, {
     RecordingByteBuffer? buffer,
@@ -995,9 +997,8 @@ class PlayerAction<T> {
       );
     }
 
-    // Validate container format before acquiring OS or JS handles.
-    final formatWav = format.toWavFormat();
-    final effectiveWav = wavFormat ?? formatWav;
+    // Validate container format and resolve bit-depth override before acquiring OS or JS handles.
+    final effectiveEncoding = format.resolveForRecording(wavFormat: wavFormat);
 
     if (resolvedPath != null && resolvedBuffer != null) {
       MapLogger.warnImportant(
@@ -1023,7 +1024,7 @@ class PlayerAction<T> {
           buffer: resolvedBuffer,
           displayPath: resolvedBuffer.path ?? resolvedPath ?? '',
           source: source,
-          wavFormat: effectiveWav,
+          encoding: effectiveEncoding,
           initialSampleRate: _player._configuredSampleRate,
           initialChannels: _player._configuredChannels,
         );
@@ -1033,13 +1034,16 @@ class PlayerAction<T> {
       }
 
       if (isWebOpfsEnvironment()) {
-        final opfs = await openWebOpfsRecordingSession(resolvedPath!);
+        final opfs = await openWebOpfsRecordingSession(
+          resolvedPath!,
+          mimeType: effectiveEncoding.mimeType,
+        );
         final session = _DartBufferRecordingSession<T>(
           player: _player,
           buffer: opfs.buffer,
           displayPath: opfs.normalizedPath,
           source: source,
-          wavFormat: effectiveWav,
+          encoding: effectiveEncoding,
           initialSampleRate: _player._configuredSampleRate,
           initialChannels: _player._configuredChannels,
           finalizeUri: opfs.finalizeBlobUri,
@@ -1063,7 +1067,7 @@ class PlayerAction<T> {
           await _rust.startRecordingFd(
             displayPath: trimmedPath,
             fd: fd,
-            format: effectiveWav.index,
+            format: effectiveEncoding.wireCode,
             source: source.value,
           );
         } catch (e) {
@@ -1079,7 +1083,7 @@ class PlayerAction<T> {
       try {
         await _rust.startRecording(
           path: resolvedPath,
-          format: effectiveWav.index,
+          format: effectiveEncoding.wireCode,
           source: source.value,
         );
       } catch (e) {

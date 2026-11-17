@@ -57,6 +57,37 @@ class PlaybackEngineCard extends StatelessWidget {
     }
   }
 
+  Future<void> _downloadLastRecording(BuildContext context) async {
+    try {
+      final ok = await controller.downloadLastRecording();
+      if (context.mounted && !ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF2D0B14),
+            content: Text(
+              'Could not download recording.',
+              style: TextStyle(color: StudioColors.accentRose),
+            ),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF2D0B14),
+            content: Text(
+              'Failed to download recording: $e',
+              style: const TextStyle(color: StudioColors.accentRose),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -935,16 +966,25 @@ class PlaybackEngineCard extends StatelessWidget {
                       isDense: true,
                       icon: const Icon(Icons.arrow_drop_down, size: 16),
                       dropdownColor: const Color(0xFF0E172A),
-                      items: const [
-                        AudioFileFormat.wav,
-                        AudioFileFormat.wavFloat32,
-                      ].map((f) {
+                      selectedItemBuilder: (context) => AudioFileFormat
+                          .supportedRecordingFormats
+                          .map((f) {
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            f.shortLabel,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                      items: AudioFileFormat.supportedRecordingFormats.map((f) {
                         return DropdownMenuItem(
                           value: f,
                           child: Text(
-                            f == AudioFileFormat.wavFloat32
-                                ? 'WAV 32F'
-                                : 'WAV 16',
+                            f.displayLabel,
                             style: const TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
@@ -1132,7 +1172,7 @@ class PlaybackEngineCard extends StatelessWidget {
                               const SizedBox(width: 5),
                               Flexible(
                                 child: Text(
-                                  'Last: ${controller.lastRecordingResult!.path.split(RegExp(r'[/\\]')).last} (${_formatDuration(controller.lastRecordingResult!.duration)})',
+                                  'Last: ${controller.lastRecordingFileName ?? ''} (${_formatDuration(controller.lastRecordingResult!.duration)})',
                                   style: const TextStyle(
                                     fontSize: 9.5,
                                     color: StudioColors.accentCyan,
@@ -1145,6 +1185,52 @@ class PlaybackEngineCard extends StatelessWidget {
                               ),
                             ],
                           ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+              if (controller.lastRecordingResult != null && !isRec && isWebUi)
+                Tooltip(
+                  message:
+                      'Download ${controller.lastRecordingFileName ?? "recording"}',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _downloadLastRecording(context),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF070B14),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: StudioColors.accentEmerald
+                                .withValues(alpha: 0.45),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.download,
+                              size: 12,
+                              color: StudioColors.accentEmerald,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'Download',
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                color: StudioColors.accentEmerald,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),

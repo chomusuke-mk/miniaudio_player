@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data' show ByteData, Endian;
+import 'dart:typed_data' show ByteData, BytesBuilder, Endian;
 
 import 'package:flutter/services.dart' show RootIsolateToken;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'

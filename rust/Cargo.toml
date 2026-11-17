@@ -73,7 +73,7 @@ m3u8-rs = "6.0.1"
 
 # Additional Audio Formats and Tag Metadata (MIT / Apache-2.0)
 ape-decoder = "0.3.2"
-wavicle = "0.1.0"
+wavicle = { version = "0.1.0", features = ["decode", "encode"] }
 lofty = "0.25.5"
 # Audio Fingerprinting (Chromaprint / AcoustID 100% Rust)
 chromaprint-next = "0.1.0"

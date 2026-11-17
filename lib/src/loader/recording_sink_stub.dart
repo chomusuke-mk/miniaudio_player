@@ -8,11 +8,18 @@ abstract interface class WebOpfsRecordingSession {
   Future<Uri?> finalizeBlobUri();
 }
 
-Future<WebOpfsRecordingSession> openWebOpfsRecordingSession(String path) {
+Future<WebOpfsRecordingSession> openWebOpfsRecordingSession(
+  String path, {
+  String mimeType = 'audio/wav',
+}) {
   throw UnsupportedError('OPFS recording is only supported on Web.');
 }
 
-Uri? createWavBlobUriFromBytes(Uint8List wavBytes) => null;
+Uri? createWavBlobUriFromBytes(
+  Uint8List wavBytes, {
+  String mimeType = 'audio/wav',
+}) =>
+    null;
 
 void revokeRecordingBlobUri(Uri? uri) {}
 

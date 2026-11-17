@@ -30,7 +30,7 @@ pub use input_manager::InputManager;
 pub use miniaudio_player::MiniaudioPlayer;
 pub use music_manager::MusicManager;
 pub use output_manager::OutputManager;
-pub use recording::{LiveRecorder, WavFormat};
+pub use recording::{LiveRecorder, RecordingEncoding, WavFormat};
 pub use renderer::{AudioRenderer, DspCommand};
 pub use simd_mixer::SimdMixer;
 pub use types::{PlaybackState, QueueTransition};

@@ -19,10 +19,13 @@ class _DomainNotifier extends ChangeNotifier {
 /// DSP effects (Equalizer, Reverb, Limiter, Silence Skipping, Crossfeed), multi-output matrix,
 /// multi-capture input routing with ducking, and live recording.
 class AudioEngineController extends ChangeNotifier {
-  AudioEngineController({this.fileOpener});
+  AudioEngineController({this.fileOpener, this.webDownloader});
 
   /// Optional override used to open the last recording in tests.
   final Future<OpenResult> Function(String path, {String? type})? fileOpener;
+
+  /// Optional override used to trigger Web downloads in tests.
+  final bool Function(String uri, {String? fileName})? webDownloader;
 
   final MiniaudioPlayer<AudioTrack> engine = MiniaudioPlayer<AudioTrack>(
     config: PlayerConfig(
@@ -409,6 +412,8 @@ class AudioEngineController extends ChangeNotifier {
   Duration get recordedDuration => engine.state.recordedDuration;
   AudioFileFormat _recordingFormat = AudioFileFormat.wav;
   AudioFileFormat get recordingFormat => _recordingFormat;
+  AudioFileFormat _activeRecordingFormat = AudioFileFormat.wav;
+  AudioFileFormat _lastRecordedFormat = AudioFileFormat.wav;
   AudioOutputSource _recordingSource = AudioOutputSource.all;
   AudioOutputSource get recordingSource => _recordingSource;
   bool _useWebOpfs = false;
@@ -441,20 +446,34 @@ class AudioEngineController extends ChangeNotifier {
     _notifyDomain(_recordingNotifier);
   }
 
-  /// Target file path (Native) or `blob:` URI (Web) passed to [OpenFile.open].
+  String _deriveFileName(String rawPath, AudioFileFormat fmt) {
+    final parsed = rawPath.split(RegExp(r'[/\\]')).last.trim();
+    return parsed.isNotEmpty ? parsed : 'studio_recording.${fmt.extension}';
+  }
+
+  /// Canonical file name (including extension) of the most recent completed recording.
+  String? get lastRecordingFileName {
+    final res = _lastRecordingResult;
+    if (res == null) return null;
+    return _deriveFileName(res.path, _lastRecordedFormat);
+  }
+
+  /// Target file path (Native) or `blob:...#<fileName>` URI (Web) passed to [OpenFile.open].
   String? get lastRecordingOpenTarget {
     final res = _lastRecordingResult;
     if (res == null) return null;
     if (kIsWeb) {
-      return (res.uri ?? _lastOwnedWebBlobUri)?.toString();
+      return (_lastResultWebBlobUri ?? res.uri ?? _lastOwnedWebBlobUri)
+          ?.toString();
     }
     return res.path.isNotEmpty ? res.path : res.uri?.toString();
   }
 
   Future<void> startRecording({String? customPath}) async {
     _lastRecordingError = null;
+    final activeFmt = _recordingFormat;
     final fileName =
-        'studio_recording_${DateTime.now().millisecondsSinceEpoch}.wav';
+        'studio_recording_${DateTime.now().millisecondsSinceEpoch}.${activeFmt.extension}';
 
     try {
       if (kIsWeb) {
@@ -466,7 +485,7 @@ class AudioEngineController extends ChangeNotifier {
           _activeMemoryBuffer = null;
           await engine.action.startRecording(
             effectivePath,
-            format: _recordingFormat,
+            format: activeFmt,
             source: _recordingSource,
           );
         } else {
@@ -474,7 +493,7 @@ class AudioEngineController extends ChangeNotifier {
           _activeMemoryBuffer = memBuf;
           await engine.action.startRecordingToBuffer(
             memBuf,
-            format: _recordingFormat,
+            format: activeFmt,
             source: _recordingSource,
           );
         }
@@ -486,10 +505,11 @@ class AudioEngineController extends ChangeNotifier {
                 : await createTempRecordingFilePath(fileName);
         await engine.action.startRecording(
           targetPath,
-          format: _recordingFormat,
+          format: activeFmt,
           source: _recordingSource,
         );
       }
+      _activeRecordingFormat = activeFmt;
       _notifyDomain(_recordingNotifier);
     } catch (e) {
       _activeMemoryBuffer = null;
@@ -506,19 +526,28 @@ class AudioEngineController extends ChangeNotifier {
       final res = await engine.action.stopRecording();
       revokeWebRecordingBlobUri(_lastOwnedWebBlobUri);
       _lastOwnedWebBlobUri = null;
-      if (_lastResultWebBlobUri != res.uri) {
+      if (_lastResultWebBlobUri?.removeFragment() != res.uri?.removeFragment()) {
         revokeWebRecordingBlobUri(_lastResultWebBlobUri);
         _lastResultWebBlobUri = null;
       }
 
+      _lastRecordedFormat = _activeRecordingFormat;
+      final fileName = _deriveFileName(res.path, _lastRecordedFormat);
       if (memBuf != null) {
         final bytes = memBuf.takeBytes();
         _lastRecordedBytes = bytes;
-        _lastOwnedWebBlobUri = kIsWeb ? createWebRecordingBlobUri(bytes) : null;
+        _lastOwnedWebBlobUri = kIsWeb
+            ? createWebRecordingBlobUri(
+                bytes,
+                mimeType: _lastRecordedFormat.mimeType,
+                fileName: fileName,
+              )
+            : null;
       } else {
         _lastRecordedBytes = null;
-        _lastResultWebBlobUri =
-            (res.uri != null && res.uri!.scheme == 'blob') ? res.uri : null;
+        _lastResultWebBlobUri = (res.uri != null && res.uri!.scheme == 'blob')
+            ? res.uri!.replace(fragment: fileName)
+            : null;
       }
       _lastRecordingResult = res;
       _lastRecordingError = null;
@@ -531,6 +560,27 @@ class AudioEngineController extends ChangeNotifier {
     }
   }
 
+  /// Triggers a direct browser file download using [lastRecordingFileName] (with
+  /// extension) on Web, or falls back to [openLastRecording] on Native targets.
+  Future<bool> downloadLastRecording() async {
+    final res = _lastRecordingResult;
+    if (res == null) return false;
+    final fileName = lastRecordingFileName!;
+    final downloader = webDownloader;
+    if (kIsWeb || downloader != null) {
+      final rawUri =
+          (_lastOwnedWebBlobUri ?? _lastResultWebBlobUri ?? res.uri)
+                  ?.toString() ??
+              (res.path.isNotEmpty ? res.path : '');
+      if (rawUri.isEmpty) return false;
+      return downloader != null
+          ? downloader(rawUri, fileName: fileName)
+          : triggerWebRecordingDownload(rawUri, fileName: fileName);
+    }
+    final openRes = await openLastRecording();
+    return openRes.type == ResultType.done;
+  }
+
   /// Opens the most recent completed recording via `package:open_file`,
   /// falling back to a browser download link on Web when popups/COOP block `window.open`.
   Future<OpenResult> openLastRecording() async {
@@ -541,14 +591,13 @@ class AudioEngineController extends ChangeNotifier {
         message: 'No openable recording available.',
       );
     }
+    final mimeType = _lastRecordedFormat.mimeType;
     final opener = fileOpener;
     final res = opener != null
-        ? await opener(target, type: 'audio/wav')
-        : await OpenFile.open(target, type: 'audio/wav');
+        ? await opener(target, type: mimeType)
+        : await OpenFile.open(target, type: mimeType);
     if (kIsWeb && res.type != ResultType.done) {
-      final rawPath = _lastRecordingResult?.path ?? '';
-      final fileName = rawPath.split(RegExp(r'[/\\]')).last;
-      if (triggerWebRecordingDownload(target, fileName: fileName)) {
+      if (await downloadLastRecording()) {
         return OpenResult(type: ResultType.done, message: 'done');
       }
     }
