@@ -5,6 +5,7 @@
 Major architectural evolution introducing a pure-Rust audio/DSP/buffering core paired with a thin C11 hardware device bridge and `flutter_rust_bridge` v2 bindings, unifying music playback, effects, multi-routing, recording, and acoustic analysis under `MiniaudioPlayer<T>`.
 
 ### Core Architecture & FFI
+
 - **Rust Engine Core + Minimal C11 Device Bridge**:
   - Migrated decoding, buffering, resampling, mixing, DSP, spatialization, recording, and analysis into `miniaudio_player_rust` (`rust/`), keeping a minimal C11 device enumeration and PCM callback bridge (`rust/c_src/miniaudio_device_bridge.c` + `miniaudio.h`).
   - Configured size- and speed-optimized release builds (`opt-level = "s"`, `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`).
@@ -19,28 +20,31 @@ Major architectural evolution introducing a pure-Rust audio/DSP/buffering core p
   - Replaced legacy `BufferedRange` with clean `Buffer` (`start`, `end`, `isBuffering`), replaced raw `metaBytes` drafts with parsed `setMetadataEnabled` / `stream.metadata` (`AudioMetadata`) and `setVisualizerEnabled` switches, and removed legacy exclusive mode and Dart `assetLoader` hooks.
 
 ### Decoding, Streaming & Buffering
+
 - **Symphonia 0.6 Multi-Codec Engine & HLS + AES-128-CBC**:
-  - Replaced C decoders with Symphonia 0.6 (`MP3`, `FLAC`, `Vorbis`, `AAC`, `ALAC`, `WAV`, `AIFF`, `CAF`, `MKV/WebM/MKA`), `symphonia-adapter-libopus` (`Opus`), `symphonia-adapter-fdk-aac`, plus native Rust readers for **Monkey's Audio (`.ape`)**, **WavPack (`.wv`)**, **DSF/DSD (`.dsf`)**, and **Extended PCM** (`RF64`, `RIFX`, `W64`, `BWF`, high-depth PCM/float).
+  - Replaced C decoders with Symphonia 0.6 (`MP3`, `FLAC`, `Vorbis`, `AAC`, `ALAC`, `WAV`, `AIFF`, `CAF`, `MKV/WebM/MKA`), `symphonia-opus` (`Opus`), `rusty_aac` (`AAC/ADTS`), plus native Rust readers for **Monkey's Audio (`.ape`)**, **WavPack (`.wv`, decode & live encode via `wavicle`)**, **DSF/DSD (`.dsf`)**, and **Extended PCM** (`RF64`, `RIFX`, `W64`, `BWF`, high-depth PCM/float).
   - Added full **HLS (`.m3u8`)** streaming (`m3u8-rs`), **AES-128-CBC** key/IV segment decryption, **MPEG-TS** demuxing, and inline **Shoutcast/Icecast ICY** live metadata extraction.
 - **3-Plane `StreamSession` & Progressive Sliding-Window Fetch**:
   - Replaced legacy C `map_buffer_t` with `StreamSession`: linear pinned `Head` (`BufferBackend::Linear`, >= 64 KB), 8 MB default sliding circular `Body` (`BufferBackend::Circular` `[B_back | B_ahead]`), and sparse `Metadata` (`BTreeMap<u64, Vec<u8>>`), bridged via `DemuxedStreamReader` and `MetadataStreamReader`.
   - Implemented 3-phase `BlockFetchPhase` (`UrgentBootstrap` -> `Stabilization` -> `CoalescedCruise` 15 s super-blocks) with rate-scaled lookahead (`1.0x..3.0x`) and `O(1)` in-window seeks.
 
 ### Playback, Mixing, DSP, SFX & Analysis
+
 - **Dual-Deck Queue, Crossfade, Infinite Mix & Rust DSP Pipeline**:
   - Migrated authoritative playlists, Fisher-Yates shuffle, `reorderByIds`, `EqualPower`/`Linear` crossfading, and `InfiniteMixConfig` (`stream.needMoreTracks`) natively into `MusicManager` (`DualSource`).
   - Added `Rubato` high-order resampler, `SonicStream` / `TimeStretch` independent rate & pitch, `SilenceDetector` FSM with 5 ms crossfade and saved-duration tracking, ISO 266 10-band DF2T `Equalizer` + Preamp, `Bs2bCrossfeed`, `Freeverb` algorithmic reverb, `Spatializer`, `SoftLimiter` brickwall peak limiter, `SimdMixer` (AVX2/FMA & NEON), and per-deck `ReplayGainMode` (`disabled`, `track`, `forced`) eliminating crossfade loudness jumps.
 - **64-Voice Polyphonic RAM Effects Pool & 3D Spatial Audio + Doppler**:
   - Added `EffectsManager` (`VoicePoolRt`) for up to 64 concurrent voices with zero Dart heap duplication, configurable memory limits (`maxRamBytes`, LRU eviction for file/network SFX while pinning memory-backed SFX), `EffectConfig` (`DspRouting::{inherit, isolate, bypass}`, `VoiceStealingPolicy`, gain/pitch/pan jitter), and controllable `Voice` handles.
   - Added 3D spatial positioning and velocity-driven Doppler pitch shifting (`SpatialListener`, `SpatialEmitter`, `DistanceModel`, `Vector3`).
-- **Multi-Output Routing Matrix, Multi-Input Auto-Ducking & Live WAV Recording**:
+- **Multi-Output Routing Matrix, Multi-Input Auto-Ducking, Real-Time Audio Taps & Multi-Format Recording**:
   - Added concurrent multi-device `AudioOutput` routing across 5 isolated audio buses (`all`, `musicMix`, `activeTrack`, `standbyTrack`, `voiceOnly`) for DJ CUE pre-listening and clean broadcasts, with hardware OS endpoint deduplication (`AUTO` vs explicit ID) and hot-plug detection (`pauseOnDeviceChange`).
   - Added multi-microphone `AudioInput` capture, live-edge jitter drop, configurable direct monitoring, and lock-free RMS sidechain `AutoDucker` (`DuckingConfig`) with max-attenuation multi-mic arbitration.
-  - Added lock-free WAV disk recording (`startRecording` / `stopRecording`, `WavFormat.pcm16` & `float32`, selective `AudioOutputSource` capture).
+  - Added **Multi-Bus Real-Time PCM Taps (`watchAudioBus` Push & `openAudioTapBuffer` Zero-Alloc Pull)**: lock-free `rtrb` SPSC matrix (`TapRtMatrix` / `TapBusRegistry`, `32,768`-sample rings) emitting `AudioTapFormat.float32` / `pcm16` over broadcast `AudioPcmChunk` streams (`map-tap-dispatcher`, `5..=200 ms` coalesced frames) or reusable zero-allocation `AudioTapBuffer` instances (`map_tap_alloc_buffer` + direct C-ABI `map_tap_poll_bytes` on Native / `wasm_poll_audio_tap_bytes` on Web, with direct RT consumer fast-path for VoIP/calls).
+  - Added **Lock-Free Multi-Format Recording (`LiveRecorder`, `AudioStreamWriter`, `RecordingByteBuffer`, Web OPFS)**: supports 11 container/sample encodings via `AudioFileFormat` / `RecordingEncoding` — `wav`/`wavFloat32`, >4 GiB `rf64`/`rf64Float32` & `w64`/`w64Float32`, big-endian `aiff` & `caf`/`cafFloat32`, and lossless compressed `wavPack`/`wavPackFloat32` (`.wv` via `wavicle` `32,768`-frame streaming blocks and `encodeWavpackBlock`) — writing to local files, `file://` URIs, Android writable `content://` FDs (`startRecordingFd`), async FIFO `RecordingByteBuffer` / `MemoryRecordingBuffer`, and browser OPFS Worker storage or named `File` Blob downloads.
 - **Single-Pass Audio Analyzer, Lofty Metadata & Chromaprint**:
   - Added `MiniaudioPlayer.analyzeAudio` / `analyzeAudioSync` executing header fast-path or a single decode pass for ITU-R BS.1770-4 LUFS / ReplayGain, O(1)-RAM adaptive 2:1 RMS decimated waveforms (`100` points default), full `lofty` + chapter/artwork `AudioMetadata`, and `Chromaprint` (`Algorithm::Test2`) fingerprints for AcoustID lookup.
 - **Studio Master Console Example App**:
-  - Rebuilt `example/` into three responsive views: `Studio Master Console` (`2:2:1` top row for Playing, Queue, Effects and `1:2` bottom row for Hardware Routing + Spectrum Visualizer and compact DSP grid), `Audio Analyzer` (100-block interactive waveform, collapsible telemetry, AcoustID lookup, and native optimization breakdowns), and the updated v4.0.0 `Ingest & Buffer Matrix`.
+  - Rebuilt `example/` into three responsive views: `Studio Master Console` (`2:2:1` top row for Playing, Queue, Effects and `1:2` bottom row for Hardware Routing + Spectrum Visualizer and compact DSP grid), `Audio Analyzer` (100-block interactive waveform, collapsible telemetry, AcoustID lookup, and native optimization breakdowns), and the updated v4.0.0 `Ingest & Buffer Matrix`, with multi-format live recording controls, opt-in Web `Use OPFS` checkbox, clickable `Last:` preview links (`blob:...#<filename>` on Web / `OpenFile`), and named browser `Download` action (`<a download>`).
 
 ## 3.0.2
 

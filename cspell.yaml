@@ -115,6 +115,7 @@ words:
   - cosinusoidal
   - covr
   - crctable
+  - credentialless
   - crossfade
   - crossfades
   - crossfading
@@ -148,6 +149,7 @@ words:
   - Demux
   - demuxed
   - demuxer
+  - demuxers
   - Demuxes
   - demuxing
   - denormal
@@ -203,9 +205,11 @@ words:
   - EINVAL
   - electroacoustic
   - elif
+  - Embedder
   - emcc
   - EMCC
   - EMFILE
+  - emption
   - emrun
   - emscripten
   - emsdk
@@ -333,6 +337,7 @@ words:
   - isrc
   - Isrc
   - itheta
+  - jank
   - jetbrains
   - Jezar
   - jsval
@@ -374,6 +379,7 @@ words:
   - logcat
   - loshelf
   - lowpass
+  - lpcm
   - lpcs
   - LPDIRECTSOUNDBUFFER
   - LPDIRECTSOUNDCAPTURE
@@ -470,6 +476,7 @@ words:
   - oggpack
   - onaudioprocess
   - opensl
+  - OPFS
   - oporus
   - optimizador
   - opusdec
@@ -498,6 +505,7 @@ words:
   - preasignación
   - Preasignación
   - Preasignar
+  - Prebuffer
   - prebuffering
   - preclipped
   - Preconfigurar
@@ -685,6 +693,7 @@ words:
   - throughs
   - timestamping
   - timestretch
+  - toggleable
   - toneishness
   - TPDF
   - trylock
