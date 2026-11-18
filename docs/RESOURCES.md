@@ -18,9 +18,8 @@ Este documento define la arquitectura aprobada (**Enfoque C: Sub-repositorio ded
   * `ffmpeg` + `ffprobe` (codificadores `libmp3lame`, `mp2`/`libtwolame`, `aac`, `alac`, `flac`, `libopus`, `libvorbis`, `wavpack`, `pcm_s16le`/`be`/`s24le`/`f32le`, muxers `wav`/`rf64`/`w64`/`aiff`/`caf`/`adts`/`ogg`/`opus`/`matroska`/`webm`/`hls`/`mpegts`).
   * `python3` (`3.14.4`), **`python3-mutagen` (`1.47.0`, con `mid3v2` y `mutagen-inspect`)** y **`Pillow` (`PIL`)** con soporte JPEG, PNG, WebP y TIFF.
   * **`mkvtoolnix` (`97.0`, con `mkvmerge`, `mkvpropedit`, `mkvextract`)** para adjuntos múltiples, capítulos y etiquetas XML en Matroska (`.mka`, `.mkv`, `.webm`).
-* **Únicas herramientas aún ausentes** (para cubrir formatos heredados/DSD específicos):
-  * `tool/wav_to_dsf.py` (script Python propio de conversión PCM → DSD64 DSF; aún por crear).
-  * `mac` (Monkey's Audio CLI) para codificar `.ape` desde cero, y encoder `.mp1` (MPEG-1 Layer I), ya que `ffmpeg` solo incluye decodificadores para ambos.
+  * **`wav_to_dsf` (`example/assets/music/scripts/wav_to_dsf.c`)**: Codificador DSF propio en C compilado para generar DSD64 PDM desde WAV.
+  * **`mac` (Monkey's Audio CLI)**: Compilado localmente desde fuente en `temp/monkeys-audio/build/mac` para codificar `.ape` (`25_Velocity_of_One.ape`). Únicamente `.mp1` (MPEG-1 Layer I) carece de codificador estándar en `ffmpeg`, cubriéndose los demás 29 formatos reales.
 
 ---
 
@@ -35,15 +34,15 @@ Repositorios en GitHub:
 Montaje único en el repo principal (SIN symlinks, SIN Git LFS):
   miniaudio_player/
   ├── .gitmodules                    # path = example/assets/music
-  ├── .gitignore                     # Mantiene /test/fixtures/* excluidos; NO ignora example/assets/music
+  ├── .gitignore                     # Limpio; NO ignora example/assets/music
   ├── .pubignore                     # Excluye /example/assets/music/, /test/, /.gitmodules (0 MB música en pub.dev)
   ├── example/
   │   ├── .gitignore                 # SIN `/assets/music/` para permitir el gitlink 160000 limpio
   │   ├── pubspec.yaml               # Declara `- assets/music/` (y opcional `- assets/music/hls/`)
   │   └── assets/
-  │       └── music/   <───────────── SUBMÓDULO ÚNICO (1 única copia física compartida)
+  │       └── music/   <───────────── SUBMÓDULO ÚNICO (1 única copia física compartida; incluye README.md)
   └── test/
-      └── fixtures/MANIFEST.md       # Sin copias binarias duplicadas; tests resuelven desde `example/assets/music/`
+      └── MANIFEST.md                # Contrato de pruebas en inglés (tests resuelven desde `example/assets/music/`)
 ```
 
 ### 2.2 Por Qué `example/assets/music` Es la Ubicación Única Óptima
@@ -78,7 +77,7 @@ Montaje único en el repo principal (SIN symlinks, SIN Git LFS):
 ## 3. Estado de `.gitignore`, `example/.gitignore` y `.pubignore`
 
 * [`../.gitignore`](../.gitignore):
-  * Mantiene `/test/fixtures/*` y `!/test/fixtures/MANIFEST.md` para evitar binarios residuales en `test/fixtures/`.
+  * Eliminada la antigua regla `/test/fixtures/*` y `!/test/fixtures/MANIFEST.md` (los binarios heredados fueron purgados y no queda carpeta `test/fixtures/`).
   * Añade `/.venv/` por si se usan entornos virtuales locales de Python.
   * **No** ignora `/example/assets/music/` para que el submódulo quede versionado correctamente via `.gitmodules`.
 * [`../example/.gitignore`](../example/.gitignore):
@@ -90,7 +89,7 @@ Montaje único en el repo principal (SIN symlinks, SIN Git LFS):
 
 ## 4. Mapeo Completo: 29 Canciones → 29 Formatos y Variantes Únicos
 
-Gracias a las **29 canciones únicas** actuales, cada formato principal y cada variante técnica recibe su propia canción (sin repetir canciones entre variantes), aplicando recortes de duración con *fade-in/out* solo en PCM/Video/DSF para mantener el submódulo completo ágil (**~70–105 MB totales** en vez de ~550+ MB):
+Gracias a las **29 canciones únicas** actuales, cada formato principal y cada variante técnica recibe su propia canción (sin repetir canciones entre variantes), **manteniendo sus duraciones originales completas (`~154.2 s` – `~183.0 s`, sin recortes)** y garantizando que **ningún archivo individual supere el límite de 100 MB de GitHub** sin necesidad de Git LFS (~**`625.24 MiB`** totales en el submódulo incluyendo portadas, HLS, `tripartite/` y `library/`):
 
 | # | Canción Fuente | Archivo / Variante Objetivo | Especificación Técnica & Variantes | Metadatos y Portadas (`mutagen` / `mkvpropedit` / `ffmpeg`) |
 | :-: | :--- | :--- | :--- | :--- |
@@ -101,28 +100,28 @@ Gracias a las **29 canciones únicas** actuales, cada formato principal y cada v
 | 05 | `Burning_in_the_Electric_Light` | `05_Burning_in_the_Electric_Light.ogg` | Ogg Vorbis (`libvorbis`) | `VorbisComments` + portada + letras y ReplayGain |
 | 06 | `Calculated_Motion` | `06_Calculated_Motion_aac.m4a` | MP4 / M4A (`aac` LC, `faststart`) | Átomos iTunes `ilst`, `covr` (JPEG + PNG), freeform `----`, capítulos MP4, BPM, `stik`/Podcast/Advisory |
 | 07 | `Fevered_Strings` | `07_Fevered_Strings_alac.m4a` | MP4 / M4A (`alac` Lossless, `faststart`) | iTunes `ilst` + `covr` PNG + `ExtendedMetadata` |
-| 08 | `Firelight_Promise` | `08_Firelight_Promise_24bit_mono.wav` | **Variante WAV 24-bit Mono** (10 s fade) | `RIFF INFO` + bloque `ID3 ` (reemplaza `test_24bit.wav`) |
+| 08 | `Firelight_Promise` | `08_Firelight_Promise_24bit_mono.wav` | **Variante WAV 24-bit Mono** (179.1 s, 24.63 MiB) | `RIFF INFO` + bloque `ID3 ` (reemplaza `test_24bit.wav`) |
 | 09 | `Flesh_and_Chrome` | `09_Flesh_and_Chrome.wv` | WavPack Lossless (`.wv`) | **APEv2** tags completos + `Cover Art (Front/Back)` binarios + ReplayGain |
 | 10 | `La_cicatriz_del_andén` | `10_La_cicatriz_del_andén.aac` | ADTS AAC elemental (`.aac`) | **ID3v2.3** antepuesto a ADTS + acentos UTF-8 (`andén`) + portada JPEG |
 | 11 | `Mar_de_cristal` | `11_Mar_de_cristal.mka` | Matroska Audio (FLAC, `.mka`) | Tags XML Matroska + capítulos + múltiples adjuntos portada con **`mkvpropedit`** |
-| 12 | `Mi_más_bonita_coincidencia` | `12_Mi_más_bonita_coincidencia_24bit_stereo.wav` | **Variante WAV 24-bit Estéreo** (15 s fade) | `RIFF INFO` + `ID3 ` + portada + acentos UTF-8 (reemplaza `test_24bit_stereo.wav`) |
-| 13 | `Overture_for_the_Floor` | `13_Overture_for_the_Floor.webm` | WebM (Opus) | Metadatos/cues Matroska-WebM con `mkvpropedit` |
-| 14 | `Painting_the_Sky` | `14_Painting_the_Sky.mkv` | Matroska A/V compacto (Opus + H.264 20s) | Tags XML + adjunto portada con **`mkvpropedit`** (reemplaza el `.mkv` de 57 MB) |
+| 12 | `Mi_más_bonita_coincidencia` | `12_Mi_más_bonita_coincidencia_24bit_stereo.wav` | **Variante WAV 24-bit Estéreo** (44.1 kHz, 181.4 s, 45.82 MiB < 50 MB) | `RIFF INFO` + `ID3 ` + portada + acentos UTF-8 (reemplaza `test_24bit_stereo.wav`) |
+| 13 | `Overture_for_the_Floor` | `13_Overture_for_the_Floor.webm` | WebM (Opus, 180.9 s) | Metadatos XML globales Matroska-WebM con `mkvpropedit` |
+| 14 | `Painting_the_Sky` | `14_Painting_the_Sky.mkv` | Matroska A/V (Opus + H.264, 179.2 s, 2.28 MiB) | Tags XML + adjunto portada con `ffmpeg` + **`mkvpropedit`** |
 | 15 | `Resting_At_Your_Feet` | `15_Resting_At_Your_Feet.mp2` | MPEG-1 Layer II (`libtwolame`) | ID3v2.4 + portada JPEG |
 | 16 | `Ribbons_on_Anchors` | `16_Ribbons_on_Anchors.oga` | Ogg Audio (`.oga`, Vorbis/FLAC) | `VorbisComments` + portada embebida |
-| 17 | `Running_To_Meet_The_Sun` | `17_Running_To_Meet_The_Sun.wav` | WAV RIFF 16-bit Estéreo (30s fade) | `RIFF INFO` + chunk **`ID3 `** con `APIC` + ReplayGain |
-| 18 | `Running_With_Daylight` | `18_Running_With_Daylight.aif` | **Variante Apple AIFF `.aif`** (25s BE) | Chunks AIFF (`NAME`, `AUTH`, `ANNO`, `(c) `) + `ID3 ` con portada |
-| 19 | `Spin_Me_In_The_Dark` | `19_Spin_Me_In_The_Dark.rf64` | EBU RF64 (`.rf64`, 30s) | `bext` + `RIFF INFO` + chunk `ID3 ` con portada |
-| 20 | `Swallowing_This_Glitter_Pill` | `20_Swallowing_This_Glitter_Pill.w64` | Sony Wave64 (`.w64`, 30s) | Contenedor 64-bit GUID (`ExtendedPcmReader`) |
-| 21 | `The_Great_Equalizer` | `21_The_Great_Equalizer.bwf` | Broadcast Wave (`.bwf`, 30s) | **`bext` completo** (`Description`, `Originator`, `TimeReference`, `CodingHistory`) + `INFO` + `ID3 ` |
-| 22 | `The_Midnight_Pursuit` | `22_The_Midnight_Pursuit.rifx` | Big-Endian RIFX (`.rifx`, 30s) | Contenedor `RIFX`/`WAVE` BE |
-| 23 | `Tracing_Lines` | `23_Tracing_Lines.aifc` | **Variante Apple AIFF-C `.aifc`** (25s) | Chunks AIFF-C + `ID3 ` |
-| 24 | `Tracks_Into_The_Dawn` | `24_Tracks_Into_The_Dawn.aiff` | **Variante Apple AIFF `.aiff`** (25s BE) | Chunks AIFF estándar + `ID3 ` completo con portada |
-| 25 | `Velocity_of_One` | `25_Velocity_of_One_f32.wav` *(o `.ape` si se instala `mac`)* | **Variante WAV 32-bit Float (`pcm_f32le`)** | `RIFF INFO` + chunk `ID3 ` (y base libre para `.ape` si se dispone de encoder) |
-| 26 | `Where_Miracles_Start` | `hls/26_Where_Miracles_Start_aes.m3u8` *(o variante FLAC lossless `custom` / `.mp1` si aplica)* | **Variante HLS cifrada AES-128-CBC** (+ segmentos `.ts` y `.key`) | Prueba E2E de descifrado HLS AES-128-CBC sin depender de servidor externo |
-| 27 | `¡Yo_me_opongo_` | `27_¡Yo_me_opongo_.caf` | Apple Core Audio (`.caf`, 30s) | Átomo `info` (`title`, `artist`, `album`, etc.) + Unicode (`¡!`) |
-| 28 | `Разводят_мосты` | `hls/28_Разводят_мосты.m3u8` (+ `.ts`) | HLS VOD claro (`-f hls -hls_time 10`) | Segmentos MPEG-TS AAC + etiquetas ID3 en transporte TS + UTF-8 cirílico |
-| 29 | `駆け抜けて、この空を` | `29_駆け抜けて、この空を.dsf` | Sony DSD64 (`.dsf`, 15s) | PDM 2.8224 MHz + bloque **ID3v2.4 final** con portada PNG y japonés UTF-8 |
+| 17 | `Running_To_Meet_The_Sun` | `17_Running_To_Meet_The_Sun.wav` | WAV RIFF 16-bit Estéreo (154.2 s, 28.30 MiB) | `RIFF INFO` + chunk **`ID3 `** con `APIC` + ReplayGain |
+| 18 | `Running_With_Daylight` | `18_Running_With_Daylight.aif` | **Variante Apple AIFF `.aif`** (172.3 s, 31.59 MiB) | Chunks AIFF (`NAME`, `AUTH`, `ANNO`, `(c) `) + `ID3 ` con portada |
+| 19 | `Spin_Me_In_The_Dark` | `19_Spin_Me_In_The_Dark.rf64` | EBU RF64 (`.rf64`, 181.2 s, 33.22 MiB) | `bext` + `RIFF INFO` + chunk `ID3 ` con portada |
+| 20 | `Swallowing_This_Glitter_Pill` | `20_Swallowing_This_Glitter_Pill.w64` | Sony Wave64 (`.w64`, 159.1 s, 29.14 MiB) | Contenedor 64-bit GUID (`ExtendedPcmReader`) |
+| 21 | `The_Great_Equalizer` | `21_The_Great_Equalizer.bwf` | Broadcast Wave (`.bwf`, 160.5 s, 29.41 MiB) | **`bext` completo** (`Description`, `Originator`, `TimeReference`, `CodingHistory`) + `INFO` + `ID3 ` |
+| 22 | `The_Midnight_Pursuit` | `22_The_Midnight_Pursuit.rifx` | Big-Endian RIFX (`.rifx`, 175.7 s, 32.24 MiB) | Contenedor `RIFX`/`WAVE` BE con `LIST INFO` + `ID3 ` |
+| 23 | `Tracing_Lines` | `23_Tracing_Lines.aifc` | **Variante Apple AIFF-C `.aifc`** (179.1 s, 32.82 MiB) | `FORM/AIFC` + `FVER` + chunks AIFF + `ID3 ` |
+| 24 | `Tracks_Into_The_Dawn` | `24_Tracks_Into_The_Dawn.aiff` | **Variante Apple AIFF `.aiff`** (183.0 s, 33.56 MiB) | Chunks AIFF estándar + `ID3 ` completo con portada |
+| 25 | `Velocity_of_One` | `25_Velocity_of_One.ape` | Monkey's Audio (`.ape`, 44.1 kHz, 181.3 s, 19.70 MiB) | Decodificador `ApeReader` + etiquetas **APEv2** completas (generado con `mac`) |
+| 26 | `Where_Miracles_Start` | `hls/26_Where_Miracles_Start_aes.m3u8` | **Variante HLS cifrada AES-128-CBC** (`19` `.ts` + `.key`) | Prueba de parseo M3U8 (`#EXT-X-KEY` / `EncryptionKeyInfo`) y rechazo seguro sin fallo de motor |
+| 27 | `¡Yo_me_opongo_` | `27_¡Yo_me_opongo_.caf` | Apple Core Audio (`.caf`, 177.1 s, 32.43 MiB) | Átomo `info` (`title`, `artist`, `album`, etc.) + Unicode (`¡!`) |
+| 28 | `Разводят_мосты` | `hls/28_Разводят_мосты.m3u8` (`19` `.ts`) | HLS VOD claro (`-f hls -hls_time 10`, 180.5 s) | Segmentos MPEG-TS AAC + etiquetas ID3 en transporte TS + UTF-8 cirílico |
+| 29 | `駆け抜けて、この空を` | `29_駆け抜けて、この空を.dsf` | Sony DSD64 Mono (`.dsf`, 176.5 s, 59.38 MiB < 100 MB) | PDM 2.8224 MHz mono + bloque **ID3v2.4 final** con portada PNG y japonés UTF-8 |
 
 Además, dentro de `example/assets/music/tripartite/` se regeneran los **6 fixtures de casos borde de buffer** derivados directamente de pistas de esta misma tabla (eliminando toda dependencia con copyright como `la_isla_bonita.m4a`):
 * `giant_cover.mp3` (portada extraída del `.mp4` a `1024x1024` > 350 KB)
@@ -157,7 +156,7 @@ Además, dentro de `example/assets/music/tripartite/` se regeneran los **6 fixtu
      * HLS remoto: `hls/28_Разводят_мосты.m3u8` (`Remote HLS`)
    * Asegurar títulos/claves diferenciadas (`(Remote)`) para que `seenFilenames` no colisione cuando también exista el asset local en la cola.
 
-### 5.2 Actualizaciones en `test/` y `test/rust/`
+### 5.2 Actualizaciones en `test/` y `test/rust/` *(Completado)*
 1. Actualizar `FixtureResolver` en `test/rust/` y los helpers/tests en `test/` para resolver directamente desde `example/assets/music/` (y `example/assets/music/tripartite/` / `hls/`).
-2. Actualizar [`../test/fixtures/MANIFEST.md`](../test/fixtures/MANIFEST.md) e [`../test/helpers/generate_tripartite_fixtures.py`](../test/helpers/generate_tripartite_fixtures.py) y eliminar todos los archivos viejos con copyright de `test/fixtures/` y `example/assets/music/`.
-3. Ajustar aserciones de duración/nombre en [`../test/rust/decoder_and_formats_test.rs`](../test/rust/decoder_and_formats_test.rs) y tests Dart que antes validaban duraciones fijas de `salida.*`, `cbr_noxing.mp3` u `Ojitos Mentirosos...mkv`.
+2. Actualizar [`../test/MANIFEST.md`](../test/MANIFEST.md), [`../example/assets/music/README.md`](../example/assets/music/README.md) e [`../test/helpers/generate_tripartite_fixtures.py`](../test/helpers/generate_tripartite_fixtures.py) y eliminar todos los archivos viejos con copyright de `test/fixtures/` y `example/assets/music/`.
+3. Ajustar aserciones de duración/nombre/ReplayGain en [`../test/rust/decoder_and_formats_test.rs`](../test/rust/decoder_and_formats_test.rs) y tests Dart que antes validaban duraciones fijas de `salida.*`, `cbr_noxing.mp3` u `Ojitos Mentirosos...mkv`.

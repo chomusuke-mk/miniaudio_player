@@ -97,6 +97,9 @@ const List<String> miniAudioPlayerSupportedExtensions = [
   'mkv',
   'mka',
   'caf',
+  'wv',
+  'ape',
+  'dsf',
   'm3u8',
 ];
 

@@ -98,7 +98,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() async {
-      testWavFile = File('test/fixtures/salida.wav');
+      testWavFile = File('example/assets/music/17_Running_To_Meet_The_Sun.wav');
       player = MiniaudioPlayer(queue: [AudioSource(testWavFile.path)]);
     });
 
@@ -126,9 +126,9 @@ void main() {
     test(
         'setReplayGain updates targeted AudioSource by id, position and current track',
         () async {
-      final track1 = AudioSource('test/fixtures/salida.wav',
+      final track1 = AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav',
           id: 101, replayGainDb: -2.0, replayPeak: 0.9);
-      final track2 = AudioSource('test/fixtures/salida.wav',
+      final track2 = AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav',
           id: 102, replayGainDb: -4.0, replayPeak: 0.8);
       await player.action.setQueue([track1, track2]);
       await player.action.play();

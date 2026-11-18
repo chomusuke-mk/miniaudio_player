@@ -17,7 +17,7 @@ void main() {
   });
 
   group('Device and Action Diagnostic Logging Tests', () {
-    final testWavFile = File('test/fixtures/salida.wav');
+    final testWavFile = File('example/assets/music/17_Running_To_Meet_The_Sun.wav');
 
     test(
         'Verbose logging captures precise timing on pause, seek, and setOutputs',

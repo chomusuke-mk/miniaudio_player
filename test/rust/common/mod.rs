@@ -1,7 +1,7 @@
 //! Shared deterministic test utilities for Rust integration tests (`test/rust/`).
 //!
 //! Provides:
-//! - [`FixtureResolver`]: Relative path resolver anchored at `CARGO_MANIFEST_DIR/../test/fixtures`
+//! - [`FixtureResolver`]: Relative path resolver anchored at `CARGO_MANIFEST_DIR/../example/assets/music`
 //!   (strictly zero host-specific absolute paths).
 //! - [`SignalGenerator`]: Deterministic PCM, RIFF WAVE, and DSF binary generators.
 
@@ -10,40 +10,47 @@
 use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
 
-/// Black-box path resolver for test fixtures located in `test/fixtures/`.
+/// Black-box path resolver for test fixtures located in `example/assets/music/`.
 pub struct FixtureResolver;
 
 impl FixtureResolver {
-    /// Returns the resolved path to the `test/fixtures` directory relative to `rust/Cargo.toml`.
+    /// Returns the resolved path to the `example/assets/music` directory relative to `rust/Cargo.toml`.
     pub fn fixtures_dir() -> PathBuf {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         manifest_dir
             .join("..")
-            .join("test")
-            .join("fixtures")
+            .join("example")
+            .join("assets")
+            .join("music")
             .canonicalize()
-            .unwrap_or_else(|_| manifest_dir.join("..").join("test").join("fixtures"))
+            .unwrap_or_else(|_| {
+                manifest_dir
+                    .join("..")
+                    .join("example")
+                    .join("assets")
+                    .join("music")
+            })
     }
 
-    /// Resolves a fixture file inside `test/fixtures/` and verifies its existence.
+    /// Resolves a fixture file inside `example/assets/music/` and verifies its existence.
     pub fn resolve(relative_path: &str) -> PathBuf {
         let path = Self::fixtures_dir().join(relative_path);
         assert!(
             path.exists(),
             "Required test fixture '{}' was not found at {:?}. \
-             Generate test fixtures locally following 'test/fixtures/MANIFEST.md'.",
+             Initialize the 'example/assets/music' submodule or inspect 'test/MANIFEST.md'.",
             relative_path,
             path
         );
         path
     }
 
-    /// Resolves a fixture file inside `test/fixtures/` as a UTF-8 string path.
+    /// Resolves a fixture file inside `example/assets/music/` as a UTF-8 string path.
     pub fn resolve_str(relative_path: &str) -> String {
         Self::resolve(relative_path).to_string_lossy().into_owned()
     }
 
-    /// Collects up to `limit` files matching extension `ext` inside `test/fixtures/<subdir>`.
+    /// Collects up to `limit` files matching extension `ext` inside `example/assets/music/<subdir>`.
     pub fn collect_by_extension(subdir: &str, ext: &str, limit: usize) -> Vec<PathBuf> {
         let root = if subdir.is_empty() {
             Self::fixtures_dir()

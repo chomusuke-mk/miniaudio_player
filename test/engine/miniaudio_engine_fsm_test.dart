@@ -18,12 +18,12 @@ void main() {
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
     // Use 10.0-second fixture files for reproducible FSM testing
-    track1File = File('test/fixtures/test_24bit_stereo.wav');
-    track2File = File('test/fixtures/cbr_noxing.mp3');
-    track3File = File('test/fixtures/test_24bit_stereo.wav');
-    track4File = File('test/fixtures/cbr_noxing.mp3');
-    track5File = File('test/fixtures/test_24bit_stereo.wav');
-    track6File = File('test/fixtures/cbr_noxing.mp3');
+    track1File = File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
+    track2File = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
+    track3File = File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
+    track4File = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
+    track5File = File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
+    track6File = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
   });
 
   group('FSM Scenario 1: Rapid next() -> previous() during Manual Crossfade',
@@ -152,8 +152,9 @@ void main() {
           predicate: (d) => d != null && d > Duration.zero,
         );
 
-        // Seek Track 1 near the end to enter the auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
-        await engine.action.seek(const Duration(milliseconds: 8500));
+        // Seek Track 1 near the end to enter the auto-crossfade window (crossfade is 2.0s -> 1.5s before EOF)
+        await engine.action.seek(
+            engine.state.duration! - const Duration(milliseconds: 1500));
         await awaitStateOrStream<bool>(
           stream: engine.stream.isCrossfading,
           current: () => engine.state.isCrossfading,
@@ -196,8 +197,9 @@ void main() {
           current: () => engine.state.duration,
           predicate: (d) => d != null && d > Duration.zero,
         );
-        // Seek into auto-crossfade window (duration is 10.0s, crossfade is 2.0s -> seek to 8.5s)
-        await engine.action.seek(const Duration(milliseconds: 8500));
+        // Seek into auto-crossfade window (crossfade is 2.0s -> 1.5s before EOF)
+        await engine.action.seek(
+            engine.state.duration! - const Duration(milliseconds: 1500));
         await awaitStateOrStream<bool>(
           stream: engine.stream.isCrossfading,
           current: () => engine.state.isCrossfading,
@@ -333,7 +335,8 @@ void main() {
         predicate: (d) => d != null && d > Duration.zero,
       );
       // Enter auto crossfade window
-      await engine.action.seek(const Duration(milliseconds: 8500));
+      await engine.action
+          .seek(engine.state.duration! - const Duration(milliseconds: 1500));
       await awaitStateOrStream<bool>(
         stream: engine.stream.isCrossfading,
         current: () => engine.state.isCrossfading,
@@ -428,7 +431,8 @@ void main() {
       expect(engine.state.isPlaying, isTrue);
 
       // Seek near EOF to trigger natural track completion
-      await engine.action.seek(const Duration(milliseconds: 9900));
+      await engine.action
+          .seek(engine.state.duration! - const Duration(milliseconds: 150));
 
       // Wait via stream for playback to hit EOF and reach stopped state (Case 2)
       await awaitStateOrStream<PlaybackState>(
@@ -534,8 +538,9 @@ void main() {
         predicate: (d) => d != null && d > Duration.zero,
       );
 
-      // Seek into auto-crossfade zone (track is ~10s long)
-      await engine.action.seek(const Duration(milliseconds: 8500));
+      // Seek into auto-crossfade zone (1.5s before EOF)
+      await engine.action
+          .seek(engine.state.duration! - const Duration(milliseconds: 1500));
       await awaitStateOrStream<bool>(
         stream: engine.stream.isCrossfading,
         current: () => engine.state.isCrossfading,
@@ -555,7 +560,8 @@ void main() {
       expect(engine.state.volume, closeTo(1.0, 1e-4));
 
       // Seek back into crossfade zone: it triggers again smoothly
-      await engine.action.seek(const Duration(milliseconds: 8600));
+      await engine.action
+          .seek(engine.state.duration! - const Duration(milliseconds: 1400));
       await awaitStateOrStream<bool>(
         stream: engine.stream.isCrossfading,
         current: () => engine.state.isCrossfading,
@@ -595,8 +601,10 @@ void main() {
         predicate: (d) => d != null && d > Duration.zero,
       );
 
-      // Seek into crossfade zone (8.2s out of ~10.0s)
-      await engine.action.seek(const Duration(milliseconds: 8200));
+      // Seek into crossfade zone (1.8s before EOF)
+      final t1 = engine.state.duration! - const Duration(milliseconds: 1800);
+      final t2 = engine.state.duration! - const Duration(milliseconds: 1000);
+      await engine.action.seek(t1);
       await awaitStateOrStream<bool>(
         stream: engine.stream.isCrossfading,
         current: () => engine.state.isCrossfading,
@@ -604,14 +612,15 @@ void main() {
       );
       expect(engine.state.isCrossfading, isTrue);
 
-      // Seek slightly further inside crossfade zone (9.0s)
-      await engine.action.seek(const Duration(milliseconds: 9000));
+      // Seek slightly further inside crossfade zone (1.0s before EOF)
+      await engine.action.seek(t2);
       await drainBroadcastStreams();
 
       // Remains crossfading on outgoing track without error or premature skip
       expect(engine.state.isCrossfading, isTrue);
       expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.position.inMilliseconds, closeTo(9000, 350));
+      expect(engine.state.position.inMilliseconds,
+          closeTo(t2.inMilliseconds, 350));
     });
   });
 }

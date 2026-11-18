@@ -20,9 +20,9 @@ void main() {
 
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
-    localWavFile1 = File('test/fixtures/test_24bit_stereo.wav');
-    localWavFile2 = File('test/fixtures/cbr_noxing.mp3');
-    memoryWavBytes = await File('test/fixtures/test_24bit.wav').readAsBytes();
+    localWavFile1 = File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
+    localWavFile2 = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
+    memoryWavBytes = await File('example/assets/music/08_Firelight_Promise_24bit_mono.wav').readAsBytes();
 
     // Start local Python test HTTP server for network and live chunked streaming
     final completer = Completer<int>();
@@ -33,7 +33,7 @@ void main() {
         '--port',
         '0',
         '--dir',
-        'test/fixtures',
+        'example/assets/music',
       ],
       environment: {'MAP_TEST_DEBUG': '1'},
     );
@@ -118,7 +118,7 @@ void main() {
       expect(engine.state.currentIndex, isNull);
 
       // 3. Remote URL
-      final url = Uri.parse('http://127.0.0.1:$serverPort/music/salida.mp3');
+      final url = Uri.parse('http://127.0.0.1:$serverPort/music/01_Apex_Momentum.mp3');
       await engine.action.setQueue([AudioSource(url)]);
       expect(engine.state.isPlaying, isFalse);
       expect(engine.state.currentIndex, isNull);
@@ -178,7 +178,7 @@ void main() {
     test(
         'LiveStreamAudioSource reports duration == null and seek is a safe no-op',
         () async {
-      final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
+      final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/01_Apex_Momentum.mp3');
       await engine.action.setQueue([
         AudioSource<String>(
           liveUri,
@@ -204,7 +204,7 @@ void main() {
     test(
         'previous() on livestream bypasses 3-second restartThreshold and steps back',
         () async {
-      final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
+      final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/01_Apex_Momentum.mp3');
       await engine.action.setQueue([
         AudioSource(localWavFile1.path, data: 'Local Track 1'),
         AudioSource(liveUri, data: 'Live Radio 2'),
@@ -236,7 +236,7 @@ void main() {
 
     test('manual crossfade between livestream and local file runs smoothly',
         () async {
-      final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/salida.mp3');
+      final liveUri = Uri.parse('http://127.0.0.1:$serverPort/live/01_Apex_Momentum.mp3');
       await engine.action.setQueue([
         AudioSource(liveUri, data: 'Live Stream'),
         AudioSource(localWavFile1.path, data: 'Local File'),

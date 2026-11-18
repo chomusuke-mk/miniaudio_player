@@ -282,13 +282,13 @@ fn test_audio_analysis_ffmpeg_reference_comparison() {
     }
 
     let cases = [
-        TestCase { filename: "salida.wav", float_decoder: true },
-        TestCase { filename: "salida.flac", float_decoder: true },
-        TestCase { filename: "salida.mp3", float_decoder: true },
-        TestCase { filename: "salida.ogg", float_decoder: true },
-        TestCase { filename: "salida.opus", float_decoder: true },
-        TestCase { filename: "salida_aac.m4a", float_decoder: true },
-        TestCase { filename: "la_isla_bonita.m4a", float_decoder: true },
+        TestCase { filename: "17_Running_To_Meet_The_Sun.wav", float_decoder: true },
+        TestCase { filename: "04_Belaya_Tishina.flac", float_decoder: true },
+        TestCase { filename: "01_Apex_Momentum.mp3", float_decoder: true },
+        TestCase { filename: "05_Burning_in_the_Electric_Light.ogg", float_decoder: true },
+        TestCase { filename: "02_Bailando_con_tu_recuerdo.opus", float_decoder: true },
+        TestCase { filename: "06_Calculated_Motion_aac.m4a", float_decoder: true },
+        TestCase { filename: "07_Fevered_Strings_alac.m4a", float_decoder: true },
     ];
 
     for case in cases {

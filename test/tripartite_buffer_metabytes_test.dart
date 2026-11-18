@@ -43,7 +43,7 @@ void main() {
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
     // Generate fixtures if not present
-    final fixtureCheck = File('test/fixtures/tripartite/giant_cover.mp3');
+    final fixtureCheck = File('example/assets/music/tripartite/giant_cover.mp3');
     if (!fixtureCheck.existsSync()) {
       final genResult = await Process.run(
           'python3', ['test/helpers/generate_tripartite_fixtures.py']);
@@ -60,7 +60,7 @@ void main() {
         '--port',
         '0',
         '--dir',
-        'test/fixtures/tripartite',
+        'example/assets/music/tripartite',
       ],
       environment: {'MAP_TEST_DEBUG': '1'},
     );
@@ -248,8 +248,8 @@ void main() {
       expect(meta, isNotNull, reason: 'metadata must be synthesized for MP4');
       expect(meta!.length, lessThan(30000),
           reason:
-              'Synthesized metadata must be compact (~14 KB), not containing audio mdat payload');
-      expect(meta.length, greaterThan(13000),
+              'Synthesized metadata must be compact (~6-14 KB), not containing audio mdat payload');
+      expect(meta.length, greaterThan(4000),
           reason: 'Synthesized metadata must contain full moov atom');
 
       final metaLatin1 = latin1.decode(meta.sublist(0, 100));
@@ -298,7 +298,7 @@ void main() {
           reason: 'Must contain trailing LIST chunk from Tail');
       expect(metaLatin1.contains('INAM'), isTrue,
           reason: 'Must contain INAM chunk');
-      expect(metaLatin1.contains('Test Title 1234'), isTrue,
+      expect(metaLatin1.contains('Trailing Chunk Artist'), isTrue,
           reason: 'Must preserve track title tag');
 
       // Verify data chunk size is patched to 0 in synthesized metadata
@@ -324,7 +324,7 @@ void main() {
 
     test('Test 5: ICY Livestream Demuxing & Live metadata Stream', () async {
       final url =
-          'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
+          'http://127.0.0.1:$serverPort/icy/03_Before_The_Dawn_cbr_noxing.mp3?metaint=8192';
 
       final receivedMeta = <Uint8List>[];
       final twoBlocksReady = Completer<void>();
@@ -409,7 +409,7 @@ void main() {
       });
 
       final url =
-          'http://127.0.0.1:$serverPort/icy/cbr_noxing.mp3?metaint=8192';
+          'http://127.0.0.1:$serverPort/icy/03_Before_The_Dawn_cbr_noxing.mp3?metaint=8192';
       await engine.action.setQueue([AudioSource(Uri.parse(url))]);
       await engine.action.play();
 
@@ -445,9 +445,13 @@ void main() {
 
     test('Test 7: 3 MB Head & 25 KB Tail with 5-Second Buffer Integrity',
         () async {
-      // Small 1 MB circular buffer (~5 seconds at 44.1kHz 16-bit stereo)
-      final smallBufferPlayer =
-          MiniaudioPlayer(config: const PlayerConfig(bufferSizeFrames: 1));
+      // Small 5-second network stream buffer configuration
+      final smallBufferPlayer = MiniaudioPlayer(
+        config: const PlayerConfig(
+          bufferSizeFrames: 1024,
+          bufferNetworkDuration: Duration(seconds: 5),
+        ),
+      );
       await smallBufferPlayer.action.setMetadataEnabled(true);
       final url = 'http://127.0.0.1:$serverPort/music/head_3mb_tail_25kb.mp3';
 

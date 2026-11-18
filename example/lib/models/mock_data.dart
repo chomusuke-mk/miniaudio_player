@@ -99,61 +99,85 @@ abstract final class MockData {
       );
     }
 
-    // 1. Assets from bundle
+    // 1. Assets from bundle (submodule: example/assets/music)
     try {
       final manifest = await AssetManifest.loadFromAssetBundle(root);
-      final assets = manifest.listAssets();
-      for (final asset in assets) {
-        if (asset.startsWith('assets/music/') && isAudioFile(asset)) {
-          final filename = asset.substring('assets/music/'.length);
-          addTrack(
-            id: 'asset://$asset',
-            title: filename,
-            source: AudioSource('asset://$asset'),
-            artist: 'Local Asset Bundle',
-          );
+      final localAssets = manifest.listAssets().where((asset) {
+        if (!asset.startsWith('assets/music/')) return false;
+        if (asset.contains('/tripartite/') ||
+            asset.contains('/covers/') ||
+            asset.contains('/scripts/') ||
+            asset.contains('/library/') ||
+            asset.contains('/hls/')) {
+          return false;
         }
+        return isAudioFile(asset);
+      }).toList()
+        ..sort();
+
+      for (final asset in localAssets) {
+        final rawName = asset.substring('assets/music/'.length);
+        final decodedName = Uri.decodeFull(rawName);
+        addTrack(
+          id: 'asset://$asset',
+          title: decodedName,
+          source: AudioSource('asset://$asset'),
+          artist: 'Local Asset Bundle',
+        );
       }
     } catch (_) {}
 
-    // Fallback bundled assets for tests/headless environments
-    if (tracks.isEmpty) {
-      const fallbackAssets = [
-        'assets/music/salida.mp3',
-        'assets/music/salida.flac',
-        'assets/music/salida.wav',
-        'assets/music/salida.ogg',
-        'assets/music/cbr_noxing.mp3',
-      ];
-      for (final asset in fallbackAssets) {
-        final filename = asset.split('/').last;
-        addTrack(
-          id: 'asset://$asset',
-          title: filename,
-          source: AudioSource('asset://$asset'),
-          artist: 'Bundled Asset',
-        );
-      }
+    // 2. Remote progressive HTTP streams & HLS playlists from miniaudio_player_assets (CORS + COEP + HTTP 206)
+    const rawAssetsBase =
+        'https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player_assets/main';
+
+    final remoteTracks = <({String path, String title, String artist})>[
+      (
+        path: '01_Apex_Momentum.mp3',
+        title: 'Apex Momentum (Remote MP3)',
+        artist: 'Elena Vance • Remote Raw CDN',
+      ),
+      (
+        path: '02_Bailando_con_tu_recuerdo.opus',
+        title: 'Bailando con tu recuerdo (Remote Opus)',
+        artist: 'Mateo Valdés • Remote Raw CDN',
+      ),
+      (
+        path: '04_Belaya_Tishina.flac',
+        title: 'Belaya Tishina (Remote FLAC)',
+        artist: 'Dmitri Volkov • Remote Raw CDN',
+      ),
+      (
+        path: '05_Burning_in_the_Electric_Light.ogg',
+        title: 'Burning in the Electric Light (Remote OGG)',
+        artist: 'The Meridian Echo • Remote Raw CDN',
+      ),
+      (
+        path: '06_Calculated_Motion_aac.m4a',
+        title: 'Calculated Motion (Remote M4A)',
+        artist: 'Kairo Tanaka • Remote Raw CDN',
+      ),
+      (
+        path: '09_Flesh_and_Chrome.wv',
+        title: 'Flesh and Chrome (Remote WavPack)',
+        artist: 'Vespera 9 • Remote Raw CDN',
+      ),
+      (
+        path: 'hls/28_%D0%A0%D0%B0%D0%B7%D0%B2%D0%BE%D0%B4%D1%8F%D1%82_%D0%BC%D0%BE%D1%81%D1%82%D1%8B.m3u8',
+        title: 'Разводят мосты (Remote HLS VOD)',
+        artist: 'Анна Крылова • Remote Raw CDN',
+      ),
+    ];
+
+    for (final item in remoteTracks) {
+      final url = '$rawAssetsBase/${item.path}';
+      addTrack(
+        id: url,
+        title: item.title,
+        source: AudioSource(url),
+        artist: item.artist,
+      );
     }
-
-    // 2. Remote progressive HTTP streams (CORS enabled)
-    addTrack(
-      id: 'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3',
-      title: 'Sample Track (Remote MP3, CORS)',
-      source: AudioSource(
-        'https://raw.githubusercontent.com/rafaelreis-hotmart/Audio-Sample-files/master/sample.mp3',
-      ),
-      artist: 'Remote CDN',
-    );
-
-    addTrack(
-      id: 'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg',
-      title: 'Joy to the World (Wikimedia OGG, CORS)',
-      source: AudioSource(
-        'https://upload.wikimedia.org/wikipedia/commons/4/41/Joy_to_the_World.ogg',
-      ),
-      artist: 'Wikimedia Commons',
-    );
 
     // 3. Live Icecast stream using native icy:// URI
     addTrack(

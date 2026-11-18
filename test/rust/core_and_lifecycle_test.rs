@@ -113,13 +113,13 @@ fn test_live_recorder_wav_writer() {
 #[test]
 fn test_player_coordinator_lifecycle_on_manifest_fixtures() {
     let files = [
-        "salida.flac",
-        "cbr_noxing.mp3",
-        "salida.wv",
-        "salida.webm",
-        "salida.mka",
-        "salida.dsf",
-        "salida.ape",
+        "04_Belaya_Tishina.flac",
+        "03_Before_The_Dawn_cbr_noxing.mp3",
+        "09_Flesh_and_Chrome.wv",
+        "13_Overture_for_the_Floor.webm",
+        "11_Mar_de_cristal.mka",
+        "29_駆け抜けて、この空を.dsf",
+        "25_Velocity_of_One.ape",
     ];
 
     let coordinator_res = StreamingDeck::new_deck(
@@ -150,7 +150,7 @@ fn test_dual_source_set_queue_universal_play_and_crossfade_target_id_abort() {
     use miniaudio_player::core::types::QueueTransition;
 
     if let Ok(mut dual) = DualSource::new(48000, 2, 1024) {
-        let wav_path = FixtureResolver::resolve_str("salida.wav");
+        let wav_path = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
         let items = vec![
             AudioSourceCore {
                 id: 101,
@@ -231,7 +231,7 @@ fn test_music_only_output_excludes_sound_effects() {
     use miniaudio_player::core::voice_pool::{EffectCatalogItem, EffectConfig};
 
     let mut player = MiniaudioPlayer::new(48000, 2, 1024, 16, None, None).unwrap();
-    let wav_path = FixtureResolver::resolve_str("salida.wav");
+    let wav_path = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
 
     let catalog = vec![EffectCatalogItem {
         id: "sfx_test".to_string(),
@@ -257,11 +257,16 @@ fn test_music_only_output_excludes_sound_effects() {
         .unwrap();
     assert_ne!(voice_id, 0);
 
-    // Render a period of PCM frames (without playing music)
-    player.render_pcm(1024);
+    // Render across initial 0.6s so real untrimmed intros register active SFX energy
+    let mut music_energy = 0.0f32;
+    let mut all_mix_energy = 0.0f32;
+    for _ in 0..30 {
+        player.render_pcm(1024);
+        music_energy += player.scratch_music[..1024 * 2].iter().map(|s| s.abs()).sum::<f32>();
+        all_mix_energy += player.super_flow[..1024 * 2].iter().map(|s| s.abs()).sum::<f32>();
+    }
 
     // scratch_music (Music Only / musicMix buffer) must have ZERO SFX samples!
-    let music_energy: f32 = player.scratch_music[..1024 * 2].iter().map(|s| s.abs()).sum();
     assert_eq!(
         music_energy, 0.0,
         "Music Only buffer must have ZERO SFX leakage, but got energy={}",
@@ -269,7 +274,6 @@ fn test_music_only_output_excludes_sound_effects() {
     );
 
     // super_flow (All Mix / all buffer) MUST contain the active sound effect!
-    let all_mix_energy: f32 = player.super_flow[..1024 * 2].iter().map(|s| s.abs()).sum();
     assert!(
         all_mix_energy > 0.0,
         "All Mix buffer must contain the playing sound effect, but got energy={}",
@@ -285,7 +289,7 @@ fn test_polyphonic_effects_inherit_reverb_and_tail_decay() {
     use miniaudio_player::dsp::reverb::ReverbConfig;
 
     let mut player = MiniaudioPlayer::new(48000, 2, 1024, 32, None, None).unwrap();
-    let wav_path = FixtureResolver::resolve_str("salida.wav");
+    let wav_path = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
 
     let catalog = vec![EffectCatalogItem {
         id: "sfx_laser".to_string(),
@@ -336,16 +340,20 @@ fn test_polyphonic_effects_inherit_reverb_and_tail_decay() {
     assert_eq!(player.effects_manager.active_voices_count(), 10);
     assert!(player.effects_manager.active_voices_count() > 0);
 
-    // Render period: all 10 voices mix into scratch_effects, pass through inherit_dsp (reverb), and sum into super_flow
-    player.render_pcm(1024);
+    // Render across initial 0.6s: all 10 voices mix into scratch_effects, pass through inherit_dsp (reverb), and sum into super_flow
+    let mut music_energy = 0.0f32;
+    let mut all_mix_energy = 0.0f32;
+    for _ in 0..30 {
+        player.render_pcm(1024);
+        music_energy += player.scratch_music[..1024 * 2].iter().map(|s| s.abs()).sum::<f32>();
+        all_mix_energy += player.super_flow[..1024 * 2].iter().map(|s| s.abs()).sum::<f32>();
+    }
 
-    let music_energy: f32 = player.scratch_music[..1024 * 2].iter().map(|s| s.abs()).sum();
     assert_eq!(
         music_energy, 0.0,
         "Music Only buffer must remain strictly 0.0 with 10 concurrent voices"
     );
 
-    let all_mix_energy: f32 = player.super_flow[..1024 * 2].iter().map(|s| s.abs()).sum();
     assert!(
         all_mix_energy > 0.0,
         "All Mix buffer must contain energy from the 10 reverberated voices"

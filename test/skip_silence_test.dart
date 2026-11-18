@@ -75,7 +75,7 @@ void main() {
 
     setUp(() {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -161,7 +161,7 @@ void main() {
     test(
         'dynamic toggling of skipSilence mid-playback engages without crashing',
         () async {
-      await player.action.setQueue([AudioSource('test/fixtures/salida.wav')]);
+      await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav')]);
       await player.action.play();
 
       // Toggle silence skip ON while playing
@@ -184,7 +184,7 @@ void main() {
     test('seeking resets silence detector and preserves engine stability',
         () async {
       await player.action.setSilenceConfig(const SilenceSkipConfig.all());
-      await player.action.setQueue([AudioSource('test/fixtures/salida.wav')]);
+      await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav')]);
       await player.action.play();
 
       await waitForAudioProgress(

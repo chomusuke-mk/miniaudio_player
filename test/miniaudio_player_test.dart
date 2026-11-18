@@ -213,7 +213,7 @@ void main() {
   });
 
   test('cbr_noxing.mp3 memory playback, seek and duration', () async {
-    final file = File('test/fixtures/cbr_noxing.mp3');
+    final file = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
     expect(file.existsSync(), isTrue);
     final bytes = await file.readAsBytes();
 
@@ -221,7 +221,7 @@ void main() {
     try {
       await player.action.play();
       expect(player.state.duration?.inMilliseconds,
-          inInclusiveRange(10000, 10100));
+          inInclusiveRange(178000, 182000));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.seek(const Duration(milliseconds: 2000));
@@ -252,7 +252,7 @@ void main() {
         player,
         minDelta: const Duration(milliseconds: 250),
       );
-      // Must NOT jump to EOF (10031ms)
+      // Must NOT jump to EOF (~180000ms)
       expect(
           player.state.position.inMilliseconds, inInclusiveRange(3700, 5000));
       expect(player.state.isPlaying, isTrue);
@@ -266,8 +266,8 @@ void main() {
 
   test('switching memory tracks does not crash and updates correctly',
       () async {
-    final file1 = File('test/fixtures/cbr_noxing.mp3');
-    final file2 = File('test/fixtures/salida.mp3');
+    final file1 = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
+    final file2 = File('example/assets/music/01_Apex_Momentum.mp3');
     expect(file1.existsSync(), isTrue);
     expect(file2.existsSync(), isTrue);
 
@@ -280,21 +280,21 @@ void main() {
       // 1. Play track 1
       await player.action.play();
       expect(player.state.duration?.inMilliseconds,
-          inInclusiveRange(10000, 10100));
+          inInclusiveRange(178000, 182000));
       expect(player.state.isPlaying, isTrue);
 
       // 2. Switch directly to track 2 while playing
       await player.action.setQueue([AudioSource(Uint8List.fromList(bytes2))]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds,
-          inInclusiveRange(65000, 72000));
+          inInclusiveRange(175000, 178500));
       expect(player.state.isPlaying, isTrue);
 
       // 3. Switch back to track 1
       await player.action.setQueue([AudioSource(Uint8List.fromList(bytes1))]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds,
-          inInclusiveRange(10000, 10100));
+          inInclusiveRange(178000, 182000));
     } finally {
       await player.dispose();
     }
@@ -306,7 +306,7 @@ void main() {
         () {
       // Create an untyped / dynamic AudioSource
       final AudioSource rawSource = AudioSource(
-        'test/fixtures/salida.mp3',
+        'example/assets/music/01_Apex_Momentum.mp3',
         replayGainDb: -3.5,
         replayPeak: 0.98,
       );

@@ -71,7 +71,7 @@ void main() {
 
     setUp(() {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -81,8 +81,8 @@ void main() {
     test(
         'decodes and plays MP3 directly from memory buffer with accurate duration and frees Dart bytes',
         () async {
-      final mp3File = resolveAsset('test/fixtures/salida.mp3');
-      expect(mp3File.existsSync(), isTrue, reason: 'salida.mp3 must exist');
+      final mp3File = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
+      expect(mp3File.existsSync(), isTrue, reason: '01_Apex_Momentum.mp3 must exist');
       final bytes = await mp3File.readAsBytes();
       final memSource = AudioSource(bytes);
 
@@ -91,7 +91,7 @@ void main() {
           reason: 'Dart bytes must be cleared after transfer to Rust');
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
-      expect(player.state.duration?.inSeconds, inInclusiveRange(65, 75));
+      expect(player.state.duration?.inSeconds, inInclusiveRange(170, 182));
       expect(player.state.isPlaying, isTrue);
 
       await player.action.seek(const Duration(seconds: 10));
@@ -105,7 +105,7 @@ void main() {
     });
 
     test('decodes and plays FLAC directly from memory buffer', () async {
-      final flacFile = resolveAsset('test/fixtures/salida.flac');
+      final flacFile = resolveAsset('example/assets/music/04_Belaya_Tishina.flac');
       expect(flacFile.existsSync(), isTrue);
       final bytes = await flacFile.readAsBytes();
 
@@ -118,7 +118,7 @@ void main() {
     });
 
     test('decodes and plays WAV directly from memory buffer', () async {
-      final wavFile = resolveAsset('test/fixtures/salida.wav');
+      final wavFile = resolveAsset('example/assets/music/17_Running_To_Meet_The_Sun.wav');
       expect(wavFile.existsSync(), isTrue);
       final bytes = await wavFile.readAsBytes();
 
@@ -131,7 +131,7 @@ void main() {
     });
 
     test('decodes and plays OGG directly from memory buffer', () async {
-      final oggFile = resolveAsset('test/fixtures/salida.ogg');
+      final oggFile = resolveAsset('example/assets/music/05_Burning_in_the_Electric_Light.ogg');
       expect(oggFile.existsSync(), isTrue);
       final bytes = await oggFile.readAsBytes();
 
@@ -144,7 +144,7 @@ void main() {
     });
 
     test('decodes and plays OPUS directly from memory buffer', () async {
-      final opusFile = resolveAsset('test/fixtures/salida.opus');
+      final opusFile = resolveAsset('example/assets/music/02_Bailando_con_tu_recuerdo.opus');
       expect(opusFile.existsSync(), isTrue);
       final bytes = await opusFile.readAsBytes();
 
@@ -181,7 +181,7 @@ void main() {
 
     test('stress: rapid repeated memory playback cycles without memory leaks',
         () async {
-      final mp3File = resolveAsset('test/fixtures/salida.mp3');
+      final mp3File = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       final bytes = await mp3File.readAsBytes();
 
       for (var i = 0; i < 20; i++) {
@@ -199,7 +199,7 @@ void main() {
 
     setUp(() {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -207,7 +207,7 @@ void main() {
     });
 
     test('resolves asset via bytes', () async {
-      final mp3File = resolveAsset('test/fixtures/salida.mp3');
+      final mp3File = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       final bytes = await mp3File.readAsBytes();
 
       await player.action.setQueue([AudioSource(bytes)]);
@@ -219,7 +219,7 @@ void main() {
     });
 
     test('resolves local file candidate', () async {
-      await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
+      await player.action.setQueue([AudioSource('example/assets/music/01_Apex_Momentum.mp3')]);
       await player.action.play();
       expect(player.state.duration?.inSeconds, greaterThan(0));
       expect(player.state.isPlaying, isTrue);
@@ -260,7 +260,7 @@ void main() {
           '--port',
           '0',
           '--dir',
-          'test/fixtures',
+          'example/assets/music',
         ],
         environment: {'MAP_TEST_DEBUG': '1'},
       );
@@ -300,7 +300,7 @@ void main() {
 
     setUp(() {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -309,12 +309,12 @@ void main() {
 
     test('progressive HTTP playback with duration, play, pause and stop',
         () async {
-      final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
+      final url = 'http://127.0.0.1:$serverPort/music/01_Apex_Momentum.mp3';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
       expect(player.state.duration?.inSeconds, greaterThan(0));
-      expect(player.state.duration?.inSeconds, inInclusiveRange(65, 75));
+      expect(player.state.duration?.inSeconds, inInclusiveRange(172, 182));
 
       expect(player.state.isPlaying, isTrue);
 
@@ -330,7 +330,7 @@ void main() {
 
     test('progressive HTTP playback with arbitrary Byte-Range seeking',
         () async {
-      final url = 'http://127.0.0.1:$serverPort/music/salida.mp3';
+      final url = 'http://127.0.0.1:$serverPort/music/01_Apex_Momentum.mp3';
       await player.action.setQueue([AudioSource(Uri.parse(url))]);
 
       await player.action.play();
@@ -347,12 +347,12 @@ void main() {
     test(
         'progressive HTTP playback of CBR MP3 without Xing header correctly detects duration and supports seeking',
         () async {
-      final url = 'http://127.0.0.1:$serverPort/music/cbr_noxing.mp3';
+      final url = 'http://127.0.0.1:$serverPort/music/03_Before_The_Dawn_cbr_noxing.mp3';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
-      // CBR sniffer should resolve duration to ~10 seconds instead of defaulting to 0
-      expect(player.state.duration?.inSeconds, inInclusiveRange(9, 11));
+      // CBR sniffer should resolve duration to ~180 seconds instead of defaulting to 0
+      expect(player.state.duration?.inSeconds, inInclusiveRange(175, 185));
       expect(player.state.audioInfo?.bitrate, greaterThan(0));
 
       expect(player.state.isPlaying, isTrue);
@@ -367,7 +367,7 @@ void main() {
     });
 
     test('progressive HTTP playback with custom request headers', () async {
-      final url = 'http://127.0.0.1:$serverPort/music/salida.wav';
+      final url = 'http://127.0.0.1:$serverPort/music/17_Running_To_Meet_The_Sun.wav';
       await player.action.setQueue([
         AudioSource(
           Uri.parse(url),
@@ -383,7 +383,7 @@ void main() {
     });
 
     test('progressive HTTP playback of FLAC over network', () async {
-      final url = 'http://127.0.0.1:$serverPort/music/salida.flac';
+      final url = 'http://127.0.0.1:$serverPort/music/04_Belaya_Tishina.flac';
       await player.action.setQueue([AudioSource(url)]);
 
       await player.action.play();
@@ -395,11 +395,11 @@ void main() {
 
     test('progressive HTTP playback of OGG with forward and backward seeking',
         () async {
-      final url = 'http://127.0.0.1:$serverPort/music/salida.ogg';
+      final url = 'http://127.0.0.1:$serverPort/music/05_Burning_in_the_Electric_Light.ogg';
       await player.action.setQueue([AudioSource(url)]);
       await player.action.play();
 
-      expect(player.state.duration?.inSeconds, inInclusiveRange(65, 72));
+      expect(player.state.duration?.inSeconds, inInclusiveRange(172, 185));
       expect(player.state.isPlaying, isTrue);
 
       // 1. Seek forward near the end (55 seconds)
@@ -464,7 +464,7 @@ void main() {
     test('adversarial: HTTP 302 Redirection is followed transparently',
         () async {
       final url =
-          'http://127.0.0.1:$serverPort/redirect/302?target=/music/salida.mp3';
+          'http://127.0.0.1:$serverPort/redirect/302?target=/music/01_Apex_Momentum.mp3';
       await player.action.setQueue([AudioSource(url)]);
 
       await player.action.play();
@@ -501,7 +501,7 @@ void main() {
         'adversarial: throttled slow network connection streams with buffering',
         () async {
       final slowUrl =
-          'http://127.0.0.1:$serverPort/slow/salida.mp3?delay=0.01&chunk=4096';
+          'http://127.0.0.1:$serverPort/slow/01_Apex_Momentum.mp3?delay=0.01&chunk=4096';
       await player.action.setQueue([AudioSource(slowUrl)]);
 
       await player.action.play();
@@ -519,7 +519,7 @@ void main() {
     test('adversarial: sudden socket closure during buffering throws cleanly',
         () async {
       final dropUrl =
-          'http://127.0.0.1:$serverPort/drop/salida.mp3?after=16384';
+          'http://127.0.0.1:$serverPort/drop/01_Apex_Momentum.mp3?after=16384';
       await player.action.setQueue([AudioSource(dropUrl)]);
       expect(
         () => player.action.play(),
@@ -531,7 +531,7 @@ void main() {
         'adversarial: sudden socket closure / connection drop mid-stream does not crash audio thread',
         () async {
       final dropUrl =
-          'http://127.0.0.1:$serverPort/drop/salida.mp3?after=131072';
+          'http://127.0.0.1:$serverPort/drop/01_Apex_Momentum.mp3?after=393216';
       await player.action.setQueue([AudioSource(dropUrl)]);
 
       await player.action.play();
@@ -550,7 +550,7 @@ void main() {
     test(
         'continuous live chunked stream plays without crashing and stops cleanly',
         () async {
-      final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
+      final liveUrl = 'http://127.0.0.1:$serverPort/live/01_Apex_Momentum.mp3';
       await player.action.setQueue([AudioSource(Uri.parse(liveUrl))]);
 
       await player.action.play();
@@ -572,9 +572,9 @@ void main() {
     test(
         'rapid polymorphic setQueue switching between memory, network, and asset sources',
         () async {
-      final mp3File = resolveAsset('test/fixtures/salida.mp3');
+      final mp3File = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       final bytes = await mp3File.readAsBytes();
-      final netUrl = 'http://127.0.0.1:$serverPort/music/salida.mp3';
+      final netUrl = 'http://127.0.0.1:$serverPort/music/01_Apex_Momentum.mp3';
 
       for (var i = 0; i < 5; i++) {
         // 1. Memory
@@ -588,7 +588,7 @@ void main() {
         expect(player.state.isPlaying, isTrue);
 
         // 3. Asset
-        await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
+        await player.action.setQueue([AudioSource('example/assets/music/01_Apex_Momentum.mp3')]);
         await player.action.play();
         expect(player.state.isPlaying, isTrue);
 
@@ -599,7 +599,7 @@ void main() {
     test(
         'analyzeAudio on live stream resolves promptly with null duration, format info and skips waveform/replaygain/chromaprint',
         () async {
-      final liveUrl = 'http://127.0.0.1:$serverPort/live/salida.mp3';
+      final liveUrl = 'http://127.0.0.1:$serverPort/live/01_Apex_Momentum.mp3';
 
       final result = await MiniaudioPlayer.analyzeAudio(
         liveUrl,

@@ -176,14 +176,14 @@ fn test_synthetic_mpeg2_ts_demuxer_aac() {
 
 #[test]
 fn test_real_hls_fixture_playlist_and_ts_segments() {
-    let m3u8_path = FixtureResolver::resolve("salida.m3u8");
-    let mut m3u8_file = File::open(&m3u8_path).expect("Failed to open salida.m3u8");
+    let m3u8_path = FixtureResolver::resolve("hls/28_Разводят_мосты.m3u8");
+    let mut m3u8_file = File::open(&m3u8_path).expect("Failed to open hls/28_Разводят_мосты.m3u8");
     let mut m3u8_bytes = Vec::new();
     m3u8_file.read_to_end(&mut m3u8_bytes).unwrap();
 
     assert!(M3u8Parser::is_m3u8(&m3u8_bytes));
 
-    let parsed = M3u8Parser::parse(&m3u8_bytes).expect("Failed to parse salida.m3u8");
+    let parsed = M3u8Parser::parse(&m3u8_bytes).expect("Failed to parse hls/28_Разводят_мосты.m3u8");
     match parsed {
         ParsedHlsPlaylist::Media {
             is_live,
@@ -195,11 +195,11 @@ fn test_real_hls_fixture_playlist_and_ts_segments() {
             assert!(!is_live);
             assert_eq!(media_sequence, 0);
             assert!(target_duration >= 8.0 && target_duration <= 12.0);
-            assert_eq!(segments.len(), 7);
-            assert!(total_duration_seconds >= 65.0 && total_duration_seconds <= 75.0);
+            assert_eq!(segments.len(), 19);
+            assert!(total_duration_seconds >= 178.0 && total_duration_seconds <= 183.0);
 
             for seg in &segments {
-                let ts_path = FixtureResolver::resolve(&seg.uri);
+                let ts_path = FixtureResolver::resolve(&format!("hls/{}", seg.uri));
                 let ts_bytes = std::fs::read(&ts_path).unwrap();
                 assert!(MpegTsDemuxer::is_mpeg_ts(&ts_bytes));
 
@@ -214,8 +214,21 @@ fn test_real_hls_fixture_playlist_and_ts_segments() {
         _ => panic!("Expected Media playlist"),
     }
 
+    // Verify AES-128-CBC encrypted HLS playlist & key file
+    let aes_m3u8_bytes = std::fs::read(FixtureResolver::resolve("hls/26_Where_Miracles_Start_aes.m3u8")).unwrap();
+    match M3u8Parser::parse(&aes_m3u8_bytes).expect("Failed to parse AES m3u8") {
+        ParsedHlsPlaylist::Media { segments, .. } => {
+            assert_eq!(segments.len(), 19);
+            let key = segments[0].key.as_ref().expect("AES-128 playlist must declare key");
+            assert_eq!(key.method, "AES-128");
+            let key_path = FixtureResolver::resolve(&format!("hls/{}", key.uri.as_deref().unwrap()));
+            assert_eq!(std::fs::read(&key_path).unwrap().len(), 16);
+        }
+        _ => panic!("Expected Media playlist for AES-128 fixture"),
+    }
+
     // Decode demuxed segment 0 with SymphoniaEngine
-    let ts0_bytes = std::fs::read(FixtureResolver::resolve("salida_0.ts")).unwrap();
+    let ts0_bytes = std::fs::read(FixtureResolver::resolve("hls/28_seg_0.ts")).unwrap();
     let demux0 = MpegTsDemuxer::demux_segment(&ts0_bytes);
     let cursor = std::io::Cursor::new(demux0.audio_bytes);
     let mut aac_engine = SymphoniaEngine::new(cursor, Some("aac")).expect("Failed to open demuxed AAC");
@@ -450,7 +463,7 @@ where
 #[test]
 fn test_hls_live_manifest_periodic_polling_http() {
     let seg_bytes: Vec<Vec<u8>> = (0..4)
-        .map(|i| std::fs::read(FixtureResolver::resolve(&format!("salida_{}.ts", i))).unwrap())
+        .map(|i| std::fs::read(FixtureResolver::resolve(&format!("hls/28_seg_{}.ts", i))).unwrap())
         .collect();
     let expected_total_demuxed: usize = seg_bytes
         .iter()
@@ -541,7 +554,7 @@ fn test_hls_live_manifest_periodic_polling_http() {
 #[test]
 fn test_hls_byterange_http_206_and_200_fallback() {
     let seg_bytes: Vec<Vec<u8>> = (0..3)
-        .map(|i| std::fs::read(FixtureResolver::resolve(&format!("salida_{}.ts", i))).unwrap())
+        .map(|i| std::fs::read(FixtureResolver::resolve(&format!("hls/28_seg_{}.ts", i))).unwrap())
         .collect();
     let expected_total_demuxed: usize = seg_bytes
         .iter()
@@ -661,8 +674,8 @@ pack.ts\n\
 
 #[test]
 fn test_hls_byterange_local_file_open_file() {
-    let ts0 = std::fs::read(FixtureResolver::resolve("salida_0.ts")).unwrap();
-    let ts1 = std::fs::read(FixtureResolver::resolve("salida_1.ts")).unwrap();
+    let ts0 = std::fs::read(FixtureResolver::resolve("hls/28_seg_0.ts")).unwrap();
+    let ts1 = std::fs::read(FixtureResolver::resolve("hls/28_seg_1.ts")).unwrap();
 
     let pack_path = FixtureResolver::scratch_file_path("hls_pack.ts");
     let m3u8_path = FixtureResolver::scratch_file_path("hls_byterange_local.m3u8");
@@ -726,7 +739,7 @@ fn test_hls_dart_resolved_m3u8_asset_segments() {
     let responder_thread = std::thread::spawn(move || {
         while let Ok(req) = rx.recv() {
             let file_name = req.source.rsplit('/').next().unwrap_or("");
-            let path = FixtureResolver::resolve(file_name);
+            let path = FixtureResolver::resolve(&format!("hls/{}", file_name));
             let bytes = std::fs::read(&path).unwrap_or_default();
             let ext = file_name.rsplit('.').next().map(|s| s.to_string());
             let _ = responder_reg.resolve_request(
@@ -741,7 +754,7 @@ fn test_hls_dart_resolved_m3u8_asset_segments() {
 
     let item = AudioSourceCore {
         id: 77,
-        source: "asset://assets/music/salida.m3u8".to_string(),
+        source: "asset://assets/music/hls/28_Разводят_мосты.m3u8".to_string(),
         headers: None,
         data_bytes: None,
         replay_gain_db: None,
@@ -768,13 +781,13 @@ fn test_hls_dart_resolved_m3u8_asset_segments() {
 
     let seen = requested_uris.lock().unwrap().clone();
     assert!(
-        seen.iter().any(|u| u == "asset://assets/music/salida.m3u8"),
+        seen.iter().any(|u| u == "asset://assets/music/hls/28_Разводят_мосты.m3u8"),
         "Resolver should request m3u8 manifest, got: {:?}",
         seen
     );
     assert!(
-        seen.iter().any(|u| u == "asset://assets/music/salida_0.ts"),
-        "Resolver should request salida_0.ts segment, got: {:?}",
+        seen.iter().any(|u| u == "asset://assets/music/hls/28_seg_0.ts"),
+        "Resolver should request 28_seg_0.ts segment, got: {:?}",
         seen
     );
 

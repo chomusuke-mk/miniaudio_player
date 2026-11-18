@@ -187,7 +187,9 @@ impl SymphoniaTrackSession {
         let sample_rate = if codec == "Opus" { 48000 } else { raw_sr };
         let raw_sample_rate = Some(raw_sr);
 
+        let media_info = *format_reader.media_info();
         let duration_ms = Self::compute_duration_ms(time_base, duration, num_frames)
+            .or_else(|| Self::compute_duration_ms(media_info.time_base, media_info.duration, None))
             .or_else(|| Self::extract_metadata_duration_ms(&mut *format_reader));
         let symphonia_meta = SymphoniaExtractedMeta::from_format_reader(&mut *format_reader);
 

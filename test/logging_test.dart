@@ -103,7 +103,7 @@ void main() {
       };
 
       final player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/salida.wav')],
+        queue: [AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav')],
       );
 
       expect(
@@ -112,7 +112,7 @@ void main() {
       );
 
       await player.action.setQueue([
-        AudioSource('test/fixtures/salida.wav'),
+        AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav'),
       ]);
       expect(
         messages.any((m) => m.contains('setQueue() requested')),
@@ -161,7 +161,7 @@ void main() {
 
       await engine.action.setQueue([
         AudioSource<int>(
-          'test/fixtures/salida.wav',
+          'example/assets/music/17_Running_To_Meet_The_Sun.wav',
           data: 1,
         ),
       ]);

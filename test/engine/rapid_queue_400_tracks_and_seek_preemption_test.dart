@@ -18,7 +18,7 @@ void main() {
       final items = List.generate(
         400,
         (i) => AudioSource<String>(
-          'test/fixtures/salida.wav',
+          'example/assets/music/17_Running_To_Meet_The_Sun.wav',
           data: 'Track $i',
         ),
       );
@@ -45,7 +45,7 @@ void main() {
         'Rapid consecutive seeks preempt previous in-flight seeks without delay',
         () async {
       final player =
-          MiniaudioPlayer(queue: [AudioSource('test/fixtures/salida.wav')]);
+          MiniaudioPlayer(queue: [AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav')]);
       await player.action.play();
 
       final stopwatch = Stopwatch()..start();

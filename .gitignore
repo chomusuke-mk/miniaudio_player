@@ -41,8 +41,5 @@ migrate_working_dir/
 /web/pkg/
 /example/web/pkg/
 
-# Audio fixtures: canonical dataset lives in git submodule at `example/assets/music/`
+# Audio fixtures: canonical dataset lives in the git submodule at `example/assets/music/`
 # (do NOT ignore `example/assets/music/` here so `.gitmodules` tracks it cleanly).
-# Keep `/test/fixtures/` free of committed binaries; only MANIFEST.md is tracked.
-/test/fixtures/*
-!/test/fixtures/MANIFEST.md

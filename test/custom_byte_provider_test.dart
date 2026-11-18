@@ -42,7 +42,7 @@ void main() {
 
   test('CustomDartByteSource asynchronous pull-with-prefetch bridge test',
       () async {
-    final file = File('test/fixtures/tripartite/trailing_chunks.wav');
+    final file = File('example/assets/music/tripartite/trailing_chunks.wav');
     expect(file.existsSync(), isTrue,
         reason: 'Test fixture wav file must exist');
     final bytes = await file.readAsBytes();

@@ -59,7 +59,7 @@ void main() {
       final track = AudioTrack(
         id: 'track-0',
         title: 'Track 0',
-        source: AudioSource('assets/music/test_24bit.wav'),
+        source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
       );
       expect(controller.hasResultForTrack(track), isFalse);
     });
@@ -68,7 +68,7 @@ void main() {
       final track1 = AudioTrack(
         id: 'track-1',
         title: 'Test 24bit WAV',
-        source: AudioSource('assets/music/test_24bit.wav'),
+        source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
       );
 
       // Trigger on-demand analysis
@@ -93,12 +93,12 @@ void main() {
       final track1 = AudioTrack(
         id: 'track-1',
         title: 'Track 1',
-        source: AudioSource('assets/music/test_24bit.wav'),
+        source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
       );
       final track2 = AudioTrack(
         id: 'track-2',
         title: 'Track 2',
-        source: AudioSource('assets/music/cbr_noxing.mp3'),
+        source: AudioSource('assets/music/03_Before_The_Dawn_cbr_noxing.mp3'),
       );
 
       await controller.analyze(track1);
@@ -124,7 +124,7 @@ void main() {
       final track1 = AudioTrack(
         id: 'track-1',
         title: 'Track 1',
-        source: AudioSource('assets/music/test_24bit.wav'),
+        source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
       );
 
       await controller.analyze(track1);
@@ -143,12 +143,12 @@ void main() {
         final track4 = AudioTrack(
           id: 'track-4',
           title: 'Track 4',
-          source: AudioSource('assets/music/test_24bit.wav'),
+          source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
         );
         final track5 = AudioTrack(
           id: 'track-5',
           title: 'Track 5',
-          source: AudioSource('assets/music/cbr_noxing.mp3'),
+          source: AudioSource('assets/music/03_Before_The_Dawn_cbr_noxing.mp3'),
         );
 
         final future4 = customController.analyze(track4);
@@ -200,17 +200,17 @@ void main() {
         final track4 = AudioTrack(
           id: 'track-4',
           title: 'Track 4',
-          source: AudioSource('assets/music/test_24bit.wav'),
+          source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
         );
         final track5 = AudioTrack(
           id: 'track-5',
           title: 'Track 5',
-          source: AudioSource('assets/music/cbr_noxing.mp3'),
+          source: AudioSource('assets/music/03_Before_The_Dawn_cbr_noxing.mp3'),
         );
         final track6 = AudioTrack(
           id: 'track-6',
           title: 'Track 6',
-          source: AudioSource('assets/music/salida.aif'),
+          source: AudioSource('assets/music/18_Running_With_Daylight.aif'),
         );
 
         final future4 = customController.analyze(track4);
@@ -273,7 +273,7 @@ void main() {
         final track = AudioTrack(
           id: 'track-err',
           title: 'Track Err',
-          source: AudioSource('assets/music/test_24bit.wav'),
+          source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
         );
 
         final first = await customController.analyze(track);
@@ -595,12 +595,12 @@ void main() {
         final track4 = AudioTrack(
           id: 'track-4',
           title: 'Track 4',
-          source: AudioSource('assets/music/test_24bit.wav'),
+          source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
         );
         final track5 = AudioTrack(
           id: 'track-5',
           title: 'Track 5',
-          source: AudioSource('assets/music/cbr_noxing.mp3'),
+          source: AudioSource('assets/music/03_Before_The_Dawn_cbr_noxing.mp3'),
         );
 
         final future4 = customAnalyzer.analyze(track4);
@@ -920,7 +920,7 @@ void main() {
         final track = AudioTrack(
           id: 'inspect-rg',
           title: 'Inspect Track',
-          source: AudioSource('assets/music/test_24bit.wav'),
+          source: AudioSource('assets/music/08_Firelight_Promise_24bit_mono.wav'),
         );
 
         await tester.pumpWidget(

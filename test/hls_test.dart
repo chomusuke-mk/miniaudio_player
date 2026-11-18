@@ -24,7 +24,7 @@ void main() {
           '--port',
           '0',
           '--dir',
-          'test/fixtures',
+          'example/assets/music',
         ],
         environment: {'MAP_TEST_DEBUG': '1'},
       );
@@ -88,9 +88,9 @@ void main() {
       }
     });
 
-    test('plays multi-segment HLS playlist served locally from test/fixtures',
+    test('plays multi-segment HLS playlist served locally from example/assets/music/hls',
         () async {
-      final streamUrl = 'http://127.0.0.1:$serverPort/salida.m3u8';
+      final streamUrl = 'http://127.0.0.1:$serverPort/28_%D0%A0%D0%B0%D0%B7%D0%B2%D0%BE%D0%B4%D1%8F%D1%82_%D0%BC%D0%BE%D1%81%D1%82%D1%8B.m3u8';
       final player = MiniaudioPlayer(queue: [AudioSource(streamUrl)]);
       try {
         await player.action.play();
@@ -107,6 +107,21 @@ void main() {
         expect(player.state.isPlaying, isTrue);
 
         await player.action.stop();
+        expect(player.state.isPlaying, isFalse);
+      } finally {
+        await player.dispose();
+      }
+    });
+
+    test('rejects encrypted AES-128-CBC HLS playlist cleanly without crashing engine',
+        () async {
+      final streamUrl = 'http://127.0.0.1:$serverPort/26_Where_Miracles_Start_aes.m3u8';
+      final player = MiniaudioPlayer(queue: [AudioSource(streamUrl)]);
+      try {
+        await expectLater(
+          player.action.play(),
+          throwsA(isA<MiniaudioPlayerException>()),
+        );
         expect(player.state.isPlaying, isFalse);
       } finally {
         await player.dispose();

@@ -96,7 +96,7 @@ fn test_metadata_single_emission_guarantee() {
 
     player.set_metadata_enabled(true);
 
-    let wav_path = FixtureResolver::resolve_str("salida.wav");
+    let wav_path = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
     player
         .set_queue(vec![RustAudioSource {
             id: 1,

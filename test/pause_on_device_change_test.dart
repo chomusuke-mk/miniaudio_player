@@ -76,7 +76,7 @@ void main() {
       await player.dispose();
     });
 
-    final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
+    final dummySource = AudioSource('example/assets/music/tripartite/eof_chirp.mp3');
 
     test('pauseOnDeviceChange defaults to false', () {
       player = MiniaudioPlayer(queue: [dummySource]);
@@ -239,7 +239,7 @@ void main() {
     late File testWavFile;
 
     setUpAll(() async {
-      testWavFile = File('test/fixtures/salida.wav');
+      testWavFile = File('example/assets/music/17_Running_To_Meet_The_Sun.wav');
     });
 
     test(

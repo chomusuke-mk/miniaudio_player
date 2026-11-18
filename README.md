@@ -34,7 +34,7 @@ _The bundled [**Studio Master Console**](https://github.com/chomusuke-mk/miniaud
 
 ## 📑 Table of Contents
 
-- [ miniaudio\_player](#-miniaudio_player)
+- [miniaudio\_player](#-miniaudio_player)
   - [📸 Studio Master Console (Hero Preview)](#-studio-master-console-hero-preview)
   - [📑 Table of Contents](#-table-of-contents)
   - [1. Features at a Glance](#1-features-at-a-glance)

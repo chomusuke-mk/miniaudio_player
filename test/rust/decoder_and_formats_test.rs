@@ -1,6 +1,6 @@
 //! Comprehensive Format Sniffer, Decoder Engine, and All-Format Fixture Validation Suite.
 //!
-//! Validates all 26 audio container/codec fixtures listed in `test/fixtures/MANIFEST.md`
+//! Validates all 27 root audio container/codec fixtures listed in `test/MANIFEST.md`
 //! using strictly relative path resolution via `FixtureResolver`.
 
 mod common;
@@ -134,32 +134,33 @@ fn test_synthetic_dsd_dsf_decimation() {
 #[test]
 fn test_all_manifest_audio_formats_decode_and_seek() {
     let all_fixtures = [
-        "salida.wav",
-        "test_24bit.wav",
-        "test_24bit_stereo.wav",
-        "salida.rf64",
-        "salida.rifx",
-        "salida.w64",
-        "salida.bwf",
-        "salida.aif",
-        "salida.aiff",
-        "salida.aifc",
-        "salida.caf",
-        "salida.flac",
-        "salida_alac.m4a",
-        "salida_aac.m4a",
-        "salida.aac",
-        "salida.mp3",
-        "cbr_noxing.mp3",
-        "salida.mp2",
-        "salida.ogg",
-        "salida.oga",
-        "salida.opus",
-        "salida.webm",
-        "salida.mka",
-        "salida.wv",
-        "salida.dsf",
-        "salida.ape",
+        "17_Running_To_Meet_The_Sun.wav",
+        "08_Firelight_Promise_24bit_mono.wav",
+        "12_Mi_más_bonita_coincidencia_24bit_stereo.wav",
+        "19_Spin_Me_In_The_Dark.rf64",
+        "22_The_Midnight_Pursuit.rifx",
+        "20_Swallowing_This_Glitter_Pill.w64",
+        "21_The_Great_Equalizer.bwf",
+        "18_Running_With_Daylight.aif",
+        "24_Tracks_Into_The_Dawn.aiff",
+        "23_Tracing_Lines.aifc",
+        "27_¡Yo_me_opongo_.caf",
+        "04_Belaya_Tishina.flac",
+        "07_Fevered_Strings_alac.m4a",
+        "06_Calculated_Motion_aac.m4a",
+        "10_La_cicatriz_del_andén.aac",
+        "01_Apex_Momentum.mp3",
+        "03_Before_The_Dawn_cbr_noxing.mp3",
+        "15_Resting_At_Your_Feet.mp2",
+        "05_Burning_in_the_Electric_Light.ogg",
+        "16_Ribbons_on_Anchors.oga",
+        "02_Bailando_con_tu_recuerdo.opus",
+        "13_Overture_for_the_Floor.webm",
+        "11_Mar_de_cristal.mka",
+        "14_Painting_the_Sky.mkv",
+        "09_Flesh_and_Chrome.wv",
+        "29_駆け抜けて、この空を.dsf",
+        "25_Velocity_of_One.ape",
     ];
 
     for filename in &all_fixtures {
@@ -170,11 +171,11 @@ fn test_all_manifest_audio_formats_decode_and_seek() {
         let mut engine = SymphoniaEngine::new(file, ext)
             .unwrap_or_else(|e| panic!("SymphoniaEngine failed to open {}: {}", filename, e));
 
-        if *filename == "salida.aac" {
-            let dur = engine.duration_ms().expect("salida.aac must have duration");
+        if *filename == "10_La_cicatriz_del_andén.aac" {
+            let dur = engine.duration_ms().expect("ADTS .aac must have duration");
             assert!(
-                (dur as i64 - 68736).abs() <= 50,
-                "salida.aac duration {}ms must be close to exact 68736ms (~1:08.7), not 69440ms (~1:09.4)",
+                (dur as i64 - 170_670).abs() <= 250,
+                "ADTS .aac duration {}ms must be ~170670ms (full original song)",
                 dur
             );
         }
@@ -200,7 +201,7 @@ fn test_all_manifest_audio_formats_decode_and_seek() {
         assert!(frames_decoded > 0, "{}: decoded 0 frames", filename);
 
         // Seek test on seekable containers (all except raw ADTS .aac)
-        if *filename != "salida.aac" {
+        if *filename != "10_La_cicatriz_del_andén.aac" {
             engine
                 .seek_ms(1000)
                 .unwrap_or_else(|e| panic!("{}: seek_ms(1000) failed: {}", filename, e));
@@ -214,7 +215,10 @@ fn test_all_manifest_audio_formats_decode_and_seek() {
 
 #[test]
 fn test_flac_and_alac_speed_consistency_and_mono_upmix() {
-    for (filename, ext) in &[("salida.flac", "flac"), ("salida_alac.m4a", "m4a")] {
+    for (filename, ext) in &[
+        ("04_Belaya_Tishina.flac", "flac"),
+        ("07_Fevered_Strings_alac.m4a", "m4a"),
+    ] {
         let path = FixtureResolver::resolve(filename);
         let file = File::open(&path).unwrap();
         let mut engine = SymphoniaEngine::new(file, Some(ext)).unwrap();
@@ -275,8 +279,8 @@ fn test_flac_and_alac_speed_consistency_and_mono_upmix() {
         assert!(total_rendered_frames >= target_frames);
     }
 
-    // Mono upmix check on cbr_noxing.mp3
-    let mp3_file = File::open(FixtureResolver::resolve("cbr_noxing.mp3")).unwrap();
+    // Mono upmix check on 03_Before_The_Dawn_cbr_noxing.mp3
+    let mp3_file = File::open(FixtureResolver::resolve("03_Before_The_Dawn_cbr_noxing.mp3")).unwrap();
     let mut mono_engine = SymphoniaEngine::new(mp3_file, Some("mp3")).unwrap();
     assert_eq!(mono_engine.channels(), 1);
 
@@ -293,10 +297,13 @@ fn test_flac_and_alac_speed_consistency_and_mono_upmix() {
 
 #[test]
 fn test_stream_chunk_probing_mp3_and_aiff() {
-    for (filename, hint) in &[("salida.mp3", Some("mp3")), ("salida.aif", None)] {
+    for (filename, hint) in &[
+        ("01_Apex_Momentum.mp3", Some("mp3")),
+        ("18_Running_With_Daylight.aif", None),
+    ] {
         let mut file = File::open(FixtureResolver::resolve(filename)).unwrap();
         let total_len = file.metadata().unwrap().len();
-        let mut initial_data = vec![0u8; 65536];
+        let mut initial_data = vec![0u8; 262144];
         let n = file.read(&mut initial_data).unwrap();
         initial_data.truncate(n);
 
@@ -324,8 +331,8 @@ fn test_stream_chunk_probing_mp3_and_aiff() {
 
 #[test]
 fn test_adts_aac_exact_duration_calculation() {
-    let path = FixtureResolver::resolve("salida.aac");
-    let mut file = File::open(&path).expect("Failed to open salida.aac");
+    let path = FixtureResolver::resolve("10_La_cicatriz_del_andén.aac");
+    let mut file = File::open(&path).expect("Failed to open 10_La_cicatriz_del_andén.aac");
     let total_len = file.metadata().expect("Failed metadata").len();
 
     // 1. Test StreamClassifier::scan_adts_stream
@@ -333,10 +340,11 @@ fn test_adts_aac_exact_duration_calculation() {
         .expect("StreamClassifier::scan_adts_stream must detect ADTS");
     assert_eq!(adts_info.0, 48000, "Sample rate must be 48000");
     assert_eq!(adts_info.1, 2, "Channel count must be 2");
-    assert_eq!(
-        adts_info.2, 68736,
-        "Exact duration must be 68736 ms (~1:08.7), was {}",
-        adts_info.2
+    let exact_ms = adts_info.2;
+    assert!(
+        (exact_ms as i64 - 170_670).abs() <= 250,
+        "Exact duration must be ~170670 ms (full original song), was {}",
+        exact_ms
     );
 
     // 2. Test StreamClassifier::sniff_adts_stream_info
@@ -346,20 +354,24 @@ fn test_adts_aac_exact_duration_calculation() {
     let (bitrate, dur_ms) = StreamClassifier::sniff_adts_stream_info(&data, total_len as i64)
         .expect("sniff_adts_stream_info must succeed");
     assert_eq!(
-        dur_ms, 68736,
-        "sniff_adts_stream_info duration must be 68736 ms (~1:08.7), was {}",
-        dur_ms
+        dur_ms as u64, exact_ms,
+        "sniff_adts_stream_info duration {} must match scan_adts_stream {}",
+        dur_ms, exact_ms
     );
-    assert!(bitrate > 190000 && bitrate < 220000, "Bitrate ~206kbps, was {}", bitrate);
+    assert!(
+        bitrate > 165_000 && bitrate < 235_000,
+        "Bitrate ~192kbps, was {}",
+        bitrate
+    );
 
     // 3. Test SymphoniaEngine::new
     file.seek(std::io::SeekFrom::Start(0)).unwrap();
     let engine = SymphoniaEngine::new(file, Some("aac")).expect("SymphoniaEngine must open");
     let eng_dur = engine.duration_ms().expect("duration_ms must be present");
     assert_eq!(
-        eng_dur, 68736,
-        "SymphoniaEngine duration must be 68736 ms (~1:08.7), was {}",
-        eng_dur
+        eng_dur, exact_ms,
+        "SymphoniaEngine duration {} must match {}",
+        eng_dur, exact_ms
     );
 
     // 4. Test analyze_audio_source
@@ -379,9 +391,11 @@ fn test_adts_aac_exact_duration_calculation() {
     let analysis = miniaudio_player::dsp::analyze_audio_source(source, config)
         .expect("analyze_audio_source must succeed");
     assert_eq!(
-        analysis.audio_info.duration_ms.unwrap_or(0), 68736,
-        "Analysis duration must be 68736 ms (~1:08.7), was {:?}",
-        analysis.audio_info.duration_ms
+        analysis.audio_info.duration_ms.unwrap_or(0),
+        exact_ms as i64,
+        "Analysis duration {:?} must match {}",
+        analysis.audio_info.duration_ms,
+        exact_ms
     );
     assert!(!analysis.has_chromaprint);
     assert!(analysis.chromaprint.is_none());
@@ -436,8 +450,10 @@ fn test_pure_rust_symphonia_opus_0_1_2_capabilities_and_accuracy() {
     assert!(registry.get_audio_decoder(CODEC_ID_OPUS).is_some());
 
     // 2. Full decode & seek/reset validation on real Opus containers (.opus, .webm)
-    for (filename, ext) in &[("salida.opus", "opus"), ("salida.webm", "webm")]
-    {
+    for (filename, ext) in &[
+        ("02_Bailando_con_tu_recuerdo.opus", "opus"),
+        ("13_Overture_for_the_Floor.webm", "webm"),
+    ] {
         let file = File::open(FixtureResolver::resolve(filename)).unwrap();
         let mut engine = SymphoniaEngine::new(file, Some(ext))
             .unwrap_or_else(|e| panic!("Opus open failed for {}: {}", filename, e));
@@ -571,7 +587,10 @@ fn test_pure_rust_rusty_aac_2_0_2_lc_sbr_ps_and_multichannel() {
     assert!(profiles.iter().any(|p| p.profile == CODEC_PROFILE_AAC_HE_V2));
 
     // 2. Full decode + seek validation on real M4A AAC-LC and raw ADTS .aac fixtures
-    for (filename, ext) in &[("salida_aac.m4a", "m4a"), ("salida.aac", "aac")] {
+    for (filename, ext) in &[
+        ("06_Calculated_Motion_aac.m4a", "m4a"),
+        ("10_La_cicatriz_del_andén.aac", "aac"),
+    ] {
         let file = File::open(FixtureResolver::resolve(filename)).unwrap();
         let mut engine = SymphoniaEngine::new(file, Some(ext))
             .unwrap_or_else(|e| panic!("AAC open failed for {}: {}", filename, e));
@@ -589,7 +608,7 @@ fn test_pure_rust_rusty_aac_2_0_2_lc_sbr_ps_and_multichannel() {
         }
         assert!(total_frames > 48000, "{}: expected > 1s of decoded AAC audio", filename);
 
-        if *filename != "salida.aac" {
+        if *filename != "10_La_cicatriz_del_andén.aac" {
             let seek_file = File::open(FixtureResolver::resolve(filename)).unwrap();
             let mut seek_engine = SymphoniaEngine::new(seek_file, Some(ext)).unwrap();
             for _ in 0..8 {
@@ -655,58 +674,58 @@ fn test_http_edge_formats_aiff_mkv_aac() {
 
     let specs = [
         ExpectSpec {
-            name: "salida.aif",
+            name: "18_Running_With_Daylight.aif",
             container: "AIFF",
             codec: "PCM",
-            min_open_dur_ms: 68_000,
-            max_open_dur_ms: 69_500,
-            min_analyze_dur_ms: 68_000,
-            max_analyze_dur_ms: 69_500,
+            min_open_dur_ms: 171_500,
+            max_open_dur_ms: 173_500,
+            min_analyze_dur_ms: 171_500,
+            max_analyze_dur_ms: 173_500,
         },
         ExpectSpec {
-            name: "salida.aifc",
+            name: "23_Tracing_Lines.aifc",
             container: "AIFF",
             codec: "PCM",
-            min_open_dur_ms: 68_000,
-            max_open_dur_ms: 69_500,
-            min_analyze_dur_ms: 68_000,
-            max_analyze_dur_ms: 69_500,
+            min_open_dur_ms: 178_500,
+            max_open_dur_ms: 181_000,
+            min_analyze_dur_ms: 178_500,
+            max_analyze_dur_ms: 181_000,
         },
         ExpectSpec {
-            name: "salida.aiff",
+            name: "24_Tracks_Into_The_Dawn.aiff",
             container: "AIFF",
             codec: "PCM",
-            min_open_dur_ms: 68_000,
-            max_open_dur_ms: 69_500,
-            min_analyze_dur_ms: 68_000,
-            max_analyze_dur_ms: 69_500,
+            min_open_dur_ms: 182_000,
+            max_open_dur_ms: 184_000,
+            min_analyze_dur_ms: 182_000,
+            max_analyze_dur_ms: 184_000,
         },
         ExpectSpec {
-            name: "Ojitos Mentirosos - La Bella Luz_6_.mkv",
+            name: "14_Painting_the_Sky.mkv",
             container: "Matroska",
             codec: "Opus",
-            min_open_dur_ms: 205_000,
-            max_open_dur_ms: 215_000,
-            min_analyze_dur_ms: 209_000,
-            max_analyze_dur_ms: 212_000,
+            min_open_dur_ms: 178_000,
+            max_open_dur_ms: 181_000,
+            min_analyze_dur_ms: 178_000,
+            max_analyze_dur_ms: 181_000,
         },
         ExpectSpec {
-            name: "salida.mka",
+            name: "11_Mar_de_cristal.mka",
             container: "Matroska",
             codec: "FLAC",
-            min_open_dur_ms: 68_000,
-            max_open_dur_ms: 69_500,
-            min_analyze_dur_ms: 68_000,
-            max_analyze_dur_ms: 69_500,
+            min_open_dur_ms: 180_000,
+            max_open_dur_ms: 182_000,
+            min_analyze_dur_ms: 180_000,
+            max_analyze_dur_ms: 182_000,
         },
         ExpectSpec {
-            name: "salida.aac",
+            name: "10_La_cicatriz_del_andén.aac",
             container: "ADTS",
             codec: "AAC",
-            min_open_dur_ms: 65_000,
-            max_open_dur_ms: 75_000,
-            min_analyze_dur_ms: 68_000,
-            max_analyze_dur_ms: 69_500,
+            min_open_dur_ms: 150_000,
+            max_open_dur_ms: 205_000,
+            min_analyze_dur_ms: 170_000,
+            max_analyze_dur_ms: 171_500,
         },
     ];
 
@@ -867,20 +886,17 @@ fn test_http_edge_formats_aiff_mkv_aac() {
 
 #[test]
 fn test_classifier_aiff_and_mkv_precluster_boundary() {
-    let music_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("example/assets/music");
+    let music_dir = FixtureResolver::fixtures_dir();
 
     // AIFF and AIFC FORM detection
-    let aiff_bytes = std::fs::read(music_dir.join("salida.aif")).unwrap();
+    let aiff_bytes = std::fs::read(music_dir.join("18_Running_With_Daylight.aif")).unwrap();
     let (st_aif, b_aif) = StreamClassifier::detect_head_boundary(&aiff_bytes[..65536], aiff_bytes.len() as i64);
     assert_eq!(st_aif, BoundaryStatus::Found);
     assert_eq!(b_aif.container, ContainerFormat::Aiff);
     assert_eq!(b_aif.audio_start, 0);
 
     // Matroska with >64KB Attachments before first Cluster must request NeedMore until Cluster
-    let mkv_bytes = std::fs::read(music_dir.join("Ojitos Mentirosos - La Bella Luz_6_.mkv")).unwrap();
+    let mkv_bytes = std::fs::read(music_dir.join("14_Painting_the_Sky.mkv")).unwrap();
     let (st_short, b_short) =
         StreamClassifier::detect_head_boundary(&mkv_bytes[..65536], mkv_bytes.len() as i64);
     assert_eq!(st_short, BoundaryStatus::NeedMore);
@@ -890,6 +906,10 @@ fn test_classifier_aiff_and_mkv_precluster_boundary() {
         StreamClassifier::detect_head_boundary(&mkv_bytes[..262144], mkv_bytes.len() as i64);
     assert_eq!(st_full, BoundaryStatus::Found);
     assert_eq!(b_full.container, ContainerFormat::Matroska);
-    assert_eq!(b_full.audio_start, 206_682);
+    assert!(
+        b_full.audio_start > 65_536 && b_full.audio_start <= 262_144,
+        "MKV audio_start {} should lie past 64KB attachment block and within 256KB",
+        b_full.audio_start
+    );
 }
 

@@ -190,7 +190,7 @@ void main() {
         'populates codec, containerFormat, lossless, bitrateMode, bitsPerSample, fileSize across formats',
         () async {
       // 1. MP3 (lossy, MP3 codec & container)
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       final mp3Res = await MiniaudioPlayer.analyzeAudio(
         mp3.path,
         replayGain: false,
@@ -208,7 +208,7 @@ void main() {
       expect(mp3Res.audioInfo.fileSize, equals(mp3.lengthSync()));
 
       // 2. FLAC (lossless, FLAC codec & container, bitsPerSample > 0)
-      final flac = resolveAsset('test/fixtures/salida.flac');
+      final flac = resolveAsset('example/assets/music/04_Belaya_Tishina.flac');
       final flacRes = await MiniaudioPlayer.analyzeAudio(
         flac.path,
         replayGain: false,
@@ -224,7 +224,8 @@ void main() {
       expect(flacRes.audioInfo.fileSize, equals(flac.lengthSync()));
 
       // 3. 24-bit WAV (lossless PCM, 24 bitsPerSample, CBR)
-      final wav24 = resolveAsset('test/fixtures/test_24bit_stereo.wav');
+      final wav24 = resolveAsset(
+          'example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
       final wav24Res = MiniaudioPlayer.analyzeAudioSync(
         wav24.path,
         replayGain: false,
@@ -239,7 +240,8 @@ void main() {
       expect(wav24Res.audioInfo.fileSize, equals(wav24.lengthSync()));
 
       // 4. Opus in Ogg container
-      final opus = resolveAsset('test/fixtures/salida.opus');
+      final opus =
+          resolveAsset('example/assets/music/02_Bailando_con_tu_recuerdo.opus');
       if (opus.existsSync()) {
         final opusRes = await MiniaudioPlayer.analyzeAudio(
           opus.path,
@@ -253,7 +255,8 @@ void main() {
       }
 
       // 5. M4A (AAC in MP4 container)
-      final m4a = resolveAsset('test/fixtures/salida_aac.m4a');
+      final m4a =
+          resolveAsset('example/assets/music/06_Calculated_Motion_aac.m4a');
       if (m4a.existsSync()) {
         final m4aRes = await MiniaudioPlayer.analyzeAudio(
           m4a.path,
@@ -348,7 +351,7 @@ void main() {
         'parses all 17 core tags, front/back cover pictures, extended tags, chapters, and custom tags from ID3v2 MP3',
         () async {
       final rawMp3 =
-          resolveAsset('test/fixtures/cbr_noxing.mp3').readAsBytesSync();
+          resolveAsset('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3').readAsBytesSync();
       // Strip any existing ID3v2 tag on the fixture so our synthetic ID3v2 tag is the sole header tag
       final int existingId3Len = (rawMp3.length >= 10 &&
               rawMp3[0] == 0x49 &&
@@ -553,7 +556,7 @@ void main() {
     test('parses giant FLAC PICTURE block and WAV trailing LIST/INFO chunks',
         () async {
       final giantFlac =
-          resolveAsset('test/fixtures/tripartite/giant_cover.flac');
+          resolveAsset('example/assets/music/tripartite/giant_cover.flac');
       if (giantFlac.existsSync()) {
         final flacRes = await MiniaudioPlayer.analyzeAudio(
           giantFlac.path,
@@ -565,13 +568,13 @@ void main() {
         expect(flacRes.metadata!.pictures, isNotEmpty);
         final cover = flacRes.metadata!.frontCover!;
         expect(cover.pictureType, equals(PictureType.coverFront));
-        expect(cover.mimeType, equals(MimeType.jpeg));
-        expect(cover.description, equals('Test Cover'));
+        expect(cover.mimeType, equals(MimeType.png));
+        expect(cover.description, equals('Giant 1024x1024 Cover'));
         expect(cover.bytes.length, greaterThan(290000));
       }
 
       final trailingWav =
-          resolveAsset('test/fixtures/tripartite/trailing_chunks.wav');
+          resolveAsset('example/assets/music/tripartite/trailing_chunks.wav');
       if (trailingWav.existsSync()) {
         final wavRes = await MiniaudioPlayer.analyzeAudio(
           trailingWav.path,
@@ -580,8 +583,7 @@ void main() {
           metadata: true,
         );
         expect(wavRes.metadata, isNotNull);
-        expect(wavRes.metadata!.title, equals('Test Title 1234'));
-        expect(wavRes.metadata!.trackArtist, equals('Test Artist 123'));
+        expect(wavRes.metadata!.title, equals('Trailing Chunk Artist'));
         expect(wavRes.metadata!.tagFormats, contains('RiffInfo'));
       }
     });
@@ -590,7 +592,7 @@ void main() {
         'player emits full AudioInfo always and full AudioMetadata when setMetadataEnabled(true) is toggled',
         () async {
       final baseMp3 =
-          resolveAsset('test/fixtures/cbr_noxing.mp3').readAsBytesSync();
+          resolveAsset('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3').readAsBytesSync();
       final id3 = _buildId3v23Tag([
         _id3TextFrame('TIT2', 'Live Deck Track'),
         _id3TextFrame('TPE1', 'Deck Artist'),

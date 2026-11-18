@@ -13,7 +13,7 @@ void main() {
 
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
-    trackA = File('test/fixtures/test_24bit.wav');
+    trackA = File('example/assets/music/08_Firelight_Promise_24bit_mono.wav');
   });
 
   group('Phase 4: Sinks Desacoplados, Grabación & Pre-escucha Cue', () {

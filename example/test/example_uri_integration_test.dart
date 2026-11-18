@@ -77,8 +77,8 @@ void main() {
     );
 
     test('AudioSource polymorphically builds first-class sources for all schemes and bytes', () {
-      final assetSource = AudioSource('asset://assets/music/salida.mp3');
-      expect(assetSource.uri, equals('asset://assets/music/salida.mp3'));
+      final assetSource = AudioSource('asset://assets/music/01_Apex_Momentum.mp3');
+      expect(assetSource.uri, equals('asset://assets/music/01_Apex_Momentum.mp3'));
 
       final httpSource = AudioSource(
         'https://example.com/audio.mp3',

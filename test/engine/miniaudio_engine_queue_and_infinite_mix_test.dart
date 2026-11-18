@@ -15,10 +15,11 @@ void main() {
 
   setUpAll(() async {
     await MiniaudioPlayer.ensureInitialized();
-    trackA = File('test/fixtures/test_24bit.wav');
-    trackB = File('test/fixtures/test_24bit_stereo.wav');
-    trackC = File('test/fixtures/cbr_noxing.mp3');
-    trackD = File('test/fixtures/salida.wav');
+    trackA = File('example/assets/music/08_Firelight_Promise_24bit_mono.wav');
+    trackB = File(
+        'example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
+    trackC = File('example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3');
+    trackD = File('example/assets/music/17_Running_To_Meet_The_Sun.wav');
   });
 
   group('Rust-Authoritative Queue & Infinite Mix Parity', () {

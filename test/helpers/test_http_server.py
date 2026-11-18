@@ -25,11 +25,16 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 MIME_TYPES = {
     '.mp3': 'audio/mpeg',
+    '.mp2': 'audio/mpeg',
     '.wav': 'audio/wav',
+    '.rf64': 'audio/wav',
+    '.bwf': 'audio/wav',
+    '.rifx': 'audio/wav',
+    '.w64': 'audio/wav',
     '.flac': 'audio/flac',
     '.ogg': 'audio/ogg',
     '.oga': 'audio/ogg',
@@ -38,10 +43,17 @@ MIME_TYPES = {
     '.aif': 'audio/aiff',
     '.aiff': 'audio/aiff',
     '.aifc': 'audio/aiff',
+    '.caf': 'audio/x-caf',
     '.m4a': 'audio/mp4',
     '.webm': 'audio/webm',
+    '.mkv': 'video/x-matroska',
+    '.mka': 'audio/x-matroska',
+    '.wv': 'audio/wavpack',
+    '.ape': 'audio/x-ape',
+    '.dsf': 'audio/x-dsf',
     '.m3u8': 'application/vnd.apple.mpegurl',
     '.ts': 'video/mp2t',
+    '.key': 'application/octet-stream',
 }
 
 class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
@@ -65,16 +77,17 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
 
     def _resolve_music_path(self, filename):
         base_dir = self.server.music_dir
-        clean_name = os.path.basename(filename)
-        path = os.path.join(base_dir, clean_name)
-        if os.path.isfile(path):
-            return path
-        alt1 = os.path.join("test/fixtures/tripartite", clean_name)
-        if os.path.isfile(alt1):
-            return alt1
-        alt2 = os.path.join("test/fixtures", clean_name)
-        if os.path.isfile(alt2):
-            return alt2
+        clean_name = os.path.basename(unquote(filename))
+        for candidate in (
+            os.path.join(base_dir, clean_name),
+            os.path.join(base_dir, "tripartite", clean_name),
+            os.path.join(base_dir, "hls", clean_name),
+            os.path.join("example/assets/music", clean_name),
+            os.path.join("example/assets/music/tripartite", clean_name),
+            os.path.join("example/assets/music/hls", clean_name),
+        ):
+            if os.path.isfile(candidate):
+                return candidate
         return None
 
     def _get_mime(self, path):
@@ -150,7 +163,8 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
                             catalog["m4a"] = info
                             catalog["m4a_aac"] = info
                     elif fmt in catalog:
-                        if fname.startswith("salida"):
+                        # Prefer canonical primary stereo fixtures over Edge/Mono variants
+                        if "cbr_noxing" not in fname.lower() and "24bit" not in fname.lower():
                             catalog[fmt] = info
                     else:
                         catalog[fmt] = info
@@ -218,9 +232,9 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        # 1f. HLS root endpoints (/salida.m3u8 and /salida_*.ts)
-        if path == "/salida.m3u8" or (path.startswith("/salida_") and path.endswith(".ts")):
-            clean_name = os.path.basename(path)
+        # 1f. HLS root endpoints (*.m3u8, *.ts segments, and *.key AES-128 keys)
+        if path.endswith(".m3u8") or path.endswith(".ts") or path.endswith(".key"):
+            clean_name = os.path.basename(unquote(path))
             fpath = self._resolve_music_path(clean_name)
             if fpath and os.path.isfile(fpath):
                 mime = self._get_mime(fpath)
@@ -263,7 +277,7 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
 
         # 4. HTTP Redirection endpoints
         if path.startswith("/redirect/"):
-            target = query.get("target", ["/music/salida.mp3"])[0]
+            target = query.get("target", ["/music/01_Apex_Momentum.mp3"])[0]
             status_code = HTTPStatus.FOUND # 302
             if "307" in path:
                 status_code = HTTPStatus.TEMPORARY_REDIRECT
@@ -961,7 +975,7 @@ class AdversarialAudioHTTPHandler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="Adversarial Audio HTTP Test Server")
     parser.add_argument("--port", type=int, default=0, help="Port to listen on (0 for dynamic)")
-    parser.add_argument("--dir", type=str, default="test/fixtures", help="Directory with music files")
+    parser.add_argument("--dir", type=str, default="example/assets/music", help="Directory with music files")
     args = parser.parse_args()
 
     music_dir = os.path.abspath(args.dir)

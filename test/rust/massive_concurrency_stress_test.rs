@@ -173,7 +173,7 @@ fn find_wav_data_slice(wav_bytes: &[u8]) -> &[u8] {
 fn scenario_1_16_thread_control_queue_navigation_chaos_matrix() {
     let valid_wav = SignalGenerator::pcm16_wav_bytes(96_000, 48_000, 2);
     let server = ChaosHttpServer::start(valid_wav.clone());
-    let local_wav = FixtureResolver::resolve_str("salida.wav");
+    let local_wav = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
 
     let player = Arc::new(
         RustMiniaudioPlayer::new(RustPlayerConfig::default(), 48_000, 2, 1024, vec![])
@@ -457,7 +457,7 @@ fn scenario_2_high_frequency_dsp_storm_during_decode_seek_crossfade() {
 
     let wav_a = SignalGenerator::pcm16_wav_bytes(144_000, 48_000, 2);
     let wav_b = SignalGenerator::pcm16_wav_bytes(144_000, 48_000, 2);
-    let wav_c = FixtureResolver::resolve_str("salida.wav");
+    let wav_c = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
 
     let player = Arc::new(
         RustMiniaudioPlayer::new(RustPlayerConfig::default(), 48_000, 2, 512, vec![])
@@ -940,7 +940,12 @@ fn scenario_4_adversarial_custom_source_stream_session_and_offline_analysis() {
     assert!(aborted_ok && abort_time < Duration::from_secs(1));
 
     // 3. Parallel analyze_audio_source across WAV/MP3/FLAC/Opus + corrupted payload rejection
-    let fixtures = ["salida.wav", "salida.mp3", "salida.flac", "salida.opus"];
+    let fixtures = [
+        "17_Running_To_Meet_The_Sun.wav",
+        "01_Apex_Momentum.mp3",
+        "04_Belaya_Tishina.flac",
+        "02_Bailando_con_tu_recuerdo.opus",
+    ];
     let b_analyze = Arc::new(Barrier::new(6));
     let mut a_handles = Vec::with_capacity(6);
 
@@ -1339,7 +1344,7 @@ fn scenario_6_event_reporter_and_ui_snapshots_ordering_coherence() {
 #[test]
 fn scenario_7_rapid_lifecycle_churn_25_cycles() {
     let wav = SignalGenerator::pcm16_wav_bytes(24_000, 48_000, 2);
-    let local_wav = FixtureResolver::resolve_str("salida.wav");
+    let local_wav = FixtureResolver::resolve_str("17_Running_To_Meet_The_Sun.wav");
 
     for cycle in 0..25usize {
         let player = Arc::new(

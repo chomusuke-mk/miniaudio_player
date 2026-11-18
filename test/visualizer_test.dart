@@ -53,7 +53,7 @@ void main() {
       expect(empty.peak, equals(0.0));
     });
 
-    final dummySource = AudioSource('test/fixtures/tripartite/eof_chirp.mp3');
+    final dummySource = AudioSource('example/assets/music/tripartite/eof_chirp.mp3');
 
     test(
         'Visualizer is inactive by default and can be manually enabled/disabled',
@@ -95,9 +95,9 @@ void main() {
     test(
         'Plays audio file and emits reactive visualizer data with active frequency bands',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue,
-          reason: 'salida.mp3 test asset must exist');
+          reason: '01_Apex_Momentum.mp3 test asset must exist');
 
       final player = MiniaudioPlayer(queue: [AudioSource(mp3.path)]);
       addTearDown(() => player.dispose());
@@ -201,7 +201,7 @@ void main() {
     test(
         'Playback visualizer stream receives empty data when force-disabled mid-playback',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final player = MiniaudioPlayer(queue: [AudioSource(mp3.path)]);

@@ -31,10 +31,15 @@ class AudioTrack {
         s.startsWith('icy://');
   }
 
+  bool get isHlsVod =>
+      _isNetwork && _sourceString.toLowerCase().contains('.m3u8');
+
   bool get isLive {
     final s = _sourceString.toLowerCase();
     return _isNetwork &&
-        (s.contains('/live') || s.contains('.m3u8') || s.contains('icecast'));
+        (s.contains('/live') ||
+            s.contains('icecast') ||
+            s.startsWith('icy://'));
   }
 
   bool get canAnalyze => true;
@@ -44,6 +49,7 @@ class AudioTrack {
     if (source.isCustom) return 'CUSTOM';
     if (source.isMemory) return 'MEMORY';
     if (isLive) return 'LIVE STREAM';
+    if (isHlsVod) return 'HLS VOD';
     if (_isNetwork) return 'NETWORK';
     if (_sourceString.startsWith('asset:') ||
         _sourceString.startsWith('assets/')) {
@@ -57,6 +63,7 @@ class AudioTrack {
     if (source.isCustom) return 'CustomProvider';
     if (source.isMemory) return 'RAM Memory';
     if (isLive) return 'icy:// (Live)';
+    if (isHlsVod) return 'https:// (HLS)';
     if (_isNetwork) return 'https://';
     if (_sourceString.startsWith('asset:') ||
         _sourceString.startsWith('assets/')) {

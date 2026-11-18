@@ -61,8 +61,8 @@ void main() {
 
     test('Assigns monotonically increasing unique IDs across queue operations',
         () async {
-      final s1 = AudioSource('test/fixtures/salida.mp3', data: 'Track 1');
-      final s2 = AudioSource('test/fixtures/salida.wav', data: 'Track 2');
+      final s1 = AudioSource('example/assets/music/01_Apex_Momentum.mp3', data: 'Track 1');
+      final s2 = AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'Track 2');
 
       await player.action.setQueue([s1, s2]);
 
@@ -73,7 +73,7 @@ void main() {
       expect(id2, greaterThan(id1));
 
       // Append tracks
-      final s3 = AudioSource('test/fixtures/salida.flac', data: 'Track 3');
+      final s3 = AudioSource('example/assets/music/04_Belaya_Tishina.flac', data: 'Track 3');
       await player.action.append([s3]);
 
       expect(player.state.queue.length, equals(3));
@@ -81,7 +81,7 @@ void main() {
       expect(id3, greaterThan(id2));
 
       // Insert next
-      final s4 = AudioSource('test/fixtures/salida.ogg', data: 'Track 4');
+      final s4 = AudioSource('example/assets/music/05_Burning_in_the_Electric_Light.ogg', data: 'Track 4');
       await player.action.insertNext(s4);
 
       expect(player.state.queue.length, equals(4));
@@ -91,9 +91,9 @@ void main() {
     });
 
     test('Reorders queue natively using list of unique track IDs', () async {
-      final s1 = AudioSource('test/fixtures/salida.mp3', data: 'T1');
-      final s2 = AudioSource('test/fixtures/salida.wav', data: 'T2');
-      final s3 = AudioSource('test/fixtures/salida.flac', data: 'T3');
+      final s1 = AudioSource('example/assets/music/01_Apex_Momentum.mp3', data: 'T1');
+      final s2 = AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'T2');
+      final s3 = AudioSource('example/assets/music/04_Belaya_Tishina.flac', data: 'T3');
 
       await player.action.setQueue([s1, s2, s3]);
       final id1 = player.state.queue[0].id!;
@@ -116,7 +116,7 @@ void main() {
         'Unified AudioSource transfers bytes to Rust and frees Dart RAM in queue',
         () async {
       final wavBytes =
-          await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
+          await File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav').readAsBytes();
       expect(wavBytes.isNotEmpty, isTrue);
 
       final memSource =
@@ -156,7 +156,7 @@ void main() {
     test(
         'Rust decodes AudioSource directly on setEffects/playEffect and reports real allocated RAM bytes',
         () async {
-      final file = File('test/fixtures/test_24bit_stereo.wav');
+      final file = File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
       expect(file.existsSync(), isTrue);
 
       await player.action.setEffects([
@@ -182,7 +182,7 @@ void main() {
     test(
         'Memory effects are immune to eviction while file effects evict by multi-factor score',
         () async {
-      final file = File('test/fixtures/tripartite/eof_chirp.mp3');
+      final file = File('example/assets/music/tripartite/eof_chirp.mp3');
       final memBytes = await file.readAsBytes();
 
       // Configure tight budget (only enough for ~2 effects)

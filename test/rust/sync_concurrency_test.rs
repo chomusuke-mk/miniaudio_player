@@ -453,8 +453,9 @@ fn test_open_memory_owned_with_hint_decodes_seeks_and_releases_cleanly() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("example/assets/music/cbr_noxing.mp3");
-    let owned_bytes = std::fs::read(&path).expect("cbr_noxing.mp3 fixture must exist");
+        .join("example/assets/music/03_Before_The_Dawn_cbr_noxing.mp3");
+    let owned_bytes =
+        std::fs::read(&path).expect("03_Before_The_Dawn_cbr_noxing.mp3 fixture must exist");
     assert!(!owned_bytes.is_empty());
 
     let mut deck = StreamingDeck::new_analysis_deck(44100, 2).expect("analysis deck");

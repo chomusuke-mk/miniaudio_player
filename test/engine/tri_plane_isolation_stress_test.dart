@@ -119,9 +119,9 @@ void main() {
   setUpAll(() async {
     MiniaudioPlayer.globalConfig.logLevel = MiniaudioLogLevel.none;
     await MiniaudioPlayer.ensureInitialized();
-    wavBytes = await File('test/fixtures/salida.wav').readAsBytes();
+    wavBytes = await File('example/assets/music/17_Running_To_Meet_The_Sun.wav').readAsBytes();
     smallWavBytes =
-        await File('test/fixtures/tripartite/trailing_chunks.wav').readAsBytes();
+        await File('example/assets/music/tripartite/trailing_chunks.wav').readAsBytes();
   });
 
   group('Tri-Plane Dart <-> Rust Isolation & Multi-Lane Stress Tests', () {
@@ -220,11 +220,11 @@ void main() {
         // Dispatch FIFO mutations without external awaits between them.
         await Future.wait([
           player.action.setQueue([
-            AudioSource('test/fixtures/salida.wav', data: 'Track 0'),
+            AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'Track 0'),
           ]),
           player.action.append([
-            AudioSource('test/fixtures/salida.wav', data: 'Track 1'),
-            AudioSource('test/fixtures/salida.wav', data: 'Track 2'),
+            AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'Track 1'),
+            AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'Track 2'),
           ]),
           player.action.removeAt(1),
           player.action.play(position: 1),

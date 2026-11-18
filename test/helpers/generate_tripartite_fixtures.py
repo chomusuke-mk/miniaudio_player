@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generates synthetic and modified audio fixtures for testing in test/fixtures/tripartite:
+Generates synthetic and modified audio fixtures for testing in example/assets/music/tripartite:
 1. Giant cover art (> 256 KB) in MP3 and FLAC.
 2. EOF chirp prevention (trailing APEv2/ID3v1 with fake syncwords 0xFF 0xFB).
 3. Non-Fast-Start MP4/M4A (ftyp -> mdat -> moov at EOF).
@@ -13,7 +13,7 @@ import struct
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-FIXTURES_DIR = ROOT_DIR / "test" / "fixtures"
+FIXTURES_DIR = ROOT_DIR / "example" / "assets" / "music"
 TRIPARTITE_DIR = FIXTURES_DIR / "tripartite"
 
 
@@ -22,7 +22,7 @@ def generate_fixtures(base_dir: Path = FIXTURES_DIR, output_dir: Path = TRIPARTI
 
     # 1. Giant Cover MP3 (> 350 KB ID3v2 APIC)
     print("Generating giant_cover.mp3...")
-    with open(base_dir / "cbr_noxing.mp3", "rb") as f:
+    with open(base_dir / "03_Before_The_Dawn_cbr_noxing.mp3", "rb") as f:
         mp3_audio = f.read()
 
     apic_payload_len = 350000
@@ -46,7 +46,7 @@ def generate_fixtures(base_dir: Path = FIXTURES_DIR, output_dir: Path = TRIPARTI
 
     # 2. Giant Cover FLAC (> 300 KB PICTURE block)
     print("Generating giant_cover.flac...")
-    with open(base_dir / "salida.flac", "rb") as f:
+    with open(base_dir / "04_Belaya_Tishina.flac", "rb") as f:
         full_flac = f.read()
 
     b_len = struct.unpack(">I", b"\x00" + full_flac[5:8])[0]
@@ -80,7 +80,7 @@ def generate_fixtures(base_dir: Path = FIXTURES_DIR, output_dir: Path = TRIPARTI
     with open(output_dir / "giant_cover.flac", "wb") as f:
         f.write(giant_flac)
 
-    # 3. EOF Chirp MP3 (cbr_noxing.mp3 + APEv2 / ID3v1 with fake 0xFF 0xFB syncwords)
+    # 3. EOF Chirp MP3 (03_Before_The_Dawn_cbr_noxing.mp3 + APEv2 / ID3v1 with fake 0xFF 0xFB syncwords)
     print("Generating eof_chirp.mp3...")
     fake_frame = b"\xFF\xFB\x90\x64" + (b"\xAA" * 414)
     item_val = fake_frame * 3
@@ -111,7 +111,7 @@ def generate_fixtures(base_dir: Path = FIXTURES_DIR, output_dir: Path = TRIPARTI
 
     # 4. Non-Fast-Start MP4 (ftyp -> mdat -> moov at EOF)
     print("Generating non_faststart.m4a...")
-    with open(base_dir / "salida_aac.m4a", "rb") as f:
+    with open(base_dir / "06_Calculated_Motion_aac.m4a", "rb") as f:
         full_m4a = f.read()
 
     ftyp_sz = struct.unpack(">I", full_m4a[:4])[0]
@@ -135,7 +135,7 @@ def generate_fixtures(base_dir: Path = FIXTURES_DIR, output_dir: Path = TRIPARTI
 
     # 5. WAV with trailing LIST/INFO chunk
     print("Generating trailing_chunks.wav...")
-    with open(base_dir / "test_24bit.wav", "rb") as f:
+    with open(base_dir / "08_Firelight_Promise_24bit_mono.wav", "rb") as f:
         wav_data = f.read()
 
     info_chunk = b"INAM" + struct.pack("<I", 16) + b"Test Title 1234\x00"

@@ -264,11 +264,11 @@ void main() {
 
       try {
         final sources = <(String label, AudioSource<String> Function() makeSource)>[
-          ('WAV fixture', () => AudioSource('test/fixtures/salida.wav', data: 'wav')),
-          ('MP3 fixture', () => AudioSource('test/fixtures/salida.mp3', data: 'mp3')),
-          ('FLAC fixture', () => AudioSource('test/fixtures/salida.flac', data: 'flac')),
-          ('Opus fixture', () => AudioSource('test/fixtures/salida.opus', data: 'opus')),
-          ('AAC fixture', () => AudioSource('test/fixtures/salida_aac.m4a', data: 'aac')),
+          ('WAV fixture', () => AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'wav')),
+          ('MP3 fixture', () => AudioSource('example/assets/music/01_Apex_Momentum.mp3', data: 'mp3')),
+          ('FLAC fixture', () => AudioSource('example/assets/music/04_Belaya_Tishina.flac', data: 'flac')),
+          ('Opus fixture', () => AudioSource('example/assets/music/02_Bailando_con_tu_recuerdo.opus', data: 'opus')),
+          ('AAC fixture', () => AudioSource('example/assets/music/06_Calculated_Motion_aac.m4a', data: 'aac')),
           ('Memory WAV', () => AudioSource(Uint8List.fromList(syntheticWav), data: 'mem')),
           ('HTTP WAV', () => AudioSource(httpServer.url('/valid.wav'), data: 'http')),
           (
@@ -315,7 +315,7 @@ void main() {
 
         // Verify clean error reporting and unbroken FSM state on invalid/error sources.
         final brokenSources = <(String label, AudioSource<String> Function() makeSource)>[
-          ('Missing file', () => AudioSource('test/fixtures/does_not_exist_12345.wav')),
+          ('Missing file', () => AudioSource('example/assets/music/does_not_exist_12345.wav')),
           ('HTTP 404', () => AudioSource(httpServer.url('/http404'))),
           ('HTTP 500', () => AudioSource(httpServer.url('/http500'))),
           (
@@ -380,12 +380,12 @@ void main() {
 
         await player.action.setEffects([
           AudioEffect(id: 'ping', source: AudioSource(Uint8List.fromList(sfxWav)), maxPolyphony: 16, pinned: true),
-          AudioEffect(id: 'boom', source: AudioSource('test/fixtures/salida.wav'), maxPolyphony: 8),
+          AudioEffect(id: 'boom', source: AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav'), maxPolyphony: 8),
         ]);
 
         await player.action.setQueue([
-          AudioSource('test/fixtures/salida.wav', data: 't0'),
-          AudioSource('test/fixtures/salida.mp3', data: 't1'),
+          AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 't0'),
+          AudioSource('example/assets/music/01_Apex_Momentum.mp3', data: 't1'),
           AudioSource(Uint8List.fromList(syntheticWav), data: 't2'),
           AudioSource(httpServer.url('/valid.wav'), data: 't3'),
         ]);
@@ -398,7 +398,7 @@ void main() {
               AudioSource(Uint8List.fromList(syntheticWav), data: 'app_$round'),
             ]),
             player.action.insertNext(
-              AudioSource('test/fixtures/salida.wav', data: 'ins_$round'),
+              AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'ins_$round'),
             ),
             player.action.setShuffle(round.isEven),
             player.action.setLoopMode(LoopMode.values[round % LoopMode.values.length]),
@@ -441,7 +441,7 @@ void main() {
         }
 
         // Clean end-state recovery check.
-        await player.action.setQueue([AudioSource('test/fixtures/salida.wav', data: 'final')]);
+        await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'final')]);
         await player.action.play(position: 0);
         await waitForAudioProgress(player, minDelta: const Duration(milliseconds: 50));
         await player.action.stop();
@@ -529,7 +529,7 @@ void main() {
           );
           await player.action.setQueue([
             AudioSource(midStall, data: 'mid_stall_$trigger'),
-            AudioSource('test/fixtures/salida.wav', data: 'fallback_$trigger'),
+            AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'fallback_$trigger'),
           ]);
           await player.action.play(position: 0);
           midStall.armStall();
@@ -542,7 +542,7 @@ void main() {
             case 'stop':
               await player.action.stop();
             case 'setQueue':
-              await player.action.setQueue([AudioSource('test/fixtures/salida.wav', data: 'replaced')]);
+              await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'replaced')]);
             case 'next':
               await player.action.next();
             case 'removeAt':
@@ -561,7 +561,7 @@ void main() {
           _verifyConsistency(player, context: 'Mid-stream cancel via $trigger');
 
           // Recover onto valid playback after every adversarial cancellation.
-          await player.action.setQueue([AudioSource('test/fixtures/salida.wav', data: 'recover_$trigger')]);
+          await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'recover_$trigger')]);
           await player.action.play(position: 0);
           await waitForAudioProgress(player, minDelta: const Duration(milliseconds: 30));
           await player.action.stop();
@@ -571,7 +571,7 @@ void main() {
         await player.action.setQueue([
           AudioSource(httpServer.url('/truncated.wav'), data: 'trunc'),
           AudioSource(httpServer.url('/http500'), data: 'err500'),
-          AudioSource('test/fixtures/salida.wav', data: 'good'),
+          AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'good'),
         ]);
         await player.action.play(position: 0).then<Object?>((_) => null).catchError((Object e) => e);
         await player.action.play(position: 2);
@@ -599,11 +599,11 @@ void main() {
       AudioSource<String> randomSource(int idHint) {
         switch (rng.nextInt(6)) {
           case 0:
-            return AudioSource('test/fixtures/salida.wav', data: 'wav_$idHint');
+            return AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'wav_$idHint');
           case 1:
-            return AudioSource('test/fixtures/salida.mp3', data: 'mp3_$idHint');
+            return AudioSource('example/assets/music/01_Apex_Momentum.mp3', data: 'mp3_$idHint');
           case 2:
-            return AudioSource('test/fixtures/salida.flac', data: 'flac_$idHint');
+            return AudioSource('example/assets/music/04_Belaya_Tishina.flac', data: 'flac_$idHint');
           case 3:
             return AudioSource(Uint8List.fromList(syntheticWav), data: 'mem_$idHint');
           case 4:
@@ -616,7 +616,7 @@ void main() {
       try {
         await player.action.setEffects([
           AudioEffect(id: 'fx_a', source: AudioSource(Uint8List.fromList(sfxWav)), maxPolyphony: 16, pinned: true),
-          AudioEffect(id: 'fx_b', source: AudioSource('test/fixtures/salida.wav'), maxPolyphony: 8),
+          AudioEffect(id: 'fx_b', source: AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav'), maxPolyphony: 8),
         ]);
         await player.action.setQueue([randomSource(0), randomSource(1), randomSource(2)]);
 
@@ -704,7 +704,7 @@ void main() {
             default:
               // Periodic WAV recording capture + verification.
               final recPath = '${tempDir.path}/fuzz_rec_${recCounter++}.wav';
-              await player.action.setQueue([AudioSource('test/fixtures/salida.wav', data: 'rec_wav')]);
+              await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'rec_wav')]);
               await player.action.play(position: 0);
               await player.action.startRecording(recPath, format: AudioFileFormat.wav, source: AudioOutputSource.all);
               await waitForAudioProgress(player, minDelta: const Duration(milliseconds: 30));
@@ -721,7 +721,7 @@ void main() {
 
         // Final deterministic recovery verification.
         await player.action.stopAllEffects(fadeOut: Duration.zero);
-        await player.action.setQueue([AudioSource('test/fixtures/salida.wav', data: 'final')]);
+        await player.action.setQueue([AudioSource('example/assets/music/17_Running_To_Meet_The_Sun.wav', data: 'final')]);
         await player.action.play(position: 0);
         await waitForAudioProgress(player, minDelta: const Duration(milliseconds: 50));
         await player.action.stop();

@@ -13,7 +13,7 @@ void main() {
     setUpAll(() async {
       await MiniaudioPlayer.ensureInitialized();
       wavBytes =
-          await File('test/fixtures/test_24bit_stereo.wav').readAsBytes();
+          await File('example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav').readAsBytes();
     });
 
     setUp(() async {

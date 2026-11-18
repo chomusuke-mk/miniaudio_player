@@ -26,9 +26,9 @@ void main() {
     test(
         'analyzeAudio calculates both ReplayGain and Waveform in a single pass on MP3 asset',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue,
-          reason: 'Test asset salida.mp3 must exist');
+          reason: 'Test asset 01_Apex_Momentum.mp3 must exist');
 
       final result = await MiniaudioPlayer.analyzeAudio(
         mp3.path,
@@ -50,14 +50,14 @@ void main() {
       expect(rg.peak, greaterThan(0.9));
       expect(
           rg.peak,
-          closeTo(1.46,
-              0.05)); // True unclipped peak for salida.mp3 (matches ffmpeg track_peak 1.461720)
+          closeTo(1.05,
+              0.05)); // True unclipped peak for 01_Apex_Momentum.mp3 (matches ffmpeg track_peak 1.054404)
       expect(rg.lufs,
-          closeTo(-4.7, 0.5)); // Expected ~ -4.7 LUFS (matches ffmpeg ebur128)
+          closeTo(-12.2, 0.5)); // Expected ~ -12.2 LUFS (matches ffmpeg ebur128)
       expect(
           rg.gainDb,
           closeTo(
-              -10.41, 0.5)); // Matches ffmpeg replaygain track_gain -10.41 dB
+              -5.75, 0.5)); // Matches ffmpeg replaygain track_gain -5.75 dB
 
       // Check recommended volume
       final volWithClippingDefense =
@@ -92,7 +92,7 @@ void main() {
 
     test('analyzeAudio with only waveform skips ReplayGain calculation',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final result = await MiniaudioPlayer.analyzeAudio(
@@ -109,7 +109,7 @@ void main() {
 
     test('analyzeAudio with only replayGain skips Waveform extraction',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final result = await MiniaudioPlayer.analyzeAudio(
@@ -120,11 +120,12 @@ void main() {
 
       expect(result.replayGain, isNotNull);
       expect(result.waveform, isNull);
-      expect(result.replayGain!.lufs, closeTo(-4.7, 0.5));
+      expect(result.replayGain!.lufs, closeTo(-12.2, 0.5));
     });
 
     test('analyzeAudioSync calculates loudness and waveform synchronously', () {
-      final wav = resolveAsset('test/fixtures/salida.wav');
+      final wav =
+          resolveAsset('example/assets/music/17_Running_To_Meet_The_Sun.wav');
       expect(wav.existsSync(), isTrue);
 
       final result = MiniaudioPlayer.analyzeAudioSync(
@@ -135,9 +136,9 @@ void main() {
 
       expect(result.replayGain, isNotNull);
       expect(result.replayGain!.peak, greaterThan(0.9));
-      expect(result.replayGain!.lufs, closeTo(-4.8, 0.5));
+      expect(result.replayGain!.lufs, closeTo(-11.7, 0.5));
       expect(result.replayGain!.gainDb,
-          closeTo(-10.36, 0.5)); // Matches ffmpeg replaygain -10.36 dB
+          closeTo(-5.41, 0.5)); // Matches ffmpeg replaygain -5.41 dB
 
       expect(result.waveform, isNotNull);
       expect(result.waveform!.length, equals(50));
@@ -146,10 +147,10 @@ void main() {
     test('analyzes FLAC, OPUS, AAC, and M4A seamlessly across codecs',
         () async {
       final formats = [
-        'test/fixtures/salida.flac',
-        'test/fixtures/salida.opus',
-        'test/fixtures/salida.aac',
-        'test/fixtures/salida_aac.m4a',
+        'example/assets/music/04_Belaya_Tishina.flac',
+        'example/assets/music/02_Bailando_con_tu_recuerdo.opus',
+        'example/assets/music/10_La_cicatriz_del_andén.aac',
+        'example/assets/music/06_Calculated_Motion_aac.m4a',
       ];
 
       for (final relPath in formats) {
@@ -173,7 +174,8 @@ void main() {
 
     test('analyzes 24-bit WAV fixture with accurate peak and waveform',
         () async {
-      final wav24 = resolveAsset('test/fixtures/test_24bit_stereo.wav');
+      final wav24 = resolveAsset(
+          'example/assets/music/12_Mi_más_bonita_coincidencia_24bit_stereo.wav');
       expect(wav24.existsSync(), isTrue);
 
       final result =
@@ -214,7 +216,7 @@ void main() {
     test(
         'analyzeAudio accepts AudioSource instances directly for file and memory sources',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       // File AudioSource
@@ -251,7 +253,7 @@ void main() {
 
     test('analyzeAudio extracts AudioMetadata when metadata: true is requested',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       // Default: metadata == false -> metadata is null
@@ -272,7 +274,7 @@ void main() {
     test(
         'analyzeAudio Phase 1 fast path resolves without waveform or replayGain',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final sw = Stopwatch()..start();
@@ -296,13 +298,13 @@ void main() {
 
     test('analyzeAudio with maxAnalysisDuration limits decoded duration',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final fullRes = await MiniaudioPlayer.analyzeAudio(mp3.path);
       final cappedRes = await MiniaudioPlayer.analyzeAudio(
         mp3.path,
-        maxAnalysisDuration: const Duration(milliseconds: 500),
+        maxAnalysisDuration: const Duration(seconds: 2),
       );
 
       expect(cappedRes.waveform, isNotNull);
@@ -313,7 +315,7 @@ void main() {
 
     test('analyzeAudio with chromaprint calculates acoustic fingerprint',
         () async {
-      final mp3 = resolveAsset('test/fixtures/salida.mp3');
+      final mp3 = resolveAsset('example/assets/music/01_Apex_Momentum.mp3');
       expect(mp3.existsSync(), isTrue);
 
       final noCp =
@@ -335,7 +337,8 @@ void main() {
   group('MiniaudioPlayer Metadata and AudioInfo state and stream integration',
       () {
     test('player exposes audioInfo and metadata on state and stream', () async {
-      final wav = resolveAsset('test/fixtures/salida.wav');
+      final wav =
+          resolveAsset('example/assets/music/17_Running_To_Meet_The_Sun.wav');
       expect(wav.existsSync(), isTrue);
 
       final source = AudioSource(wav.path);
@@ -371,7 +374,8 @@ void main() {
   group('MiniaudioPlayer ReplayGain integration from AudioSource', () {
     test('player applies replay gain from AudioSource automatically on open',
         () async {
-      final wav = resolveAsset('test/fixtures/salida.wav');
+      final wav =
+          resolveAsset('example/assets/music/17_Running_To_Meet_The_Sun.wav');
       expect(wav.existsSync(), isTrue);
 
       final source = AudioSource(

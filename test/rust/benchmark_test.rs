@@ -1,6 +1,6 @@
-//! Deterministic Open & Seek Latency Benchmark Suite on `test/fixtures/library/`.
+//! Deterministic Open & Seek Latency Benchmark Suite on `example/assets/music/library/`.
 //!
-//! Strictly resolves all benchmark files relative to `test/fixtures/` via `FixtureResolver`.
+//! Strictly resolves all benchmark files relative to `example/assets/music/` via `FixtureResolver`.
 //! Zero host-specific absolute paths are permitted.
 
 mod common;
@@ -15,8 +15,8 @@ fn run_format_benchmark(subdir: &str, ext: &str, min_expected_files: usize) {
     let files = FixtureResolver::collect_by_extension(subdir, ext, 50);
     assert!(
         files.len() >= min_expected_files,
-        "Expected at least {} '{}' fixture files in test/fixtures/{}, found {}. \
-         See test/fixtures/MANIFEST.md.",
+        "Expected at least {} '{}' fixture files in example/assets/music/{}, found {}. \
+         See test/MANIFEST.md.",
         min_expected_files,
         ext,
         subdir,
@@ -99,8 +99,13 @@ fn test_benchmark_flac_fixtures() {
 
 #[test]
 fn test_benchmark_extended_pcm_rf64_rifx_w64() {
-    for ext in &["rf64", "rifx", "w64"] {
-        let path = FixtureResolver::resolve(&format!("salida.{}", ext));
+    for rel in &[
+        "19_Spin_Me_In_The_Dark.rf64",
+        "22_The_Midnight_Pursuit.rifx",
+        "20_Swallowing_This_Glitter_Pill.w64",
+    ] {
+        let ext = rel.rsplit('.').next().unwrap();
+        let path = FixtureResolver::resolve(rel);
 
         let core_src = miniaudio_player::core::dual_source::AudioSourceCore {
             id: 1,

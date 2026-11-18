@@ -16,7 +16,7 @@ void main() {
 
     setUp(() async {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
       tempDir = Directory.systemTemp.createTempSync('miniaudio_codec_test_');
     });
 
@@ -29,7 +29,7 @@ void main() {
 
     test('Plays MP3 correctly when file is renamed with wrong extension (.wav)',
         () async {
-      final srcFile = File('test/fixtures/salida.mp3');
+      final srcFile = File('example/assets/music/01_Apex_Momentum.mp3');
       if (!srcFile.existsSync()) return;
 
       final misnamed = File('${tempDir.path}/track_actually_mp3.wav');
@@ -44,7 +44,7 @@ void main() {
     });
 
     test('Plays FLAC correctly when file has NO extension at all', () async {
-      final srcFile = File('test/fixtures/salida.flac');
+      final srcFile = File('example/assets/music/04_Belaya_Tishina.flac');
       if (!srcFile.existsSync()) return;
 
       final extensionless = File('${tempDir.path}/audio_stream_payload');
@@ -59,7 +59,7 @@ void main() {
     });
 
     test('Plays AAC M4A correctly when file has .bin extension', () async {
-      final srcFile = File('test/fixtures/salida_aac.m4a');
+      final srcFile = File('example/assets/music/06_Calculated_Motion_aac.m4a');
       if (!srcFile.existsSync()) return;
 
       final misnamed = File('${tempDir.path}/opaque_blob.bin');
@@ -79,7 +79,7 @@ void main() {
 
     setUp(() {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
     });
 
     tearDown(() async {
@@ -125,7 +125,7 @@ void main() {
 
     test('Playback populates sampleRate, channels, and buffered telemetry',
         () async {
-      final file = File('test/fixtures/salida.mp3');
+      final file = File('example/assets/music/01_Apex_Momentum.mp3');
       if (!file.existsSync()) return;
 
       await player.action.setQueue([AudioSource(file.path)]);

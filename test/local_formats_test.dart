@@ -35,7 +35,7 @@ void main() {
     await MiniaudioPlayer.ensureInitialized();
   });
 
-  final dir = Directory('test/fixtures');
+  final dir = Directory('example/assets/music');
   final allFiles = dir.listSync().whereType<File>().toList();
   allFiles.sort((a, b) => a.path.compareTo(b.path));
 
@@ -52,7 +52,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+        queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
@@ -97,7 +97,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+        queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     for (final file in supportedFiles) {
@@ -140,7 +140,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+        queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     const representativeFormats = [
@@ -162,7 +162,7 @@ void main() {
       final fileName = match.uri.pathSegments.last;
 
       test('3.asset: $fileName ($fmt)', () async {
-        final assetKey = 'test/fixtures/$fileName';
+        final assetKey = 'example/assets/music/$fileName';
         await player.action.setQueue([AudioSource(assetKey)]);
         await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
@@ -181,11 +181,11 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+        queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     test('4.1: AudioSource with file path plays local file', () async {
-      final file = File('test/fixtures/salida.mp3');
+      final file = File('example/assets/music/01_Apex_Momentum.mp3');
       await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
@@ -194,7 +194,7 @@ void main() {
     });
 
     test('4.2: AudioSource with file:// URI plays local file', () async {
-      final file = File('test/fixtures/salida.wav');
+      final file = File('example/assets/music/17_Running_To_Meet_The_Sun.wav');
       await player.action.setQueue([AudioSource(file.absolute.uri)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
@@ -203,7 +203,7 @@ void main() {
     });
 
     test('4.3: File path passed to player.action.setQueue()', () async {
-      final file = File('test/fixtures/salida.flac');
+      final file = File('example/assets/music/04_Belaya_Tishina.flac');
       await player.action.setQueue([AudioSource(file.path)]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
@@ -213,7 +213,7 @@ void main() {
 
     test('4.4: Raw path String passed to player.action.setQueue()', () async {
       await player.action
-          .setQueue([AudioSource('test/fixtures/salida_aac.m4a')]);
+          .setQueue([AudioSource('example/assets/music/06_Calculated_Motion_aac.m4a')]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
       expect(player.state.isPlaying, isTrue);
@@ -230,7 +230,7 @@ void main() {
 
     setUp(() async {
       player = MiniaudioPlayer(
-          queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]);
+          queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]);
       corruptFile =
           File('${Directory.systemTemp.path}/temp_corrupt_test_file.mp3');
       // Create artificial garbage file
@@ -261,7 +261,7 @@ void main() {
       expect(player.state.isPlaying, isFalse);
 
       // 3. Immediately recover by queueing and playing valid local file
-      await player.action.setQueue([AudioSource('test/fixtures/salida.mp3')]);
+      await player.action.setQueue([AudioSource('example/assets/music/01_Apex_Momentum.mp3')]);
       await player.action.play();
       expect(player.state.duration?.inMilliseconds, greaterThan(0));
       expect(player.state.isPlaying, isTrue);
@@ -276,7 +276,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+        queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     test(
@@ -293,7 +293,7 @@ void main() {
 
         // Player must be immediately reusable
         await player.action
-            .setQueue([AudioSource('test/fixtures/salida_alac.m4a')]);
+            .setQueue([AudioSource('example/assets/music/07_Fevered_Strings_alac.m4a')]);
         await player.action.play();
         expect(player.state.duration?.inMilliseconds, greaterThan(0));
         expect(player.state.isPlaying, isTrue);
@@ -313,7 +313,7 @@ void main() {
     late MiniaudioPlayer player;
 
     setUp(() => player = MiniaudioPlayer(
-        queue: [AudioSource('test/fixtures/tripartite/eof_chirp.mp3')]));
+        queue: [AudioSource('example/assets/music/tripartite/eof_chirp.mp3')]));
     tearDown(() async => await player.dispose());
 
     test(
@@ -322,9 +322,9 @@ void main() {
       final trace = LocalChaosTrace();
 
       try {
-        const trackA = 'test/fixtures/salida.mp3';
-        const trackB = 'test/fixtures/salida_aac.m4a';
-        const trackC = 'test/fixtures/salida_alac.m4a';
+        const trackA = 'example/assets/music/01_Apex_Momentum.mp3';
+        const trackB = 'example/assets/music/06_Calculated_Motion_aac.m4a';
+        const trackC = 'example/assets/music/07_Fevered_Strings_alac.m4a';
 
         // Step 1: Set queue track A and play
         trace.log('Step 1: setQueue(trackA)');
