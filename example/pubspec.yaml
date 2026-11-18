@@ -27,7 +27,16 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/music/
+#    - path: assets/music/
+#      platforms: [windows, macos, linux]
+    - path: assets/music/01_Apex_Momentum.mp3
+      platforms: [android, ios, web]
+    - path: assets/music/02_Bailando_con_tu_recuerdo.opus
+      platforms: [android, ios, web]
+    - path: assets/music/05_Burning_in_the_Electric_Light.ogg
+      platforms: [android, ios, web]
+    - path: assets/music/06_Calculated_Motion_aac.m4a
+      platforms: [android, ios, web]
     - assets/icon.png
 
 flutter_launcher_icons:

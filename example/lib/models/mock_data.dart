@@ -67,10 +67,34 @@ abstract final class MockData {
     return miniAudioPlayerSupportedExtensions.contains(lower);
   }
 
+  static const String _rawAssetsBase =
+      'https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player_assets/main';
+
+  static String _encodeRelativeUrlPath(String relPath) =>
+      relPath.split('/').map(Uri.encodeComponent).join('/');
+
+  static final RegExp _percentEncodedRunPattern = RegExp(
+    r'(?:%[0-9A-Fa-f]{2})+',
+  );
+
+  /// Decodes `%XX` UTF-8 sequences while preserving literal non-ASCII characters
+  /// that cause [Uri.decodeFull] to throw [ArgumentError].
+  static String _decodeAssetRelativeName(String rawName) {
+    if (!rawName.contains('%')) return rawName;
+    return rawName.replaceAllMapped(_percentEncodedRunPattern, (match) {
+      final segment = match.group(0)!;
+      try {
+        return Uri.decodeComponent(segment);
+      } on ArgumentError {
+        return segment;
+      }
+    });
+  }
+
   static Future<List<AudioTrack>> loadTracks({AssetBundle? bundle}) async {
     final root = bundle ?? rootBundle;
     final List<AudioTrack> tracks = [];
-    final Set<String> seenFilenames = {};
+    final Set<String> seenIds = {};
 
     void addTrack({
       required String id,
@@ -82,9 +106,7 @@ abstract final class MockData {
       double? replayGainDb,
       double? replayPeak,
     }) {
-      final key = title.toLowerCase();
-      if (seenFilenames.contains(key)) return;
-      seenFilenames.add(key);
+      if (!seenIds.add(id)) return;
       tracks.add(
         AudioTrack(
           id: id,
@@ -99,7 +121,8 @@ abstract final class MockData {
       );
     }
 
-    // 1. Assets from bundle (submodule: example/assets/music)
+    // 1. Discover assets bundled on the current target platform (Desktop: all 27; Mobile/Web: 4 lightweight).
+    final Map<String, String> bundledByDecodedName = {};
     try {
       final manifest = await AssetManifest.loadFromAssetBundle(root);
       final localAssets = manifest.listAssets().where((asset) {
@@ -112,70 +135,299 @@ abstract final class MockData {
           return false;
         }
         return isAudioFile(asset);
-      }).toList()
-        ..sort();
+      }).toList()..sort();
 
       for (final asset in localAssets) {
         final rawName = asset.substring('assets/music/'.length);
-        final decodedName = Uri.decodeFull(rawName);
-        addTrack(
-          id: 'asset://$asset',
-          title: decodedName,
-          source: AudioSource('asset://$asset'),
-          artist: 'Local Asset Bundle',
-        );
+        bundledByDecodedName[_decodeAssetRelativeName(rawName)] = asset;
       }
     } catch (_) {}
 
-    // 2. Remote progressive HTTP streams & HLS playlists from miniaudio_player_assets (CORS + COEP + HTTP 206)
-    const rawAssetsBase =
-        'https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player_assets/main';
+    // 2. Canonical playable catalog (28 of 29 songs; excludes #26 AES-128 HLS until runtime decryption is wired).
+    // Any track bundled in AssetManifest uses `asset://`; all remaining tracks auto-complete from GitHub Raw CDN.
+    const catalog =
+        <
+          ({
+            String path,
+            String title,
+            String artist,
+            String album,
+            String format,
+            bool remoteOnly,
+          })
+        >[
+          (
+            path: '01_Apex_Momentum.mp3',
+            title: 'Apex Momentum',
+            artist: 'Elena Vance',
+            album: 'Kinetic Landscapes',
+            format: 'MP3',
+            remoteOnly: false,
+          ),
+          (
+            path: '02_Bailando_con_tu_recuerdo.opus',
+            title: 'Bailando con tu recuerdo',
+            artist: 'Mateo Valdés',
+            album: 'Noches de Brisa',
+            format: 'Opus',
+            remoteOnly: false,
+          ),
+          (
+            path: '03_Before_The_Dawn_cbr_noxing.mp3',
+            title: 'Before The Dawn',
+            artist: 'Clara Lindqvist',
+            album: 'Radiant Horizons',
+            format: 'MP3 CBR Mono',
+            remoteOnly: false,
+          ),
+          (
+            path: '04_Belaya_Tishina.flac',
+            title: 'Белая тишина (Belaya Tishina)',
+            artist: 'Dmitri Volkov',
+            album: 'За краем веков',
+            format: 'FLAC 24-bit',
+            remoteOnly: false,
+          ),
+          (
+            path: '05_Burning_in_the_Electric_Light.ogg',
+            title: 'Burning in the Electric Light',
+            artist: 'The Meridian Echo',
+            album: 'After the Glare',
+            format: 'OGG Vorbis',
+            remoteOnly: false,
+          ),
+          (
+            path: '06_Calculated_Motion_aac.m4a',
+            title: 'Calculated Motion',
+            artist: 'Kairo Tanaka',
+            album: 'Active State',
+            format: 'M4A AAC',
+            remoteOnly: false,
+          ),
+          (
+            path: '07_Fevered_Strings_alac.m4a',
+            title: 'Fevered Strings',
+            artist: 'Aria Montgomery',
+            album: 'The Kinetic Suite',
+            format: 'ALAC Lossless',
+            remoteOnly: false,
+          ),
+          (
+            path: '08_Firelight_Promise_24bit_mono.wav',
+            title: 'Firelight Promise',
+            artist: 'Nolan Reid',
+            album: 'Midnight Solstice',
+            format: 'WAV 24-bit Mono',
+            remoteOnly: false,
+          ),
+          (
+            path: '09_Flesh_and_Chrome.wv',
+            title: 'Flesh and Chrome',
+            artist: 'Vespera 9',
+            album: 'Velvet Machine',
+            format: 'WavPack',
+            remoteOnly: false,
+          ),
+          (
+            path: '10_La_cicatriz_del_andén.aac',
+            title: 'La cicatriz del andén',
+            artist: 'Lucía Benítez',
+            album: 'Viajeros del tiempo perdido',
+            format: 'AAC ADTS',
+            remoteOnly: false,
+          ),
+          (
+            path: '11_Mar_de_cristal.mka',
+            title: 'Mar de cristal',
+            artist: 'Camila Solís',
+            album: 'Arquitectura de luz',
+            format: 'MKA FLAC',
+            remoteOnly: false,
+          ),
+          (
+            path: '12_Mi_más_bonita_coincidencia_24bit_stereo.wav',
+            title: 'Mi más bonita coincidencia',
+            artist: 'Julián Cabrera',
+            album: 'Cielo de Febrero',
+            format: 'WAV 24-bit Stereo',
+            remoteOnly: false,
+          ),
+          (
+            path: '13_Overture_for_the_Floor.webm',
+            title: 'Overture for the Floor',
+            artist: 'Studio Monochrome',
+            album: 'Concrete Conservatory',
+            format: 'WebM Opus',
+            remoteOnly: false,
+          ),
+          (
+            path: '14_Painting_the_Sky.mkv',
+            title: 'Painting the Sky',
+            artist: 'Sora Takashi',
+            album: 'Prism Flight',
+            format: 'MKV Opus',
+            remoteOnly: false,
+          ),
+          (
+            path: '15_Resting_At_Your_Feet.mp2',
+            title: 'Resting At Your Feet',
+            artist: 'Helena Novak',
+            album: 'Cathedral Of Silence',
+            format: 'MP2',
+            remoteOnly: false,
+          ),
+          (
+            path: '16_Ribbons_on_Anchors.oga',
+            title: 'Ribbons on Anchors',
+            artist: 'Yuki Fujimoto',
+            album: 'Glitter & Grit',
+            format: 'OGA Vorbis',
+            remoteOnly: false,
+          ),
+          (
+            path: '17_Running_To_Meet_The_Sun.wav',
+            title: 'Running To Meet The Sun',
+            artist: 'Caleb Mercer',
+            album: 'Westbound Narratives',
+            format: 'WAV 16-bit',
+            remoteOnly: false,
+          ),
+          (
+            path: '18_Running_With_Daylight.aif',
+            title: 'Running With Daylight',
+            artist: 'Noah Lind',
+            album: 'Calculated Motion',
+            format: 'AIFF',
+            remoteOnly: false,
+          ),
+          (
+            path: '19_Spin_Me_In_The_Dark.rf64',
+            title: 'Spin Me In The Dark',
+            artist: 'Mireia Costa',
+            album: 'The Midnight Ballroom',
+            format: 'RF64',
+            remoteOnly: false,
+          ),
+          (
+            path: '20_Swallowing_This_Glitter_Pill.w64',
+            title: 'Swallowing This Glitter Pill',
+            artist: 'Koko Arakawa',
+            album: 'Curated Facades',
+            format: 'Wave64',
+            remoteOnly: false,
+          ),
+          (
+            path: '21_The_Great_Equalizer.bwf',
+            title: 'The Great Equalizer',
+            artist: 'Victor Kestrel',
+            album: 'Broadcast Masters',
+            format: 'BWF',
+            remoteOnly: false,
+          ),
+          (
+            path: '22_The_Midnight_Pursuit.rifx',
+            title: 'The Midnight Pursuit',
+            artist: 'Clara Rostova',
+            album: 'Bravura Nocturnes',
+            format: 'RIFX BE',
+            remoteOnly: false,
+          ),
+          (
+            path: '23_Tracing_Lines.aifc',
+            title: 'Tracing Lines',
+            artist: 'Owen Gallagher',
+            album: 'Midnight Horizon',
+            format: 'AIFC',
+            remoteOnly: false,
+          ),
+          (
+            path: '24_Tracks_Into_The_Dawn.aiff',
+            title: 'Tracks Into The Dawn',
+            artist: 'Rafael Ortega',
+            album: 'Horizon Velocity',
+            format: 'AIFF',
+            remoteOnly: false,
+          ),
+          (
+            path: '25_Velocity_of_One.ape',
+            title: 'Velocity of One',
+            artist: 'Lucas Moreau',
+            album: 'Radiant Motion',
+            format: 'APE',
+            remoteOnly: false,
+          ),
+          (
+            path: '27_¡Yo_me_opongo_.caf',
+            title: '¡Yo me opongo!',
+            artist: 'Gabriel Peña',
+            album: 'Sentimientos de Amargue',
+            format: 'CAF',
+            remoteOnly: false,
+          ),
+          (
+            path: 'hls/28_Разводят_мосты.m3u8',
+            title: 'Разводят мосты',
+            artist: 'Анна Крылова',
+            album: 'Городские сны',
+            format: 'HLS VOD',
+            remoteOnly: true,
+          ),
+          (
+            path: '29_駆け抜けて、この空を.dsf',
+            title: '駆け抜けて、この空を',
+            artist: '桜庭 凛 (Rin Sakuraba)',
+            album: '光のまにまに',
+            format: 'DSF DSD64',
+            remoteOnly: false,
+          ),
+        ];
 
-    final remoteTracks = <({String path, String title, String artist})>[
-      (
-        path: '01_Apex_Momentum.mp3',
-        title: 'Apex Momentum (Remote MP3)',
-        artist: 'Elena Vance • Remote Raw CDN',
-      ),
-      (
-        path: '02_Bailando_con_tu_recuerdo.opus',
-        title: 'Bailando con tu recuerdo (Remote Opus)',
-        artist: 'Mateo Valdés • Remote Raw CDN',
-      ),
-      (
-        path: '04_Belaya_Tishina.flac',
-        title: 'Belaya Tishina (Remote FLAC)',
-        artist: 'Dmitri Volkov • Remote Raw CDN',
-      ),
-      (
-        path: '05_Burning_in_the_Electric_Light.ogg',
-        title: 'Burning in the Electric Light (Remote OGG)',
-        artist: 'The Meridian Echo • Remote Raw CDN',
-      ),
-      (
-        path: '06_Calculated_Motion_aac.m4a',
-        title: 'Calculated Motion (Remote M4A)',
-        artist: 'Kairo Tanaka • Remote Raw CDN',
-      ),
-      (
-        path: '09_Flesh_and_Chrome.wv',
-        title: 'Flesh and Chrome (Remote WavPack)',
-        artist: 'Vespera 9 • Remote Raw CDN',
-      ),
-      (
-        path: 'hls/28_%D0%A0%D0%B0%D0%B7%D0%B2%D0%BE%D0%B4%D1%8F%D1%82_%D0%BC%D0%BE%D1%81%D1%82%D1%8B.m3u8',
-        title: 'Разводят мосты (Remote HLS VOD)',
-        artist: 'Анна Крылова • Remote Raw CDN',
-      ),
-    ];
+    final Set<String> consumedAssets = {};
+    for (final item in catalog) {
+      final bundledAsset = item.remoteOnly
+          ? null
+          : bundledByDecodedName[item.path];
+      if (bundledAsset != null) {
+        consumedAssets.add(item.path);
+        addTrack(
+          id: 'asset://$bundledAsset',
+          title: '${item.title} (${item.format})',
+          source: AudioSource('asset://$bundledAsset'),
+          artist: '${item.artist} • Local Asset',
+          album: item.album,
+        );
+      } else {
+        final url = '$_rawAssetsBase/${_encodeRelativeUrlPath(item.path)}';
+        addTrack(
+          id: url,
+          title: '${item.title} (Remote ${item.format})',
+          source: AudioSource(url),
+          artist: '${item.artist} • Remote Raw CDN',
+          album: item.album,
+        );
+      }
+    }
 
-    for (final item in remoteTracks) {
-      final url = '$rawAssetsBase/${item.path}';
+    // Preserve any additional local assets discovered in AssetManifest outside the fixed table.
+    for (final entry in bundledByDecodedName.entries) {
+      if (consumedAssets.contains(entry.key)) continue;
       addTrack(
-        id: url,
-        title: item.title,
-        source: AudioSource(url),
-        artist: item.artist,
+        id: 'asset://${entry.value}',
+        title: entry.key,
+        source: AudioSource('asset://${entry.value}'),
+        artist: 'Local Asset Bundle',
+      );
+    }
+
+    // Ensure at least one non-HLS progressive HTTPS track exists on Desktop builds too.
+    if (!tracks.any((t) => t.resourceBadge == 'NETWORK' && !t.isLive)) {
+      const showcaseUrl = '$_rawAssetsBase/01_Apex_Momentum.mp3';
+      addTrack(
+        id: showcaseUrl,
+        title: 'Apex Momentum (Remote HTTP MP3)',
+        source: AudioSource(showcaseUrl),
+        artist: 'Elena Vance • Remote Raw CDN',
+        album: 'Kinetic Landscapes',
       );
     }
 

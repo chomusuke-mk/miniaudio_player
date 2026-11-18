@@ -38,7 +38,7 @@ Montaje único en el repo principal (SIN symlinks, SIN Git LFS):
   ├── .pubignore                     # Excluye /example/assets/music/, /test/, /.gitmodules (0 MB música en pub.dev)
   ├── example/
   │   ├── .gitignore                 # SIN `/assets/music/` para permitir el gitlink 160000 limpio
-  │   ├── pubspec.yaml               # Declara `- assets/music/` (y opcional `- assets/music/hls/`)
+  │   ├── pubspec.yaml               # Desktop: `assets/music/` completo; Android/iOS/Web: 4 formatos ligeros (~13.5 MiB)
   │   └── assets/
   │       └── music/   <───────────── SUBMÓDULO ÚNICO (1 única copia física compartida; incluye README.md)
   └── test/
@@ -133,28 +133,17 @@ Además, dentro de `example/assets/music/tripartite/` se regeneran los **6 fixtu
 
 ---
 
-## 5. Plan de Cambios en Código (`example/` y `test/` — Para la Siguiente Fase)
+## 5. Estado de Cambios Implementados (`example/` y `test/`) *(Completado)*
 
-*(No implementado aún según lo solicitado; esta especificación guiará la fase de implementación).*
-
-### 5.1 Actualizaciones en `example/` ([`mock_data.dart`](../example/lib/models/mock_data.dart) y [`pubspec.yaml`](../example/pubspec.yaml))
-1. **Listado dinámico de todos los assets en `assets/music/`**:
-   * `MockData.loadTracks()` seguirá leyendo `AssetManifest.loadFromAssetBundle(root)` filtrando:
-     * `asset.startsWith('assets/music/')`
-     * Exclusión explícita de subcarpetas auxiliares (`!asset.contains('/tripartite/') && !asset.contains('/covers/') && !asset.contains('/scripts/')`)
-     * Filtro de extensión soportada `isAudioFile(asset)` (previa incorporación de `'wv'`, `'ape'`, `'dsf'` en [`miniAudioPlayerSupportedExtensions`](../lib/src/api/miniaudio_player.dart)).
-   * Al cargar cada asset local, ordenar alfabéticamente por nombre (`01_...` .. `29_...`) y extraer nombre legible para `title`, manteniendo `id: 'asset://$asset'` y `AudioSource('asset://$asset')`.
-   * **Sin `fallbackAssets` rotos cuando se descarga desde `pub.dev`**: Si `AssetManifest` no encuentra archivos locales en `assets/music/` (ej. clon sin `--recurse-submodules` o paquete instalado desde `pub.dev`), **no** agregar rutas `assets/music/salida.*` inexistentes; dejar que el usuario pruebe inmediatamente con las pistas remotas del sub-repositorio + la pista sintetizada en memoria (`data:`).
-2. **Pistas Remotas hacia `miniaudio_player_assets` (Web CORS + `COEP` + `HTTP 206`)**:
-   * Reemplazar `rafaelreis-hotmart` y `upload.wikimedia.org` por URLs directas a `https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player_assets/main/...`:
-     * MP3 remoto: `01_Apex_Momentum.mp3` (`Remote MP3`)
-     * Opus remoto: `02_Bailando_con_tu_recuerdo.opus` (`Remote Opus`)
-     * FLAC remoto: `04_Belaya_Tishina.flac` (`Remote FLAC`)
-     * Ogg Vorbis remoto: `05_Burning_in_the_Electric_Light.ogg` (`Remote OGG`)
-     * M4A AAC remoto: `06_Calculated_Motion_aac.m4a` (`Remote M4A`)
-     * WavPack remoto: `09_Flesh_and_Chrome.wv` (`Remote WavPack`)
-     * HLS remoto: `hls/28_Разводят_мосты.m3u8` (`Remote HLS`)
-   * Asegurar títulos/claves diferenciadas (`(Remote)`) para que `seenFilenames` no colisione cuando también exista el asset local en la cola.
+### 5.1 Actualizaciones en `example/` ([`mock_data.dart`](../example/lib/models/mock_data.dart) y [`pubspec.yaml`](../example/pubspec.yaml)) *(Completado)*
+1. **Empaquetado selectivo por plataforma en [`example/pubspec.yaml`](../example/pubspec.yaml)**:
+   * **Escritorio (`windows`, `macos`, `linux`)**: mantiene `- path: assets/music/` con los 27 archivos raíz locales (`~559 MiB`) para pruebas offline sin red.
+   * **Móvil y Web (`android`, `ios`, `web`)**: declara únicamente los **4 formatos comprimidos ligeros** (`01_Apex_Momentum.mp3`, `02_Bailando_con_tu_recuerdo.opus`, `05_Burning_in_the_Electric_Light.ogg`, `06_Calculated_Motion_aac.m4a`, **~`13.5 MiB`** en total).
+2. **Completado híbrido de catálogo en `MockData.loadTracks()`**:
+   * Inspecciona `AssetManifest.loadFromAssetBundle(root)` para detectar qué pistas existen localmente en el bundle de la plataforma destino (cargadas como `asset://assets/music/...` con badge `ASSET`).
+   * Recorre la tabla canónica ordenada de las pistas reproducibles del catálogo (`#01`–`#25`, `#27`, `hls/28_Разводят_мосты.m3u8` VOD y `#29`; excluye `#26` AES-128 HLS por no tener descifrado en reproducción), completando automáticamente cualquier canción ausente en el bundle local con su enlace remoto HTTPS en `https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player_assets/main/...` (codificación URI segura para UTF-8).
+   * En escritorio (donde los 27 archivos raíz son locales), añade además un enlace de muestra HTTP progresivo (`Apex Momentum (Remote HTTP MP3)`) junto con `Radio FIP` (`icy://`) y la onda PCM sintetizada (`data: URI`).
+   * **Sin `fallbackAssets` rotos en `pub.dev`**: Si `AssetManifest` no encuentra archivos locales (ej. clon sin submódulo o descarga desde `pub.dev`), el catálogo entero se resuelve vía HTTPS sin rutas inexistentes.
 
 ### 5.2 Actualizaciones en `test/` y `test/rust/` *(Completado)*
 1. Actualizar `FixtureResolver` en `test/rust/` y los helpers/tests en `test/` para resolver directamente desde `example/assets/music/` (y `example/assets/music/tripartite/` / `hls/`).
