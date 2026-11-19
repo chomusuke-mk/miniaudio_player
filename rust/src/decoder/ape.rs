@@ -157,6 +157,50 @@ impl ApeReader {
         Ok(())
     }
 
+    /// Exports exact `(frame_start_byte_offset, frame_start_ms)` anchors from the APE header
+    /// seek table plus a terminal sentinel for accurate seek and buffered-range boundary snapping.
+    pub fn frame_anchors(&self) -> Vec<(u64, i64)> {
+        let fi = self.decoder.file_info();
+        let total = self.total_frames;
+        let sr = self.sample_rate.max(1) as u128;
+        let mut out = Vec::with_capacity(total as usize + 1);
+        for frame_idx in 0..total {
+            let rem = self.decoder.seek_remainder(frame_idx) as u64;
+            let byte_off = fi.seek_byte(frame_idx).saturating_sub(rem);
+            let sample = frame_idx as u64 * fi.header.blocks_per_frame as u64;
+            let ms = ((sample as u128 * 1000) / sr) as i64;
+            out.push((byte_off, ms));
+        }
+        if total > 0 {
+            let last = total - 1;
+            let end_byte = fi
+                .seek_byte(last)
+                .saturating_add(fi.frame_byte_count(last));
+            let dur_ms = self.duration_ms.map(|d| d as i64).unwrap_or_else(|| {
+                let sample = fi.total_blocks.max(0) as u64;
+                ((sample as u128 * 1000) / sr) as i64
+            });
+            out.push((end_byte, dur_ms));
+        }
+        out
+    }
+
+    /// Returns `(read_start_byte, read_end_byte)` required by `ApeDecoder::read_frame_data` for `current_frame`.
+    pub fn current_frame_byte_range(&self) -> Option<(u64, u64)> {
+        if self.current_frame >= self.total_frames {
+            return None;
+        }
+        let fi = self.decoder.file_info();
+        let rem = self.decoder.seek_remainder(self.current_frame) as u64;
+        let start = fi.seek_byte(self.current_frame).saturating_sub(rem);
+        let frame_bytes = fi.frame_byte_count(self.current_frame);
+        let end = fi
+            .seek_byte(self.current_frame)
+            .saturating_add(frame_bytes)
+            .saturating_add(4);
+        Some((start, end))
+    }
+
     /// Decodes the next audio frame into the output normalized float PCM buffer.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         loop {

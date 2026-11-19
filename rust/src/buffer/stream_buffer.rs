@@ -1558,6 +1558,31 @@ impl ProbePageCache {
     }
 }
 
+/// Container-specific framing parameters for exact in-RAM buffered range scanning.
+#[derive(Debug, Clone)]
+pub enum BufferedBoundaryKind {
+    None,
+    Ogg {
+        serial: u32,
+        sample_rate: u32,
+        pre_skip: u64,
+    },
+    Flac {
+        sample_rate: u32,
+        min_bs: u16,
+        max_bs: u16,
+    },
+    WavPack {
+        sample_rate: u32,
+    },
+    Mkv {
+        timecode_scale_ns: u64,
+    },
+    Mp3Xing,
+    /// Sorted exact frame boundaries `(byte_offset, start_ms)` with terminal `(end_byte, dur_ms)`.
+    ExactFrames(Vec<(u64, i64)>),
+}
+
 /// Coordinates the three independent [`StreamBuffer`] instances (`Head`, `Body`, `Metadata`)
 /// for an active media stream.
 #[derive(Clone)]
@@ -1608,6 +1633,10 @@ pub struct StreamSession {
     ack_seek_gen: Arc<AtomicU64>,
     /// Optional HLS VOD lookahead & segment-jump controller.
     hls_vod: Arc<RwLock<Option<Arc<HlsVodState>>>>,
+    /// Container framing configuration used to snap `[start_ms, end_ms]` to complete in-RAM units.
+    boundary_kind: Arc<RwLock<BufferedBoundaryKind>>,
+    /// Cached `(r_start, r_end, is_eof, start_ms, end_ms)` from the most recent boundary scan.
+    last_mapped_window: Arc<Mutex<Option<(u64, u64, bool, i64, i64)>>>,
 }
 
 /// Segment metadata descriptor for bounded-lookahead HLS VOD streaming and instant segment seek.
@@ -1761,6 +1790,26 @@ impl HlsVodState {
                 idx == seg_idx && b_start >= r_start && b_end <= r_end
             })
             .map(|&(_, b_start, _, s_ms, _)| (b_start, s_ms))
+    }
+
+    /// Returns conservative `(start_ms, end_ms)` across all HLS VOD segments whose complete bytes
+    /// reside inside `[r_start, r_end)`.
+    pub fn resident_ms_bounds(&self, r_start: u64, r_end: u64) -> Option<(i64, i64)> {
+        let guard = lock_unpoisoned(&self.inner);
+        let mut first_ms: Option<i64> = None;
+        let mut last_ms: Option<i64> = None;
+        for &(_, b_start, b_end, s_ms, e_ms) in &guard.fed_spans {
+            if b_start >= r_start && b_end <= r_end {
+                if first_ms.is_none() {
+                    first_ms = Some(s_ms);
+                }
+                last_ms = Some(e_ms);
+            }
+        }
+        match (first_ms, last_ms) {
+            (Some(s), Some(e)) if e > s => Some((s, e)),
+            _ => None,
+        }
     }
 
     /// Requests jumping the HLS VOD download window to `seg_idx`. Returns the new monotonic jump epoch.
@@ -1974,6 +2023,8 @@ impl StreamSession {
             latest_seek_gen: Arc::new(AtomicU64::new(0)),
             ack_seek_gen: Arc::new(AtomicU64::new(0)),
             hls_vod: Arc::new(RwLock::new(None)),
+            boundary_kind: Arc::new(RwLock::new(BufferedBoundaryKind::None)),
+            last_mapped_window: Arc::new(Mutex::new(None)),
         };
         if let Some(tot) = total_size {
             session.body.set_audio_end(Some(tot));
@@ -2472,6 +2523,24 @@ impl StreamSession {
         }
         let (r_start, r_end, cap) = self.body.circular_metrics();
         if anchor_byte >= r_start && anchor_byte < r_end {
+            let max_seed = (cap / 2).max(65_536);
+            let mut seeded = 0usize;
+            let mut cur = r_end;
+            let mut tmp = [0u8; 32 * 1024];
+            while seeded < max_seed {
+                let n = {
+                    let cache = lock_unpoisoned(&self.probe_cache);
+                    cache.read_cached(cur, &mut tmp)
+                };
+                if n == 0 || self.body.feed_sequential(cur, &tmp[..n]).is_err() {
+                    break;
+                }
+                cur = cur.saturating_add(n as u64);
+                seeded += n;
+            }
+            if resume_cursor > anchor_byte {
+                self.body.set_cursor(resume_cursor.min(cur));
+            }
             return;
         }
         self.flush(anchor_byte);
@@ -2864,6 +2933,30 @@ impl StreamSession {
         self.body.circular_metrics()
     }
 
+    /// Returns the current physical read cursor of `Body`.
+    #[inline]
+    pub fn body_cursor(&self) -> u64 {
+        self.body.cursor()
+    }
+
+    /// Returns bytes currently available ahead of `Body`'s read cursor inside RAM without waiting on HTTP.
+    #[inline]
+    pub fn body_unread_ahead(&self) -> u64 {
+        let cur = self.body.cursor();
+        let (r_start, r_end, _) = self.body.circular_metrics();
+        if cur < r_start || cur >= r_end {
+            0
+        } else {
+            r_end - cur
+        }
+    }
+
+    /// Installs container framing rules for exact decodable buffered range snapping.
+    pub fn set_buffered_boundary_kind(&self, kind: BufferedBoundaryKind) {
+        *write_unpoisoned(&self.boundary_kind) = kind;
+        *lock_unpoisoned(&self.last_mapped_window) = None;
+    }
+
     /// Reads bytes directly from the in-RAM circular `Body` cache at `offset` without HTTP I/O.
     pub fn read_cached_body_at(&self, offset: u64, out: &mut [u8]) -> usize {
         self.body.read_at(offset, out).unwrap_or(0)
@@ -2879,12 +2972,14 @@ impl StreamSession {
     pub fn configure_byte_time_map(&self, audio_start: u64, audio_end: u64, duration_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.set_bounds(audio_start, audio_end, duration_ms);
+        *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
     /// Refines the logical start byte offset where `t = 0 ms` begins on [`ByteTimeMap`].
     pub fn refine_byte_time_audio_start(&self, first_audio_byte: u64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.refine_audio_start(first_audio_byte);
+        *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
     /// Installs pre-extracted container index `(byte_offset, time_ms)` anchors.
@@ -2894,6 +2989,7 @@ impl StreamSession {
         }
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.set_anchors(pts);
+        *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
     /// Merges newly discovered anchors with any existing runtime/seek anchors cleanly.
@@ -2903,6 +2999,7 @@ impl StreamSession {
         }
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.merge_anchors(pts);
+        *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
     /// Returns a cloned copy of the sorted `(byte_offset, ms)` anchors currently known.
@@ -2936,6 +3033,7 @@ impl StreamSession {
     pub fn record_verified_byte_time_anchor(&self, byte_offset: u64, time_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.record_verified_anchor(byte_offset, time_ms);
+        *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
     /// Marks whether the open FLAC stream already carried an embedded `SEEKTABLE` block.
@@ -2971,27 +3069,316 @@ impl StreamSession {
     pub fn push_segment_anchor(&self, byte_offset: u64, time_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.push_segment_anchor(byte_offset, time_ms);
+        *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Maps the active circular `[start_byte, end_byte]` cache window into conservative `[start_ms, end_ms]`.
+    /// Maps the active circular `[start_byte, end_byte]` cache window into conservative `[start_ms, end_ms]`,
+    /// snapping endpoints to 100% complete decodable container units inside RAM with zero HTTP I/O.
     pub fn mapped_buffered_range(&self, duration_ms: i64) -> (i64, i64) {
         let (r_start, r_end, _cap) = self.body.circular_metrics();
         if r_end <= r_start {
             return (0, 0);
         }
-        let map = read_unpoisoned(&self.byte_time_map);
         let is_eof = self.body.is_eof();
-        let raw_end = if is_eof && duration_ms > 0 {
-            duration_ms
+        if let Some((cs, ce, ceof, s_ms, e_ms)) = *lock_unpoisoned(&self.last_mapped_window) {
+            if cs == r_start && ce == r_end && ceof == is_eof {
+                return (s_ms, e_ms);
+            }
+        }
+
+        if let Some(vod) = self.hls_vod() {
+            if !is_eof {
+                if let Some((hs, he)) = vod.resident_ms_bounds(r_start, r_end) {
+                    let e = if duration_ms > 0 { he.clamp(0, duration_ms) } else { he.max(0) };
+                    let s = hs.clamp(0, e);
+                    *lock_unpoisoned(&self.last_mapped_window) = Some((r_start, r_end, is_eof, s, e));
+                    return (s, e);
+                }
+            }
+        }
+
+        let audio_start = self.audio_start.load(Ordering::Acquire);
+        let boundary_kind = read_unpoisoned(&self.boundary_kind).clone();
+        let mut discovered_anchors: Vec<(u64, i64)> = Vec::new();
+        let mut discovered_flac_pts: Vec<(u64, u64)> = Vec::new();
+        let mut override_start: Option<i64> = if r_start <= audio_start { Some(0) } else { None };
+        let mut override_end: Option<i64> = if is_eof && duration_ms > 0 {
+            Some(duration_ms)
         } else {
-            map.byte_to_ms(r_end, false)
+            None
         };
+
+        if !is_eof {
+            match boundary_kind {
+                BufferedBoundaryKind::None => {}
+                BufferedBoundaryKind::Mp3Xing => {
+                    let cur_end = read_unpoisoned(&self.byte_time_map).byte_to_ms(r_end, false);
+                    let cur_start = override_start
+                        .unwrap_or_else(|| read_unpoisoned(&self.byte_time_map).byte_to_ms(r_start, true));
+                    if cur_end.saturating_sub(cur_start) > 1_500 {
+                        override_end = Some(cur_end.saturating_sub(750).max(cur_start));
+                    } else if cur_end.saturating_sub(cur_start) > 800 {
+                        override_end = Some(cur_end.saturating_sub(300).max(cur_start));
+                    }
+                }
+                BufferedBoundaryKind::ExactFrames(ref frames) => {
+                    // APE requires `end_byte + seek_remainder(<=3) + 4 <= r_end` per frame.
+                    let j = if r_start <= audio_start {
+                        0
+                    } else {
+                        frames.partition_point(|&(b, _)| b < r_start)
+                    };
+                    if override_start.is_none() {
+                        if let Some(&(_, ms)) = frames.get(j) {
+                            override_start = Some(ms);
+                        }
+                    }
+                    let k = frames
+                        .partition_point(|&(b, _)| b.saturating_add(8) <= r_end)
+                        .saturating_sub(1);
+                    if k >= j.saturating_add(2) && k < frames.len() {
+                        // Keep 1 complete ~1.66s APE frame in RAM beyond `end_ms` so 96% seeks
+                        // never stall waiting for the next monolithic ~190 KB APE frame on slow links.
+                        override_end = Some(frames[k - 1].1);
+                    } else if k > j && k < frames.len() {
+                        override_end = Some(frames[k].1);
+                    }
+                }
+                BufferedBoundaryKind::Ogg {
+                    serial,
+                    sample_rate,
+                    pre_skip,
+                } => {
+                    let tail_off = r_end.saturating_sub(64 * 1024).max(r_start);
+                    let tail_len = (r_end - tail_off).min(64 * 1024) as usize;
+                    if tail_len >= 28 {
+                        let mut buf = vec![0u8; tail_len];
+                        let got = self.read_cached_body_at(tail_off, &mut buf);
+                        let pages = ByteTimeMap::scan_ogg_pages_in_slice(
+                            &buf[..got],
+                            tail_off,
+                            serial,
+                            sample_rate,
+                            pre_skip,
+                        );
+                        if let Some(last) = pages.last() {
+                            let target_end = last.end_ms.saturating_sub(600);
+                            let safe_pg = pages
+                                .iter()
+                                .rev()
+                                .find(|p| p.end_ms <= target_end)
+                                .or_else(|| {
+                                    if pages.len() >= 2 {
+                                        Some(&pages[pages.len() - 2])
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(last);
+                            override_end = Some(safe_pg.end_ms);
+                        }
+                        for pg in pages {
+                            discovered_anchors.push((pg.offset.saturating_add(pg.len as u64), pg.end_ms));
+                        }
+                    }
+                    if override_start.is_none() {
+                        let head_len = (r_end - r_start).min(32 * 1024) as usize;
+                        if head_len >= 28 {
+                            let mut buf = vec![0u8; head_len];
+                            let got = self.read_cached_body_at(r_start, &mut buf);
+                            let pages = ByteTimeMap::scan_ogg_pages_in_slice(
+                                &buf[..got],
+                                r_start,
+                                serial,
+                                sample_rate,
+                                pre_skip,
+                            );
+                            for pg in &pages {
+                                discovered_anchors.push((pg.offset.saturating_add(pg.len as u64), pg.end_ms));
+                            }
+                            if let Some(first_pg) = pages.iter().find(|p| !p.is_continuation) {
+                                if first_pg.offset > r_start {
+                                    // `r_start` sits mid-page; postpone anchor eval to `first_pg.offset`.
+                                    override_start = Some(
+                                        read_unpoisoned(&self.byte_time_map)
+                                            .byte_to_ms(first_pg.offset, true),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                BufferedBoundaryKind::Flac {
+                    sample_rate,
+                    min_bs,
+                    max_bs,
+                } => {
+                    let tail_off = r_end.saturating_sub(64 * 1024).max(r_start);
+                    let tail_len = (r_end - tail_off).min(64 * 1024) as usize;
+                    if tail_len >= 16 {
+                        let mut buf = vec![0u8; tail_len];
+                        let got = self.read_cached_body_at(tail_off, &mut buf);
+                        let frames = ByteTimeMap::scan_flac_frames_in_slice(
+                            &buf[..got],
+                            tail_off,
+                            sample_rate,
+                            min_bs,
+                            max_bs,
+                            duration_ms,
+                        );
+                        if frames.len() >= 2 {
+                            override_end = Some(frames[frames.len() - 2].2);
+                        }
+                        for (off, smp, ms) in frames {
+                            discovered_anchors.push((off, ms));
+                            discovered_flac_pts.push((off, smp));
+                        }
+                    }
+                    if override_start.is_none() {
+                        let head_len = (r_end - r_start).min(32 * 1024) as usize;
+                        if head_len >= 16 {
+                            let mut buf = vec![0u8; head_len];
+                            let got = self.read_cached_body_at(r_start, &mut buf);
+                            let frames = ByteTimeMap::scan_flac_frames_in_slice(
+                                &buf[..got],
+                                r_start,
+                                sample_rate,
+                                min_bs,
+                                max_bs,
+                                duration_ms,
+                            );
+                            if let Some(&(first_off, _, first_ms)) = frames.first() {
+                                if first_off >= r_start {
+                                    override_start = Some(first_ms);
+                                }
+                            }
+                            for (off, smp, ms) in frames {
+                                discovered_anchors.push((off, ms));
+                                discovered_flac_pts.push((off, smp));
+                            }
+                        }
+                    }
+                }
+                BufferedBoundaryKind::WavPack { sample_rate } => {
+                    let tail_off = r_end.saturating_sub(112 * 1024).max(r_start);
+                    let tail_len = (r_end - tail_off).min(112 * 1024) as usize;
+                    if tail_len >= 32 {
+                        let mut buf = vec![0u8; tail_len];
+                        let got = self.read_cached_body_at(tail_off, &mut buf);
+                        let blocks = ByteTimeMap::extract_wavpack_blocks_in_slice(
+                            &buf[..got],
+                            tail_off,
+                            sample_rate,
+                            duration_ms,
+                        );
+                        if let Some(&(off, blen, blk_idx, blk_samples)) = blocks.last() {
+                            if off + blen as u64 <= r_end {
+                                let end_smp = blk_idx.saturating_add(blk_samples as u64);
+                                let end_block_ms =
+                                    ((end_smp as u128 * 1000) / sample_rate.max(1) as u128) as i64;
+                                override_end = Some(end_block_ms);
+                                discovered_anchors.push((off + blen as u64, end_block_ms));
+                            }
+                        }
+                        for (off, _, blk_idx, _) in blocks {
+                            let start_block_ms =
+                                ((blk_idx as u128 * 1000) / sample_rate.max(1) as u128) as i64;
+                            discovered_anchors.push((off, start_block_ms));
+                        }
+                    }
+                    if override_start.is_none() {
+                        let head_len = (r_end - r_start).min(96 * 1024) as usize;
+                        if head_len >= 32 {
+                            let mut buf = vec![0u8; head_len];
+                            let got = self.read_cached_body_at(r_start, &mut buf);
+                            let blocks = ByteTimeMap::extract_wavpack_blocks_in_slice(
+                                &buf[..got],
+                                r_start,
+                                sample_rate,
+                                duration_ms,
+                            );
+                            if let Some(&(off, _, blk_idx, _)) = blocks.first() {
+                                if off >= r_start {
+                                    let sms = ((blk_idx as u128 * 1000)
+                                        / sample_rate.max(1) as u128)
+                                        as i64;
+                                    override_start = Some(sms);
+                                }
+                            }
+                            for (off, _, blk_idx, _) in blocks {
+                                let sms = ((blk_idx as u128 * 1000)
+                                    / sample_rate.max(1) as u128)
+                                    as i64;
+                                discovered_anchors.push((off, sms));
+                            }
+                        }
+                    }
+                }
+                BufferedBoundaryKind::Mkv { timecode_scale_ns } => {
+                    let tail_off = r_end.saturating_sub(96 * 1024).max(r_start);
+                    let tail_len = (r_end - tail_off).min(96 * 1024) as usize;
+                    if tail_len >= 16 {
+                        let mut buf = vec![0u8; tail_len];
+                        let got = self.read_cached_body_at(tail_off, &mut buf);
+                        let clusters = ByteTimeMap::scan_mkv_clusters_in_slice(
+                            &buf[..got],
+                            tail_off,
+                            timecode_scale_ns,
+                            duration_ms,
+                        );
+                        discovered_anchors.extend(clusters);
+                    }
+                    let safe_end_byte = if r_end.saturating_sub(r_start) > 48 * 1024 {
+                        r_end.saturating_sub(24 * 1024)
+                    } else {
+                        r_end.saturating_sub(8 * 1024).max(r_start)
+                    };
+                    if override_start.is_none() {
+                        let head_len = (r_end - r_start).min(64 * 1024) as usize;
+                        if head_len >= 16 {
+                            let mut buf = vec![0u8; head_len];
+                            let got = self.read_cached_body_at(r_start, &mut buf);
+                            let clusters = ByteTimeMap::scan_mkv_clusters_in_slice(
+                                &buf[..got],
+                                r_start,
+                                timecode_scale_ns,
+                                duration_ms,
+                            );
+                            if let Some(&(cl_off, cl_ms)) = clusters.first() {
+                                if cl_off >= r_start {
+                                    override_start = Some(cl_ms);
+                                }
+                            }
+                            discovered_anchors.extend(clusters);
+                        }
+                    }
+                    if !discovered_anchors.is_empty() {
+                        write_unpoisoned(&self.byte_time_map).merge_anchors(std::mem::take(&mut discovered_anchors));
+                    }
+                    override_end = Some(
+                        read_unpoisoned(&self.byte_time_map).byte_to_ms(safe_end_byte, false),
+                    );
+                }
+            }
+        }
+
+        if !discovered_anchors.is_empty() {
+            write_unpoisoned(&self.byte_time_map).merge_anchors(discovered_anchors);
+        }
+        if !discovered_flac_pts.is_empty() {
+            self.record_flac_seek_points(&discovered_flac_pts);
+        }
+
+        let map = read_unpoisoned(&self.byte_time_map);
+        let raw_end = override_end.unwrap_or_else(|| map.byte_to_ms(r_end, false));
         let end_ms = if duration_ms > 0 {
             raw_end.clamp(0, duration_ms)
         } else {
             raw_end.max(0)
         };
-        let start_ms = map.byte_to_ms(r_start, true).clamp(0, end_ms);
+        let raw_start = override_start.unwrap_or_else(|| map.byte_to_ms(r_start, true));
+        let start_ms = raw_start.clamp(0, end_ms);
+        *lock_unpoisoned(&self.last_mapped_window) = Some((r_start, r_end, is_eof, start_ms, end_ms));
         (start_ms, end_ms)
     }
 

@@ -376,6 +376,12 @@ impl WavpackReader {
                 Ok(0) => break,
                 Ok(read_n) => n += read_n,
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(ref e)
+                    if n == 0
+                        && matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                {
+                    break;
+                }
                 Err(e) => return Err(SymphoniaError::IoError(e)),
             }
         }
@@ -482,6 +488,14 @@ impl WavpackReader {
     #[inline]
     pub fn current_block_start_ms(&self) -> u64 {
         ((self.current_block_range.0 as u128 * 1000) / self.sample_rate.max(1) as u128) as u64
+    }
+
+    /// Seeds verified `(sample_index, byte_offset)` block boundaries cached in RAM so in-buffer
+    /// seeks resolve with zero HTTP Range probes.
+    pub fn inject_checkpoints(&mut self, pts: &[(u64, u64)]) {
+        for &(frame, off) in pts {
+            self.record_checkpoint(frame, off);
+        }
     }
 
     /// Seeks cleanly to `position_ms` using sparse checkpoints and verified `"wvpk"` block sync.

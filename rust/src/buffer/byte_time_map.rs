@@ -6,6 +6,18 @@
 //! - Recording segment boundaries in HLS VOD (`#EXTINF` cumulative durations vs fed bytes).
 //! - Incorporating dynamic `(byte_offset, pos_ms)` waypoints during decode for VBR streams.
 
+/// Decoded byte/granule metadata for a complete verified `OggS` page inside a memory slice.
+#[derive(Debug, Clone, Copy)]
+pub struct OggPageMeta {
+    pub offset: u64,
+    pub len: usize,
+    pub granule: i64,
+    pub is_continuation: bool,
+    pub is_eos: bool,
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
 /// Maps stream byte offsets inside `[audio_start, audio_end]` to track timestamps in milliseconds.
 #[derive(Debug, Clone)]
 pub struct ByteTimeMap {
@@ -531,8 +543,8 @@ impl ByteTimeMap {
             0
         };
 
-        // Walk samples sequentially through chunks to emit evenly spaced checkpoints (~256 points).
-        let stride = (sample_count / 256).max(1);
+        // Walk samples sequentially through chunks to emit evenly spaced checkpoints (~512 points).
+        let stride = (sample_count / 512).max(1);
         let mut raw_points: Vec<(u64, i64)> = Vec::with_capacity(sample_count / stride + 4);
         let mut stts_idx = 0usize;
         let mut stts_rem = stts_entries.first().map(|e| e.0).unwrap_or(0);
@@ -657,6 +669,160 @@ impl ByteTimeMap {
         Some((dur_ms, anchors))
     }
 
+    /// Scans an MP3 header buffer for a Xing / Info VBR header with a 100-entry TOC and
+    /// maps TOC percentages onto `(byte_offset, time_ms)` checkpoints across the audio stream.
+    pub fn extract_mp3_xing_anchors(
+        head: &[u8],
+        audio_start: u64,
+        audio_end: u64,
+        dur_ms: i64,
+    ) -> Option<Vec<(u64, i64)>> {
+        if dur_ms <= 0 || audio_end <= audio_start || head.len() < 128 {
+            return None;
+        }
+        let marker_pos = head
+            .windows(4)
+            .position(|w| w == b"Xing" || w == b"Info")?;
+        if marker_pos + 120 > head.len() {
+            return None;
+        }
+        let flags = u32::from_be_bytes(head[marker_pos + 4..marker_pos + 8].try_into().ok()?);
+        if (flags & 0x04) == 0 {
+            return None;
+        }
+        let mut cursor = marker_pos + 8;
+        if (flags & 0x01) != 0 {
+            cursor += 4;
+        }
+        let declared_bytes = if (flags & 0x02) != 0 {
+            let b = u32::from_be_bytes(head.get(cursor..cursor + 4)?.try_into().ok()?) as u64;
+            cursor += 4;
+            Some(b)
+        } else {
+            None
+        };
+        let toc = head.get(cursor..cursor + 100)?;
+        // Locate MPEG frame sync immediately preceding the Xing/Info tag (36B for MPEG1 stereo,
+        // 21B for MPEG1 mono / MPEG2 stereo). Require Layer III bits (`(b1 & 0xE6) == 0xE2`).
+        let frame_start = [36usize, 21, 13, 17, 25]
+            .into_iter()
+            .filter_map(|back| marker_pos.checked_sub(back))
+            .find(|&s| head[s] == 0xFF && (head[s + 1] & 0xE6) == 0xE2)
+            .unwrap_or(marker_pos) as u64;
+        let base_off = frame_start.min(audio_start);
+        let max_avail = audio_end.saturating_sub(base_off);
+        let span_bytes = declared_bytes.filter(|&b| b > 0 && b <= max_avail + 4096).unwrap_or(max_avail);
+
+        let mut anchors = Vec::with_capacity(101);
+        anchors.push((audio_start.max(base_off), 0));
+        for (pct, &val) in toc.iter().enumerate() {
+            if pct == 0 {
+                continue;
+            }
+            let off = base_off.saturating_add(((val as u128 * span_bytes as u128) / 256) as u64);
+            let ms = ((pct as i64) * dur_ms) / 100;
+            anchors.push((off.min(audio_end), ms));
+        }
+        anchors.push((audio_end, dur_ms));
+        Some(anchors)
+    }
+
+    /// Scans `slice` for a verified 2-frame ADTS AAC header pair and returns the byte offset
+    /// within `slice` of the first frame header.
+    pub fn find_verified_adts_sync(slice: &[u8]) -> Option<usize> {
+        #[inline]
+        fn parse_adts_hdr(b: &[u8]) -> Option<(usize, u8, u8, u8)> {
+            if b.len() < 7 || b[0] != 0xFF || (b[1] & 0xF6) != 0xF0 {
+                return None;
+            }
+            let id = (b[1] >> 3) & 0x01;
+            let sr_idx = (b[2] >> 2) & 0x0F;
+            if sr_idx >= 13 {
+                return None;
+            }
+            let ch_cfg = ((b[2] & 0x01) << 2) | ((b[3] >> 6) & 0x03);
+            let frame_len = (((b[3] & 0x03) as usize) << 11)
+                | ((b[4] as usize) << 3)
+                | ((b[5] >> 5) as usize);
+            if frame_len < 7 || frame_len > 8192 {
+                return None;
+            }
+            Some((frame_len, id, sr_idx, ch_cfg))
+        }
+
+        let mut i = 0usize;
+        while i + 14 <= slice.len() {
+            if let Some((len1, id1, sr1, ch1)) = parse_adts_hdr(&slice[i..]) {
+                let next = i + len1;
+                if next + 7 <= slice.len() {
+                    if let Some((_, id2, sr2, ch2)) = parse_adts_hdr(&slice[next..]) {
+                        if id1 == id2 && sr1 == sr2 && ch1 == ch2 {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Scans `slice` (rooted at stream byte `slice_offset`) and returns complete verified `OggS`
+    /// page metadata matching `serial` with non-negative granule positions.
+    pub fn scan_ogg_pages_in_slice(
+        slice: &[u8],
+        slice_offset: u64,
+        serial: u32,
+        sample_rate: u32,
+        pre_skip: u64,
+    ) -> Vec<OggPageMeta> {
+        let mut out = Vec::new();
+        if sample_rate == 0 || slice.len() < 28 {
+            return out;
+        }
+        let mut i = 0usize;
+        let mut prev_end_ms: Option<i64> = None;
+        while i + 28 <= slice.len() {
+            let Some((pg_serial, granule, page_len)) = Self::parse_ogg_page_header(slice, i) else {
+                i += 1;
+                continue;
+            };
+            let page_end = i + page_len;
+            if page_end > slice.len() {
+                if out.is_empty() {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            if page_end + 4 <= slice.len() && &slice[page_end..page_end + 4] != b"OggS" {
+                i += 1;
+                continue;
+            }
+            let flags = slice[i + 5];
+            let is_continuation = (flags & 0x01) != 0;
+            let is_eos = (flags & 0x04) != 0;
+            if pg_serial == serial && granule > pre_skip as i64 {
+                let samples = (granule as u64).saturating_sub(pre_skip);
+                let end_ms = ((samples as u128 * 1000) / sample_rate as u128) as i64;
+                let start_ms = prev_end_ms.unwrap_or_else(|| end_ms.saturating_sub(1050));
+                out.push(OggPageMeta {
+                    offset: slice_offset.saturating_add(i as u64),
+                    len: page_len,
+                    granule,
+                    is_continuation,
+                    is_eos,
+                    start_ms,
+                    end_ms,
+                });
+                prev_end_ms = Some(end_ms);
+            } else if pg_serial == serial && granule == -1 {
+                prev_end_ms = None;
+            }
+            i = page_end;
+        }
+        out
+    }
     /// Parses Ogg primary stream metadata `(serial, sample_rate, pre_skip)` from `head`
     /// supporting Opus (`OpusHead`), Vorbis (`\x01vorbis`), and Ogg-FLAC (`\x7fFLAC`).
     pub fn parse_ogg_stream_info(head: &[u8]) -> Option<(u32, u32, u64)> {
@@ -760,39 +926,10 @@ impl ByteTimeMap {
         sample_rate: u32,
         pre_skip: u64,
     ) -> Vec<(u64, i64)> {
-        let mut out = Vec::new();
-        if sample_rate == 0 || slice.len() < 28 {
-            return out;
-        }
-        let mut i = 0usize;
-        while i + 28 <= slice.len() {
-            let Some((pg_serial, granule, page_len)) = Self::parse_ogg_page_header(slice, i) else {
-                i += 1;
-                continue;
-            };
-            let page_end = i + page_len;
-            if page_end > slice.len() {
-                // Verify no unaligned candidate later before ending if initial candidate wasn't verified.
-                if out.is_empty() {
-                    i += 1;
-                    continue;
-                }
-                break;
-            }
-            // Confirm consecutive OggS sync when another header fits inside `slice` so random
-            // audio payload bytes matching `OggS` are rejected deterministically.
-            if page_end + 4 <= slice.len() && &slice[page_end..page_end + 4] != b"OggS" {
-                i += 1;
-                continue;
-            }
-            if pg_serial == serial && granule > pre_skip as i64 {
-                let samples = (granule as u64).saturating_sub(pre_skip);
-                let ms = ((samples as u128 * 1000) / sample_rate as u128) as i64;
-                out.push((slice_offset.saturating_add(page_end as u64), ms));
-            }
-            i = page_end;
-        }
-        out
+        Self::scan_ogg_pages_in_slice(slice, slice_offset, serial, sample_rate, pre_skip)
+            .into_iter()
+            .map(|p| (p.offset.saturating_add(p.len as u64), p.end_ms))
+            .collect()
     }
 
     /// Scans `slice` (rooted at stream byte `slice_offset`) for a valid complete `OggS` page
@@ -1178,7 +1315,7 @@ impl ByteTimeMap {
                     if c_end > payload_end {
                         break;
                     }
-                    if cid == 0x2AD7_B1 {
+                    if cid == 0x002A_D7B1 {
                         if let Some(s) = Self::ebml_be_uint(&head[c_start..c_end]) {
                             if s > 0 {
                                 scale_ns = s;
@@ -1389,12 +1526,128 @@ impl ByteTimeMap {
                 head[i..i + wavicle::block::HEADER_LEN].try_into().ok()?;
             if let Ok(hdr) = wavicle::block::BlockHeader::parse(hdr_arr) {
                 let blen = hdr.block_len();
-                if hdr.block_samples > 0 && blen >= wavicle::block::HEADER_LEN && blen <= 4 * 1024 * 1024 {
+                if hdr.block_samples > 0
+                    && (wavicle::block::HEADER_LEN..=4 * 1024 * 1024).contains(&blen)
+                {
                     return Some(i as u64);
                 }
             }
         }
         None
+    }
+
+    /// Copies `head[..first_cluster_offset]` and rewrites the EBML `Segment` size VINT in-place
+    /// to unknown-size all-1s (`0x01 FF..FF` / `0x1F FF..FF`) so a non-seekable `MkvReader` can
+    /// jump directly to any arbitrary later `Cluster` without premature `Segment` truncation.
+    pub fn build_streaming_mkv_head(head: &[u8], first_cluster_offset: u64) -> Option<Vec<u8>> {
+        let prefix_len = usize::try_from(first_cluster_offset).ok()?;
+        if prefix_len == 0 || prefix_len > head.len() {
+            return None;
+        }
+        let seg_pos = head[..prefix_len]
+            .windows(4)
+            .position(|w| w == [0x18, 0x53, 0x80, 0x67])?;
+        let (_, sz_len, _) = Self::ebml_vint(head, seg_pos + 4, true)?;
+        if sz_len == 0 || seg_pos + 4 + sz_len > prefix_len {
+            return None;
+        }
+        let mut out = head[..prefix_len].to_vec();
+        let lead_bits = 0xFFu8 >> (sz_len - 1);
+        let marker = 1u8 << (8 - sz_len);
+        out[seg_pos + 4] = marker | (lead_bits & (marker - 1));
+        for b in &mut out[seg_pos + 5..seg_pos + 4 + sz_len] {
+            *b = 0xFF;
+        }
+        Some(out)
+    }
+
+    /// Scans `slice` (rooted at `slice_offset`) and returns all valid Matroska/WebM
+    /// `(cluster_byte_offset, timestamp_ms)` pairs found inside `slice`.
+    pub fn scan_mkv_clusters_in_slice(
+        slice: &[u8],
+        slice_offset: u64,
+        timecode_scale_ns: u64,
+        max_dur_ms: i64,
+    ) -> Vec<(u64, i64)> {
+        let mut out = Vec::new();
+        if timecode_scale_ns == 0 || slice.len() < 16 {
+            return out;
+        }
+        let mut pos = 0usize;
+        while pos + 12 < slice.len() {
+            if let Some((cl_off, ms)) = Self::extract_mkv_cluster_anchor_in_slice(
+                &slice[pos..],
+                slice_offset.saturating_add(pos as u64),
+                timecode_scale_ns,
+                max_dur_ms,
+            ) {
+                if out.last().is_none_or(|&(_, prev_ms)| ms >= prev_ms) {
+                    out.push((cl_off, ms));
+                }
+                let rel = (cl_off - slice_offset) as usize;
+                pos = rel.saturating_add(16);
+            } else {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Scans `slice` (rooted at `slice_offset`) and returns all complete verified WavPack blocks
+    /// as `(block_byte_offset, block_len, block_index_samples, block_samples)` whose full bytes
+    /// reside inside `slice`.
+    pub fn extract_wavpack_blocks_in_slice(
+        slice: &[u8],
+        slice_offset: u64,
+        sample_rate: u32,
+        max_dur_ms: i64,
+    ) -> Vec<(u64, usize, u64, u32)> {
+        let mut out = Vec::new();
+        if sample_rate == 0 || slice.len() < wavicle::block::HEADER_LEN {
+            return out;
+        }
+        let mut i = 0usize;
+        while i + wavicle::block::HEADER_LEN <= slice.len() {
+            if &slice[i..i + 4] != b"wvpk" {
+                i += 1;
+                continue;
+            }
+            let Ok(hdr_arr): Result<&[u8; wavicle::block::HEADER_LEN], _> =
+                slice[i..i + wavicle::block::HEADER_LEN].try_into()
+            else {
+                break;
+            };
+            let Ok(hdr) = wavicle::block::BlockHeader::parse(hdr_arr) else {
+                i += 1;
+                continue;
+            };
+            let blen = hdr.block_len();
+            if !(wavicle::block::HEADER_LEN..=2 * 1024 * 1024).contains(&blen)
+                || hdr.block_samples == 0
+                || hdr.block_samples > sample_rate.saturating_mul(10)
+                || i + blen > slice.len()
+            {
+                i += 1;
+                continue;
+            }
+            if i + blen + 4 <= slice.len() && &slice[i + blen..i + blen + 4] != b"wvpk" {
+                i += 1;
+                continue;
+            }
+            let ms = ((hdr.block_index as u128 * 1000) / sample_rate as u128) as i64;
+            if max_dur_ms > 0 && ms > max_dur_ms + 2_000 {
+                i += 1;
+                continue;
+            }
+            out.push((
+                slice_offset.saturating_add(i as u64),
+                blen,
+                hdr.block_index,
+                hdr.block_samples,
+            ));
+            i += blen;
+        }
+        out
     }
 
     /// Scans a WavPack `slice` (rooted at `slice_offset`) for a validated `wvpk` block header
@@ -1418,8 +1671,7 @@ impl ByteTimeMap {
                 continue;
             };
             let blen = hdr.block_len();
-            if blen < wavicle::block::HEADER_LEN
-                || blen > 2 * 1024 * 1024
+            if !(wavicle::block::HEADER_LEN..=2 * 1024 * 1024).contains(&blen)
                 || hdr.block_samples == 0
                 || hdr.block_samples > sample_rate.saturating_mul(10)
             {

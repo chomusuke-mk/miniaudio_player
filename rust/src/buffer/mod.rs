@@ -17,7 +17,7 @@ pub use source::{
     FileByteSource,
 };
 pub use stream_buffer::{
-    BlockFetchOrder, BlockFetchPhase, BufferBackend, BufferError, BufferRange, ByteFetchTask,
-    HlsVodSegment, HlsVodState, ProbeFetcherFn, ProbeGuard, SlidingWindowConfig,
-    SlidingWindowState, StreamBuffer, StreamSession, VodAction,
+    BlockFetchOrder, BlockFetchPhase, BufferBackend, BufferError, BufferRange,
+    BufferedBoundaryKind, ByteFetchTask, HlsVodSegment, HlsVodState, ProbeFetcherFn, ProbeGuard,
+    SlidingWindowConfig, SlidingWindowState, StreamBuffer, StreamSession, VodAction,
 };

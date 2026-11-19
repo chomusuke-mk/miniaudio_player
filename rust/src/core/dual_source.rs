@@ -14,8 +14,9 @@ use crate::bridge::ffi::*;
 #[cfg(unix)]
 use crate::buffer::FdOpenOutcome;
 use crate::buffer::{
-    ByteTimeMap, CustomByteSourceHandle, CustomDartByteSource, DartResolveRegistry, FileByteSource,
-    ProbeFetcherFn, ResolvedCoreSource, StreamBuffer, StreamSession,
+    BufferedBoundaryKind, ByteTimeMap, CustomByteSourceHandle, CustomDartByteSource,
+    DartResolveRegistry, FileByteSource, ProbeFetcherFn, ResolvedCoreSource, StreamBuffer,
+    StreamSession,
 };
 use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{
@@ -1238,6 +1239,7 @@ fn spawn_network_streamer_thread(
                     }
                     continue;
                 }
+                session.body.set_push_streaming(true);
 
                 // Query the 3-phase progressive block-coalescing scheduler (5s -> 5s -> 15s super-blocks)
                 let Some(order) = session
@@ -1379,7 +1381,7 @@ fn spawn_network_streamer_thread(
                                     }
                                 }
                             }
-                            stream_pos += offset as u64;
+                            stream_pos = stream_pos.saturating_add(n as u64);
                             remaining_in_block = remaining_in_block.saturating_sub(offset);
                             if session.is_eof() {
                                 session.body.set_push_streaming(false);
@@ -1587,12 +1589,12 @@ type ReopenSourceFn =
     Arc<dyn Fn() -> Option<Box<dyn symphonia::core::io::MediaSource>> + Send + Sync>;
 
 struct SharedMemSource {
-    data: Arc<Vec<u8>>,
+    data: Arc<[u8]>,
     pos: usize,
 }
 
 impl SharedMemSource {
-    fn new(data: Arc<Vec<u8>>) -> Self {
+    fn new(data: Arc<[u8]>) -> Self {
         Self { data, pos: 0 }
     }
 }
@@ -1786,7 +1788,7 @@ impl DecoderWorker {
         eng_lock: &mut Option<SymphoniaEngine>,
         target_seek: i64,
         is_superseded: &F,
-    ) -> Result<u64, ()> {
+    ) -> Result<(u64, bool), ()> {
         let target_seg = vod.segment_for_ms(target_seek);
         let seg_info = vod.segment(target_seg).ok_or(())?;
         let recover_hint = eng_lock.as_ref().and_then(|e| e.container_hint_ext());
@@ -1795,6 +1797,8 @@ impl DecoderWorker {
         // Fast-path: segment already resident cleanly inside circular cache with raw headerless framing.
         if session.head_len() == 0 {
             if let Some((byte_start, seg_start_ms)) = vod.find_in_ring_span(target_seg, r_start, r_end) {
+                vod.update_cursor_ms(target_seek);
+                session.notify_data_signal();
                 let _ = session.seek(byte_start);
                 session.set_decoding_audio(false);
                 let reader = session.create_reader_at(byte_start);
@@ -1814,7 +1818,7 @@ impl DecoderWorker {
                     new_eng.set_anchor_ms(actual);
                     *eng_lock = Some(new_eng);
                     vod.update_cursor_ms(actual as i64);
-                    return Ok(actual);
+                    return Ok((actual, false));
                 }
             }
         }
@@ -1847,7 +1851,496 @@ impl DecoderWorker {
         new_eng.set_anchor_ms(actual);
         *eng_lock = Some(new_eng);
         vod.update_cursor_ms(actual as i64);
-        Ok(actual)
+        Ok((actual, true))
+    }
+
+    fn try_ogg_direct_seek<F: Fn() -> bool>(
+        &self,
+        session: &StreamSession,
+        eng_lock: &mut Option<SymphoniaEngine>,
+        target_seek: i64,
+        is_superseded: &F,
+    ) -> Option<u64> {
+        if target_seek <= 0 {
+            return None;
+        }
+        let is_ogg = eng_lock.as_ref().is_some_and(|e| e.is_ogg_stream());
+        if !is_ogg {
+            return None;
+        }
+        let head_bytes = session.head_bytes_copy();
+        let (serial, ogg_sr, pre_skip) = ByteTimeMap::parse_ogg_stream_info(&head_bytes)?;
+        let first_audio_pg =
+            ByteTimeMap::parse_ogg_first_audio_page(&head_bytes, 0, serial, pre_skip)
+                .unwrap_or_else(|| session.audio_start_offset());
+        if first_audio_pg == 0 || (first_audio_pg as usize) > head_bytes.len() {
+            return None;
+        }
+        let audio_start = first_audio_pg;
+        let audio_end = session.audio_end_offset().unwrap_or(u64::MAX);
+        let (r_start, r_end, _) = session.body_metrics();
+
+        let find_bracketing_page = |pages: &[crate::buffer::byte_time_map::OggPageMeta],
+                                    slice_at_audio_start: bool|
+         -> Option<(crate::buffer::byte_time_map::OggPageMeta, i64)> {
+            if pages.is_empty() {
+                return None;
+            }
+            let pos = pages.partition_point(|p| p.end_ms <= target_seek);
+            if pos >= pages.len() {
+                if pages.last().is_some_and(|p| p.is_eos) {
+                    let mut idx = pages.len() - 1;
+                    while idx > 0 && (pages[idx].is_continuation || pages[idx].is_eos) {
+                        idx -= 1;
+                    }
+                    let pg = pages[idx];
+                    if !pg.is_continuation && !pg.is_eos {
+                        let start_ms = if idx > 0 {
+                            pages[idx - 1].end_ms
+                        } else if slice_at_audio_start && pg.offset <= audio_start + 64 {
+                            0
+                        } else {
+                            pg.start_ms.max(0)
+                        };
+                        return Some((pg, start_ms));
+                    }
+                }
+                return None;
+            }
+            if pos == 0 {
+                let can_know_start = (slice_at_audio_start && pages[0].offset <= audio_start + 64)
+                    || pages[0].start_ms <= target_seek;
+                if !can_know_start {
+                    return None;
+                }
+            }
+            let mut idx = pos;
+            while idx > 0 && (pages[idx].is_continuation || pages[idx].is_eos) {
+                idx -= 1;
+            }
+            let pg = pages[idx];
+            if pg.is_continuation || pg.is_eos {
+                return None;
+            }
+            let start_ms = if idx > 0 {
+                pages[idx - 1].end_ms
+            } else if slice_at_audio_start && pg.offset <= audio_start + 64 {
+                0
+            } else {
+                pg.start_ms.max(0)
+            };
+            Some((pg, start_ms))
+        };
+
+        let mut chosen: Option<(crate::buffer::byte_time_map::OggPageMeta, i64, bool)> = None;
+
+        // Path A: scan in-RAM circular `Body` around estimated offset with zero HTTP I/O.
+        if r_end > r_start.saturating_add(64) {
+            let est_in_ram = session
+                .estimate_byte_for_ms(target_seek)
+                .unwrap_or(r_start)
+                .clamp(r_start, r_end);
+            let win_start = est_in_ram.saturating_sub(96 * 1024).max(r_start);
+            let win_len = ((r_end - win_start) as usize).min(256 * 1024);
+            if win_len >= 64 {
+                let mut buf = vec![0u8; win_len];
+                let got = session.read_cached_body_at(win_start, &mut buf);
+                let pages = ByteTimeMap::scan_ogg_pages_in_slice(
+                    &buf[..got],
+                    win_start,
+                    serial,
+                    ogg_sr,
+                    pre_skip,
+                );
+                let anchors: Vec<(u64, i64)> = pages
+                    .iter()
+                    .map(|p| (p.offset.saturating_add(p.len as u64), p.end_ms))
+                    .collect();
+                session.merge_byte_time_anchors(anchors);
+                if let Some((pg, s_ms)) = find_bracketing_page(&pages, win_start <= audio_start) {
+                    if pg.offset >= r_start && pg.offset.saturating_add(pg.len as u64) <= r_end {
+                        chosen = Some((pg, s_ms, true));
+                    }
+                }
+            }
+            if chosen.is_none() && (r_end - r_start) <= 768 * 1024 {
+                let full_len = (r_end - r_start) as usize;
+                let mut buf = vec![0u8; full_len];
+                let got = session.read_cached_body_at(r_start, &mut buf);
+                let pages = ByteTimeMap::scan_ogg_pages_in_slice(
+                    &buf[..got],
+                    r_start,
+                    serial,
+                    ogg_sr,
+                    pre_skip,
+                );
+                if let Some((pg, s_ms)) = find_bracketing_page(&pages, r_start <= audio_start) {
+                    if pg.offset >= r_start && pg.offset.saturating_add(pg.len as u64) <= r_end {
+                        chosen = Some((pg, s_ms, true));
+                    }
+                }
+            }
+        }
+
+        // Path B: out-of-buffer bounded probe (1-3 reads) directly onto exact Ogg page `P`.
+        if chosen.is_none() && (session.has_probe_fetcher() || session.supports_range()) {
+            let mut guess = session
+                .estimate_byte_for_ms(target_seek)
+                .unwrap_or(audio_start)
+                .max(audio_start)
+                .min(audio_end.saturating_sub(64));
+            for _hop in 0..4 {
+                if is_superseded() {
+                    return None;
+                }
+                let win_start = guess.saturating_sub(24 * 1024).max(audio_start);
+                let req_len = 64 * 1024;
+                let mut buf = vec![0u8; req_len];
+                let got = match session.read_via_probe_cache(win_start, &mut buf) {
+                    Some(Ok(n)) if n >= 28 => n,
+                    _ => break,
+                };
+                let pages = ByteTimeMap::scan_ogg_pages_in_slice(
+                    &buf[..got],
+                    win_start,
+                    serial,
+                    ogg_sr,
+                    pre_skip,
+                );
+                if pages.is_empty() {
+                    break;
+                }
+                let anchors: Vec<(u64, i64)> = pages
+                    .iter()
+                    .map(|p| (p.offset.saturating_add(p.len as u64), p.end_ms))
+                    .collect();
+                session.merge_byte_time_anchors(anchors);
+                if let Some((pg, s_ms)) = find_bracketing_page(&pages, win_start <= audio_start) {
+                    let pg_in_ram =
+                        pg.offset >= r_start && pg.offset.saturating_add(pg.len as u64) <= r_end;
+                    chosen = Some((pg, s_ms, pg_in_ram));
+                    break;
+                }
+                let first = pages[0];
+                let last = *pages.last().unwrap();
+                if last.end_ms <= target_seek && !last.is_eos {
+                    let est = session
+                        .estimate_byte_for_ms(target_seek)
+                        .unwrap_or(last.offset.saturating_add(last.len as u64));
+                    let next_off = last.offset.saturating_add(last.len as u64);
+                    guess = est.max(next_off);
+                } else if first.start_ms > target_seek && win_start > audio_start {
+                    guess = first.offset.saturating_sub(40 * 1024).max(audio_start);
+                } else {
+                    let est = session
+                        .estimate_byte_for_ms(target_seek)
+                        .unwrap_or(guess.saturating_sub(32 * 1024));
+                    guess = est.max(audio_start);
+                }
+            }
+        }
+
+        let (pg, p_start_ms, in_ram) = chosen?;
+        let pg_end = pg.offset.saturating_add(pg.len as u64);
+        let defer_reanchor = !in_ram && session.has_probe_fetcher();
+        if in_ram {
+            session.body.set_cursor(pg.offset);
+            session.record_verified_byte_time_anchor(pg.offset, p_start_ms);
+            session.record_verified_byte_time_anchor(pg_end, pg.end_ms);
+        } else if !defer_reanchor {
+            session.record_verified_byte_time_anchor(pg.offset, p_start_ms);
+            session.record_verified_byte_time_anchor(pg_end, pg.end_ms);
+            session.reanchor_circular_after_probe_seek(pg.offset, pg.offset);
+        }
+
+        session.set_decoding_audio(false);
+        let reader = session.create_reader();
+        let opened = SymphoniaEngine::new_windowed_ogg(
+            head_bytes[..first_audio_pg as usize].to_vec(),
+            pg.offset,
+            reader,
+        );
+        session.set_decoding_audio(true);
+        if is_superseded() {
+            return None;
+        }
+        let mut new_eng = opened.ok()?;
+        let p_start_u64 = p_start_ms.max(0) as u64;
+        if (target_seek as u64) > p_start_u64.saturating_add(25) {
+            let _ = new_eng.advance_to_ms((target_seek as u64).saturating_sub(20));
+        }
+        let resume_cursor = session.probe_seek_tracking().1.max(pg.offset);
+        if defer_reanchor {
+            session.record_verified_byte_time_anchor(pg.offset, p_start_ms);
+            session.record_verified_byte_time_anchor(pg_end, pg.end_ms);
+            session.reanchor_circular_after_probe_seek(pg.offset, resume_cursor);
+        } else if in_ram {
+            if resume_cursor >= r_end {
+                session.reanchor_circular_after_probe_seek(pg.offset, resume_cursor);
+            } else {
+                session.body.set_cursor(resume_cursor);
+            }
+        }
+        new_eng.set_anchor_ms(target_seek as u64);
+        *eng_lock = Some(new_eng);
+        Some(target_seek as u64)
+    }
+
+    fn try_mkv_direct_seek<F: Fn() -> bool>(
+        &self,
+        session: &StreamSession,
+        eng_lock: &mut Option<SymphoniaEngine>,
+        target_seek: i64,
+        is_superseded: &F,
+    ) -> Option<u64> {
+        if target_seek <= 0 {
+            return None;
+        }
+        let (is_mkv, ext_hint) = {
+            let e = (*eng_lock).as_ref()?;
+            if !e.is_mkv_or_webm() {
+                return None;
+            }
+            let ext = if e.container_format() == "WebM" {
+                "webm"
+            } else {
+                "mkv"
+            };
+            (true, ext)
+        };
+        if !is_mkv {
+            return None;
+        }
+
+        let head_bytes = session.head_bytes_copy();
+        let (_, scale_ns, first_cluster_opt) = ByteTimeMap::parse_mkv_stream_info(&head_bytes)?;
+        let first_cluster = first_cluster_opt.unwrap_or_else(|| session.audio_start_offset());
+        if first_cluster == 0 || (first_cluster as usize) > head_bytes.len() {
+            return None;
+        }
+        let patched_head = ByteTimeMap::build_streaming_mkv_head(&head_bytes, first_cluster)?;
+        let dur_ms = self.dur_ms.load(Ordering::Relaxed);
+        let (r_start, r_end, _) = session.body_metrics();
+
+        let pick_anchor_le = |pts: &[(u64, i64)]| -> Option<(u64, i64)> {
+            let mut best: Option<(u64, i64)> = None;
+            for &(off, ms) in pts {
+                if off >= first_cluster
+                    && ms <= target_seek
+                    && best.is_none_or(|(_, bms)| ms >= bms)
+                {
+                    best = Some((off, ms));
+                }
+            }
+            best
+        };
+
+        // Step 1: check RAM `Body` clusters near target so in-RAM clusters are indexed too.
+        let est_opt = session.estimate_byte_for_ms(target_seek);
+        if r_end > r_start.saturating_add(64) {
+            let center = est_opt.unwrap_or(r_start).clamp(r_start, r_end);
+            let win_start = center.saturating_sub(192 * 1024).max(r_start);
+            let win_len = ((r_end - win_start) as usize).min(384 * 1024);
+            if win_len >= 64 {
+                let mut buf = vec![0u8; win_len];
+                let got = session.read_cached_body_at(win_start, &mut buf);
+                let clusters = ByteTimeMap::scan_mkv_clusters_in_slice(
+                    &buf[..got],
+                    win_start,
+                    scale_ns,
+                    dur_ms,
+                );
+                session.merge_byte_time_anchors(clusters);
+            }
+        }
+
+        let mut best = pick_anchor_le(&session.byte_time_anchors());
+        let need_probe = best.is_none_or(|(_, ms)| target_seek.saturating_sub(ms) > 6_500);
+        if need_probe && (session.has_probe_fetcher() || session.supports_range()) {
+            let audio_end = session.audio_end_offset().unwrap_or(u64::MAX);
+            let mut guess = session
+                .estimate_byte_for_ms(target_seek)
+                .unwrap_or(first_cluster)
+                .max(first_cluster)
+                .min(audio_end.saturating_sub(64));
+            for _hop in 0..4 {
+                if is_superseded() {
+                    return None;
+                }
+                let win_start = guess.saturating_sub(80 * 1024).max(first_cluster);
+                let mut buf = vec![0u8; 160 * 1024];
+                let got = match session.read_via_probe_cache(win_start, &mut buf) {
+                    Some(Ok(n)) if n >= 32 => n,
+                    _ => break,
+                };
+                let clusters = ByteTimeMap::scan_mkv_clusters_in_slice(
+                    &buf[..got],
+                    win_start,
+                    scale_ns,
+                    dur_ms,
+                );
+                if clusters.is_empty() {
+                    if win_start > first_cluster {
+                        guess = win_start.saturating_sub(80 * 1024).max(first_cluster);
+                        continue;
+                    }
+                    break;
+                }
+                session.merge_byte_time_anchors(clusters.clone());
+                best = pick_anchor_le(&session.byte_time_anchors());
+                if best.is_some_and(|(_, ms)| target_seek.saturating_sub(ms) <= 6_500) {
+                    break;
+                }
+                let first_c = clusters[0];
+                let last_c = *clusters.last().unwrap();
+                if first_c.1 > target_seek && win_start > first_cluster {
+                    guess = win_start.saturating_sub(96 * 1024).max(first_cluster);
+                } else if last_c.1 < target_seek {
+                    guess = last_c.0.saturating_add(64 * 1024).min(audio_end.saturating_sub(64));
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let (cl_off, cl_ms) = best?;
+        let cur_est = session.estimate_byte_for_ms(target_seek);
+        let in_ram = cl_off >= r_start
+            && cl_off < r_end
+            && (cur_est.is_none_or(|eb| eb < r_end) || session.is_eof());
+        let defer_reanchor = !in_ram && session.has_probe_fetcher();
+        if in_ram {
+            session.body.set_cursor(cl_off);
+        } else if !defer_reanchor {
+            session.record_verified_byte_time_anchor(cl_off, cl_ms);
+            session.reanchor_circular_after_probe_seek(cl_off, cl_off);
+        }
+
+        session.set_decoding_audio(false);
+        let reader = session.create_reader();
+        let opened = SymphoniaEngine::new_windowed_mkv(patched_head, cl_off, reader, ext_hint);
+        session.set_decoding_audio(true);
+        if is_superseded() {
+            return None;
+        }
+        let mut new_eng = opened.ok()?;
+        let cl_u64 = cl_ms.max(0) as u64;
+        if (target_seek as u64) > cl_u64.saturating_add(35) {
+            let _ = new_eng.advance_to_ms((target_seek as u64).saturating_sub(30));
+        }
+        let resume_cursor = session.probe_seek_tracking().1.max(cl_off);
+        if defer_reanchor {
+            session.record_verified_byte_time_anchor(cl_off, cl_ms);
+            session.reanchor_circular_after_probe_seek(cl_off, resume_cursor);
+        } else if in_ram {
+            if resume_cursor >= r_end {
+                session.reanchor_circular_after_probe_seek(cl_off, resume_cursor);
+            } else {
+                session.body.set_cursor(resume_cursor);
+            }
+        }
+        new_eng.set_anchor_ms(target_seek as u64);
+        *eng_lock = Some(new_eng);
+        Some(target_seek as u64)
+    }
+
+    fn try_adts_direct_seek<F: Fn() -> bool>(
+        &self,
+        session: &StreamSession,
+        eng_lock: &mut Option<SymphoniaEngine>,
+        target_seek: i64,
+        is_superseded: &F,
+    ) -> Option<u64> {
+        if target_seek <= 0 {
+            return None;
+        }
+        if !eng_lock.as_ref().is_some_and(|e| e.is_adts_stream()) {
+            return None;
+        }
+        let audio_start = session.audio_start_offset();
+        let audio_end = session.audio_end_offset()?;
+        let est_byte = session.estimate_byte_for_ms(target_seek)?.max(audio_start);
+        // Preserve `OutOfRange` / pre-seek fallback when seek overshoots real audio tail.
+        if est_byte.saturating_add(32) >= audio_end {
+            return None;
+        }
+        let (r_start, r_end, _) = session.body_metrics();
+        let in_ram_window = est_byte >= r_start && est_byte.saturating_add(64) < r_end;
+        let scan_base = if in_ram_window && r_end.saturating_sub(est_byte) < 2048 {
+            est_byte.saturating_sub(2048).max(r_start)
+        } else {
+            est_byte
+        };
+
+        let mut buf = [0u8; 8192];
+        let got = if in_ram_window {
+            let max_len = ((r_end - scan_base) as usize).min(buf.len());
+            session.read_cached_body_at(scan_base, &mut buf[..max_len])
+        } else {
+            let max_len = ((audio_end - scan_base) as usize).min(buf.len());
+            match session.read_via_probe_cache(scan_base, &mut buf[..max_len]) {
+                Some(Ok(n)) => n,
+                _ => return None,
+            }
+        };
+        let sync_rel = ByteTimeMap::find_verified_adts_sync(&buf[..got])?;
+        let sync_off = scan_base.saturating_add(sync_rel as u64);
+        if sync_off >= audio_end {
+            return None;
+        }
+
+        let in_ram = sync_off >= r_start && sync_off < r_end;
+        if in_ram {
+            session.body.set_cursor(sync_off);
+        } else {
+            session.reanchor_circular_after_probe_seek(sync_off, sync_off);
+        }
+
+        session.set_decoding_audio(false);
+        let reader = session.create_reader();
+        let opened = SymphoniaEngine::new_windowed_adts(sync_off, reader);
+        session.set_decoding_audio(true);
+        if is_superseded() {
+            return None;
+        }
+        let mut new_eng = opened.ok()?;
+        new_eng.set_anchor_ms(target_seek as u64);
+        *eng_lock = Some(new_eng);
+        Some(target_seek as u64)
+    }
+
+    fn seed_wavpack_ram_checkpoints(session: &StreamSession, eng: &mut SymphoniaEngine, target_seek: i64) {
+        if !eng.is_wavpack_stream() {
+            return;
+        }
+        let sr = eng.sample_rate().max(1);
+        let dur_ms = eng.duration_ms().map(|d| d as i64).unwrap_or(0);
+        let (r_start, r_end, _) = session.body_metrics();
+        if r_end <= r_start.saturating_add(64) {
+            return;
+        }
+        let est = session.estimate_byte_for_ms(target_seek).unwrap_or(r_start).clamp(r_start, r_end);
+        let scan_start = est.saturating_sub(128 * 1024).max(r_start);
+        let scan_len = ((r_end - scan_start) as usize).min(384 * 1024);
+        if scan_len < 64 {
+            return;
+        }
+        let mut buf = vec![0u8; scan_len];
+        let got = session.read_cached_body_at(scan_start, &mut buf);
+        let blocks = ByteTimeMap::extract_wavpack_blocks_in_slice(&buf[..got], scan_start, sr, dur_ms);
+        if blocks.is_empty() {
+            return;
+        }
+        let mut pts: Vec<(u64, u64)> = Vec::with_capacity(blocks.len() * 2);
+        let mut map_anchors: Vec<(u64, i64)> = Vec::with_capacity(blocks.len());
+        for (off, blen, blk_idx, blk_samples) in blocks {
+            pts.push((blk_idx, off));
+            pts.push((blk_idx.saturating_add(blk_samples as u64), off.saturating_add(blen as u64)));
+            let ms = ((blk_idx as u128 * 1000) / sr as u128) as i64;
+            map_anchors.push((off, ms));
+        }
+        eng.inject_wavpack_checkpoints(&pts);
+        session.merge_byte_time_anchors(map_anchors);
     }
 
     /// Processes a pending seek request if one exists.
@@ -1901,7 +2394,7 @@ impl DecoderWorker {
             let cur_flush = self.flush_generation.load(Ordering::Acquire);
             let start_wait = MonotonicInstant::now();
             while self.flush_acknowledged.load(Ordering::Acquire) < cur_flush
-                && start_wait.elapsed() < Duration::from_millis(15)
+                && start_wait.elapsed() < Duration::from_millis(20)
             {
                 if is_superseded() {
                     return true;
@@ -1929,6 +2422,8 @@ impl DecoderWorker {
         let mut committed_seek_ms = target_seek;
         let mut actual_seek_ms_opt: Option<u64> = None;
         let mut fallback_pos_ms: Option<i64> = None;
+        let mut hls_did_jump = false;
+        let mut direct_or_ape_reanchored = false;
 
         if let Ok(mut eng_lock) = self.engine_arc.lock() {
             if is_superseded() {
@@ -1936,7 +2431,8 @@ impl DecoderWorker {
                 return true;
             }
             let mut reinit = false;
-            if self.is_stream_arc.load(Ordering::Relaxed) {
+            let is_stream = self.is_stream_arc.load(Ordering::Relaxed);
+            if is_stream {
                 if let Some(vod) = session_opt.as_ref().and_then(|s| s.hls_vod()) {
                     if let Some(ref session) = session_opt {
                         match self.try_hls_vod_seek(
@@ -1946,8 +2442,9 @@ impl DecoderWorker {
                             target_seek,
                             &is_superseded,
                         ) {
-                            Ok(actual) => {
+                            Ok((actual, jumped)) => {
                                 actual_seek_ms_opt = Some(actual);
+                                hls_did_jump = jumped;
                                 reinit = true;
                             }
                             Err(()) => {
@@ -1960,7 +2457,7 @@ impl DecoderWorker {
                     }
                 }
             }
-            if !reinit && target_seek == 0 && self.is_stream_arc.load(Ordering::Relaxed) {
+            if !reinit && target_seek == 0 && is_stream {
                 if let Some(ref session) = session_opt {
                     let target_off = session.audio_start_offset();
                     let (hit, contig) = session.try_seek_cached(target_off);
@@ -2001,8 +2498,38 @@ impl DecoderWorker {
                     session.set_decoding_audio(true);
                 }
             }
+            if !reinit && is_stream && target_seek > 0 {
+                if let Some(ref session) = session_opt {
+                    if let Some(actual) =
+                        self.try_ogg_direct_seek(session, &mut eng_lock, target_seek, &is_superseded)
+                            .or_else(|| {
+                                self.try_mkv_direct_seek(
+                                    session,
+                                    &mut eng_lock,
+                                    target_seek,
+                                    &is_superseded,
+                                )
+                            })
+                            .or_else(|| {
+                                self.try_adts_direct_seek(
+                                    session,
+                                    &mut eng_lock,
+                                    target_seek,
+                                    &is_superseded,
+                                )
+                            })
+                    {
+                        actual_seek_ms_opt = Some(actual);
+                        direct_or_ape_reanchored = true;
+                        reinit = true;
+                    }
+                }
+            }
             if !reinit {
-                if self.is_stream_arc.load(Ordering::Relaxed) {
+                if is_stream {
+                    if let (Some(ref session), Some(ref mut eng)) = (&session_opt, &mut *eng_lock) {
+                        Self::seed_wavpack_ram_checkpoints(session, eng, target_seek);
+                    }
                     if let (Some(ref session), Some(ref eng)) = (&session_opt, &*eng_lock) {
                         if eng.is_flac_stream() && !session.has_native_flac_seektable() {
                             Self::prepare_patched_flac_seek(
@@ -2022,9 +2549,7 @@ impl DecoderWorker {
                 match seek_res {
                     Some(Ok(actual_ms)) => {
                         let mut resolved_actual = actual_ms;
-                        // Symphonia 0.6 MkvReader parses CueTime as nanoseconds and does not clear
-                        // internal queued frames across seeks. If Cue seek overran into Cluster[k+1],
-                        // re-open a clean MkvReader and land in Cluster[k] before `target_seek`.
+                        // Fallback guard if a non-windowed local MKV overran Cue cluster.
                         if eng_lock.as_ref().is_some_and(|e| e.is_mkv_or_webm())
                             && actual_ms > (target_seek.max(0) as u64).saturating_add(400)
                             && target_seek > 0
@@ -2058,6 +2583,23 @@ impl DecoderWorker {
                                 }
                             }
                         }
+                        if is_stream {
+                            if let (Some(ref session), Some((f_start, f_end))) = (
+                                &session_opt,
+                                eng_lock.as_ref().and_then(|e| e.ape_current_frame_byte_range()),
+                            ) {
+                                let (r_start, r_end, _) = session.body_metrics();
+                                let in_ram = f_start >= r_start
+                                    && (f_end <= r_end
+                                        || (session.is_eof() && f_start < r_end));
+                                if in_ram {
+                                    session.body.set_cursor(f_start);
+                                } else {
+                                    session.flush(f_start);
+                                }
+                                direct_or_ape_reanchored = true;
+                            }
+                        }
                         actual_seek_ms_opt = Some(resolved_actual);
                         crate::map_log!(
                             3,
@@ -2088,7 +2630,6 @@ impl DecoderWorker {
                                 *eng_lock = Some(new_eng);
                                 recovered = true;
                                 if is_adts_overshoot {
-                                    // ADTS seek overshot true end: restore clean pre-seek cursor so next decode continues instead of EOF skip.
                                     committed_seek_ms = restore_ms as i64;
                                     crate::map_log!(
                                         2,
@@ -2123,8 +2664,8 @@ impl DecoderWorker {
         }
         if let (Some(ref session), Some(actual_ms)) = (&session_opt, actual_seek_ms_opt) {
             if seek_ok {
-                if session.hls_vod().is_some() {
-                    // HLS VOD anchors are maintained authoritatively by HlsVodState.
+                if session.hls_vod().is_some() || direct_or_ape_reanchored {
+                    // HLS VOD / Direct-Windowed / APE exact boundaries are maintained authoritatively.
                 } else if session.flush_seq() != flush_seq_before {
                     let flush_byte = session.last_flush_target();
                     if !session.has_byte_time_anchors()
@@ -2155,6 +2696,9 @@ impl DecoderWorker {
                             {
                                 session.record_verified_byte_time_anchor(ab, actual_ms as i64);
                             }
+                        } else {
+                            // Wake network streamer immediately for in-buffer seeks near the forward edge.
+                            session.body.set_cursor(ab);
                         }
                     }
                 }
@@ -2201,6 +2745,18 @@ impl DecoderWorker {
             },
         );
 
+        let seek_required_network =
+            hls_did_jump || session_opt.as_ref().is_some_and(|s| s.flush_seq() != flush_seq_before);
+        if seek_required_network {
+            if self.is_stream_arc.load(Ordering::Relaxed)
+                && PlaybackState::from_i32(self.state.load(Ordering::Relaxed)) == PlaybackState::Playing
+            {
+                self.set_buffering(true);
+            }
+        } else {
+            self.set_buffering(false);
+        }
+
         if is_superseded() {
             return true;
         }
@@ -2218,6 +2774,102 @@ impl DecoderWorker {
                 position_ms: committed_seek_ms,
             },
         );
+
+        // On in-RAM seeks, prime `rtrb` with up to ~120ms of post-seek PCM BEFORE clearing `seek_req = -1`
+        // so `AudioRenderer::render_pcm` never sees an empty ring or flips `is_buffering = true`.
+        if !seek_required_network && !is_superseded() {
+            let cur_flush = self.flush_generation.load(Ordering::Acquire);
+            let flush_wait = MonotonicInstant::now();
+            while self.flush_acknowledged.load(Ordering::Acquire) < cur_flush
+                && flush_wait.elapsed() < Duration::from_millis(20)
+            {
+                if is_superseded() {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            if self.flush_acknowledged.load(Ordering::Acquire) >= cur_flush {
+                let dev_ch = (self.dev_ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+                let target_cushion = ((cur_dev_sr as usize) * dev_ch * 120) / 1000;
+                for frame_step in 0..14 {
+                    if is_superseded() {
+                        return true;
+                    }
+                    let used_now = self
+                        .producer_arc
+                        .lock()
+                        .ok()
+                        .and_then(|g| {
+                            g.as_ref()
+                                .map(|p| p.capacity().saturating_sub(p.slots_available()))
+                        })
+                        .unwrap_or(target_cushion);
+                    if used_now >= target_cushion {
+                        break;
+                    }
+                    if frame_step > 0 && self.is_stream_arc.load(Ordering::Relaxed) {
+                        if let Some(ref s) = session_opt {
+                            if !s.is_eof() && s.body_unread_ahead() < 1024 {
+                                break;
+                            }
+                        }
+                    }
+                    let mut got_pcm = false;
+                    let mut hit_eof = false;
+                    if let Ok(mut eng_lock) = self.engine_arc.lock() {
+                        if let Some(ref mut eng) = *eng_lock {
+                            match eng.decode_next_frame(&mut self.frame_buf) {
+                                Ok(true) => {
+                                    if !self.frame_buf.is_empty() {
+                                        got_pcm = true;
+                                        let nsr = eng.sample_rate();
+                                        let nch = eng.channels();
+                                        if nsr > 0 {
+                                            self.sr_arc.store(nsr, Ordering::Relaxed);
+                                        }
+                                        if nch > 0 {
+                                            self.ch_arc.store(nch, Ordering::Relaxed);
+                                        }
+                                    }
+                                }
+                                Ok(false) => {
+                                    let io_trunc = eng.last_eof_was_io_truncation();
+                                    let buf_eof = session_opt.as_ref().is_none_or(|s| s.is_eof());
+                                    if !io_trunc || buf_eof {
+                                        hit_eof = true;
+                                    }
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    if hit_eof {
+                        self.decoder_eof_arc.store(true, Ordering::SeqCst);
+                        self.pipeline.flush_resampler_into_pending();
+                        self.pipeline.drain_pending_to(&self.producer_arc);
+                        break;
+                    }
+                    if got_pcm {
+                        let cur_track_sr = self.sr_arc.load(Ordering::Relaxed).max(8000);
+                        let cur_track_ch =
+                            (self.ch_arc.load(Ordering::Relaxed) as usize).clamp(1, 16);
+                        let cur_silence_cfg = self.silence_cfg_arc.read();
+                        let _ = self.pipeline.process_frame(
+                            &self.frame_buf,
+                            cur_track_sr,
+                            cur_track_ch,
+                            cur_dev_sr as u32,
+                            dev_ch,
+                            cur_silence_cfg,
+                        );
+                        self.pipeline.drain_pending_to(&self.producer_arc);
+                    } else if frame_step > 0 {
+                        break;
+                    }
+                }
+            }
+        }
+
         self.seek_req
             .compare_exchange(gen, -1, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
@@ -4320,7 +4972,7 @@ impl StreamingDeck {
         session.mark_eof();
 
         let total_len = data.len() as u64;
-        let shared_data = Arc::new(data);
+        let shared_data: Arc<[u8]> = Arc::from(data);
         let cursor = SharedMemSource::new(Arc::clone(&shared_data));
         let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
@@ -4734,6 +5386,29 @@ impl StreamingDeck {
                 *cm_guard = None;
             }
 
+            let parsed_ape_anchors = if !is_live && is_stream {
+                eng.ape_frame_anchors()
+            } else {
+                None
+            };
+            let parsed_mp3_xing_anchors = if !is_live
+                && is_stream
+                && container_str == "MP3"
+                && !initial_data.is_empty()
+                && parsed_mp4_anchors.is_none()
+                && parsed_flac_anchors.is_none()
+                && parsed_ape_anchors.is_none()
+            {
+                ByteTimeMap::extract_mp3_xing_anchors(
+                    initial_data,
+                    session_audio_start,
+                    session_audio_end,
+                    dur,
+                )
+            } else {
+                None
+            };
+
             let mut eng_lock = lock_unpoisoned(&self.engine);
             *eng_lock = Some(eng);
             self.engine_loaded.store(true, Ordering::Release);
@@ -4759,10 +5434,29 @@ impl StreamingDeck {
                             dur,
                         );
                         session.set_has_native_flac_seektable(parsed_flac_anchors.is_some());
-                        if let Some(pts) = parsed_mp4_anchors {
+                        if let Some(pts) = parsed_ape_anchors {
+                            if let Some(&(first_b, _)) = pts.first() {
+                                session.refine_byte_time_audio_start(first_b);
+                            }
+                            session.set_byte_time_anchors(pts.clone());
+                            session.set_buffered_boundary_kind(BufferedBoundaryKind::ExactFrames(pts));
+                        } else if let Some(pts) = parsed_mp4_anchors {
                             session.set_byte_time_anchors(pts);
+                            session.set_buffered_boundary_kind(BufferedBoundaryKind::None);
                         } else if let Some(pts) = parsed_flac_anchors {
                             session.set_byte_time_anchors(pts);
+                            if let Some((flac_sr, min_bs, max_bs)) =
+                                ByteTimeMap::parse_flac_stream_info(initial_data)
+                            {
+                                session.set_buffered_boundary_kind(BufferedBoundaryKind::Flac {
+                                    sample_rate: flac_sr,
+                                    min_bs,
+                                    max_bs,
+                                });
+                            }
+                        } else if let Some(pts) = parsed_mp3_xing_anchors {
+                            session.set_byte_time_anchors(pts);
+                            session.set_buffered_boundary_kind(BufferedBoundaryKind::Mp3Xing);
                         } else {
                             let mkv_info = ByteTimeMap::parse_mkv_stream_info(initial_data);
                             if let Some((_, _, Some(first_cluster))) = mkv_info {
@@ -4775,7 +5469,7 @@ impl StreamingDeck {
                             }
 
                             let ogg_info = ByteTimeMap::parse_ogg_stream_info(initial_data);
-                            let flac_info = if ogg_info.is_none() {
+                            let flac_info = if ogg_info.is_none() && mkv_info.is_none() {
                                 ByteTimeMap::parse_flac_stream_info(initial_data)
                             } else {
                                 None
@@ -4789,7 +5483,7 @@ impl StreamingDeck {
                                 None
                             };
 
-                            if let Some((serial, _sr, pre_skip)) = ogg_info {
+                            if let Some((serial, ogg_sr, pre_skip)) = ogg_info {
                                 if let Some(first_pg) = ByteTimeMap::parse_ogg_first_audio_page(
                                     initial_data,
                                     0,
@@ -4798,15 +5492,36 @@ impl StreamingDeck {
                                 ) {
                                     session.refine_byte_time_audio_start(first_pg);
                                 }
-                            } else if flac_info.is_some() {
+                                session.set_buffered_boundary_kind(BufferedBoundaryKind::Ogg {
+                                    serial,
+                                    sample_rate: ogg_sr,
+                                    pre_skip,
+                                });
+                            } else if let Some((flac_sr, min_bs, max_bs)) = flac_info {
                                 if let Some(first_frame) =
                                     ByteTimeMap::parse_flac_first_frame_offset(initial_data)
                                 {
                                     session.refine_byte_time_audio_start(first_frame);
                                     session.record_flac_seek_points(&[(first_frame, 0)]);
                                 }
+                                session.set_buffered_boundary_kind(BufferedBoundaryKind::Flac {
+                                    sample_rate: flac_sr,
+                                    min_bs,
+                                    max_bs,
+                                });
+                            } else if let Some((_, scale_ns, _)) = mkv_info {
+                                session.set_buffered_boundary_kind(BufferedBoundaryKind::Mkv {
+                                    timecode_scale_ns: scale_ns,
+                                });
                             } else if let Some(wv_off) = wavpack_first {
                                 session.refine_byte_time_audio_start(wv_off);
+                                if sr > 0 {
+                                    session.set_buffered_boundary_kind(
+                                        BufferedBoundaryKind::WavPack { sample_rate: sr },
+                                    );
+                                }
+                            } else {
+                                session.set_buffered_boundary_kind(BufferedBoundaryKind::None);
                             }
 
                             if !self.is_analysis
@@ -6542,18 +7257,19 @@ impl DualSource {
     pub fn abort_active_crossfade(&mut self) {
         let trans = self.crossfade.transition();
         self.crossfade_target_id.store(-1, Ordering::Release);
-        if trans == QueueTransition::AutoCrossfade {
-            self.crossfade.abort();
-            self.standby_deck_mut().stop();
-            self.standby_deck_mut().clear_queue_item_assignment();
-        } else if trans == QueueTransition::ManualCrossfade {
+        self.crossfade_completed_flag.store(false, Ordering::Release);
+        if trans == QueueTransition::ManualCrossfade {
             self.crossfade.abort();
             let to_deck = self.crossfade.to_deck.load(Ordering::Relaxed);
             self.active_deck.store(to_deck, Ordering::Release);
             self.standby_deck_mut().stop();
             self.standby_deck_mut().clear_queue_item_assignment();
+            self.invalidate_standby();
         } else {
             self.crossfade.abort();
+            self.standby_deck_mut().stop();
+            self.standby_deck_mut().clear_queue_item_assignment();
+            self.invalidate_standby();
         }
     }
 
@@ -6576,13 +7292,15 @@ impl DualSource {
 
     pub fn seek(&mut self, position_ms: i64) -> i32 {
         let trans = self.crossfade.transition();
+        let dur = self.active_deck_ref().duration_ms.load(Ordering::Relaxed);
+        let auto_ms = self.auto_crossfade_duration_ms.load(Ordering::Relaxed);
+        let in_xfade_zone = auto_ms > 0 && dur > auto_ms as i64 && position_ms >= (dur - auto_ms as i64);
+
         if trans == QueueTransition::ManualCrossfade {
             self.abort_active_crossfade();
+            self.sync_planned_index_to_current();
             return self.active_deck_mut().seek(position_ms);
         } else if trans == QueueTransition::AutoCrossfade {
-            let dur = self.active_deck_ref().duration_ms.load(Ordering::Relaxed);
-            let auto_ms = self.auto_crossfade_duration_ms.load(Ordering::Relaxed);
-            let in_xfade_zone = auto_ms > 0 && dur > auto_ms as i64 && position_ms >= (dur - auto_ms as i64);
             if in_xfade_zone {
                 let sr = self.sample_rate.max(1);
                 let eff_ms = if dur > position_ms {
@@ -6596,8 +7314,15 @@ impl DualSource {
                 return self.active_deck_mut().seek(position_ms);
             } else {
                 self.abort_active_crossfade();
+                self.sync_planned_index_to_current();
                 return self.active_deck_mut().seek(position_ms);
             }
+        } else if !in_xfade_zone
+            && (self.crossfade_completed_flag.load(Ordering::Acquire)
+                || self.crossfade_target_id.load(Ordering::Acquire) >= 0)
+        {
+            self.abort_active_crossfade();
+            self.sync_planned_index_to_current();
         }
         self.active_deck_mut().seek(position_ms)
     }

@@ -811,6 +811,47 @@ impl SymphoniaEngine {
         )
     }
 
+    /// Returns true if the active decoder is a Symphonia Ogg session.
+    #[inline]
+    pub fn is_ogg_stream(&self) -> bool {
+        matches!(&self.backend, EngineBackend::Symphonia(s) if s.container_format == "Ogg")
+    }
+
+    /// Returns true if the active decoder is a Symphonia raw ADTS AAC session.
+    #[inline]
+    pub fn is_adts_stream(&self) -> bool {
+        matches!(&self.backend, EngineBackend::Symphonia(s) if s.container_format == "ADTS")
+    }
+
+    /// Returns true if the active decoder is the native WavPack backend.
+    #[inline]
+    pub fn is_wavpack_stream(&self) -> bool {
+        matches!(&self.backend, EngineBackend::WavPack(_))
+    }
+
+    /// Exports APE header seektable anchors when active backend is Monkey's Audio.
+    pub fn ape_frame_anchors(&self) -> Option<Vec<(u64, i64)>> {
+        match &self.backend {
+            EngineBackend::Ape(ape) => Some(ape.frame_anchors()),
+            _ => None,
+        }
+    }
+
+    /// Returns the required byte range `(start, end)` for reading the current APE frame.
+    pub fn ape_current_frame_byte_range(&self) -> Option<(u64, u64)> {
+        match &self.backend {
+            EngineBackend::Ape(ape) => ape.current_frame_byte_range(),
+            _ => None,
+        }
+    }
+
+    /// Injects cached RAM `(sample_index, byte_offset)` checkpoints into `WavpackReader`.
+    pub fn inject_wavpack_checkpoints(&mut self, pts: &[(u64, u64)]) {
+        if let EngineBackend::WavPack(ref mut wv) = self.backend {
+            wv.inject_checkpoints(pts);
+        }
+    }
+
     /// Advances demuxed packets without decoding up to `target_stop_ms` (returns last seen ms).
     pub fn advance_to_ms(&mut self, target_stop_ms: u64) -> Option<u64> {
         match &mut self.backend {
@@ -836,6 +877,108 @@ impl SymphoniaEngine {
         let inner_len = inner.byte_len();
         let src = PatchedFlacSource::new(virtual_head, virtual_delta, Box::new(inner), inner_len);
         Self::new_with_options(src, Some("flac"), false)
+    }
+
+    /// Initializes a non-seekable Ogg decoder combining memory-resident Ogg identification/setup
+    /// header pages (`header_pages`) directly with `inner` positioned at `page_offset`.
+    pub fn new_windowed_ogg<S: MediaSource + 'static>(
+        header_pages: Vec<u8>,
+        page_offset: u64,
+        inner: S,
+    ) -> Result<Self, SymphoniaError> {
+        let src = HeadTailWindowSource::new(header_pages, page_offset, Box::new(inner));
+        Self::new_with_options(src, Some("ogg"), false)
+    }
+
+    /// Initializes a non-seekable Matroska/WebM decoder combining an unknown-size `Segment` header
+    /// prefix (`patched_head`) directly with `inner` positioned at `cluster_offset`.
+    pub fn new_windowed_mkv<S: MediaSource + 'static>(
+        patched_head: Vec<u8>,
+        cluster_offset: u64,
+        inner: S,
+        ext_hint: &'static str,
+    ) -> Result<Self, SymphoniaError> {
+        let src = HeadTailWindowSource::new(patched_head, cluster_offset, Box::new(inner));
+        Self::new_with_options(src, Some(ext_hint), false)
+    }
+
+    /// Initializes a non-seekable raw ADTS AAC decoder directly at verified frame offset `frame_offset`.
+    pub fn new_windowed_adts<S: MediaSource + 'static>(
+        frame_offset: u64,
+        inner: S,
+    ) -> Result<Self, SymphoniaError> {
+        let src = HeadTailWindowSource::new(Vec::new(), frame_offset, Box::new(inner));
+        Self::new_with_options(src, Some("aac"), false)
+    }
+}
+
+/// Non-seekable composite `MediaSource` sewing a fixed container header prefix directly to
+/// a stream offset so Symphonia starts demuxing mid-stream with zero bisection probes.
+struct HeadTailWindowSource {
+    virtual_head: Vec<u8>,
+    pos: u64,
+    inner: Box<dyn MediaSource>,
+    inner_base: u64,
+    inner_synced: bool,
+}
+
+impl HeadTailWindowSource {
+    fn new(virtual_head: Vec<u8>, inner_base: u64, inner: Box<dyn MediaSource>) -> Self {
+        Self {
+            virtual_head,
+            pos: 0,
+            inner,
+            inner_base,
+            inner_synced: false,
+        }
+    }
+}
+
+impl std::io::Read for HeadTailWindowSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let head_len = self.virtual_head.len() as u64;
+        if self.pos < head_len {
+            let off = self.pos as usize;
+            let avail = self.virtual_head.len() - off;
+            let n = avail.min(buf.len());
+            buf[..n].copy_from_slice(&self.virtual_head[off..off + n]);
+            self.pos += n as u64;
+            return Ok(n);
+        }
+        if !self.inner_synced {
+            let rel = self.pos.saturating_sub(head_len);
+            self.inner
+                .seek(std::io::SeekFrom::Start(self.inner_base.saturating_add(rel)))?;
+            self.inner_synced = true;
+        }
+        let n = self.inner.read(buf)?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl std::io::Seek for HeadTailWindowSource {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        if matches!(pos, std::io::SeekFrom::Current(0)) {
+            return Ok(self.pos);
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "HeadTailWindowSource is non-seekable",
+        ))
+    }
+}
+
+impl MediaSource for HeadTailWindowSource {
+    fn is_seekable(&self) -> bool {
+        false
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        None
     }
 }
 

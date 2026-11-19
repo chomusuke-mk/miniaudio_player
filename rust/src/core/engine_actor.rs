@@ -637,8 +637,10 @@ fn tick_music_lifecycle(
         .current_index
         .load(Ordering::Relaxed);
 
-    let can_trigger =
-        !is_xfading && current_idx >= 0 && cur_playback == PlaybackState::Playing;
+    let can_trigger = !is_xfading
+        && active_deck.seek_request_ms.load(Ordering::Acquire) < 0
+        && current_idx >= 0
+        && cur_playback == PlaybackState::Playing;
 
     if can_trigger {
         let auto_ms = ply

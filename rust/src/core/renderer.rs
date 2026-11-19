@@ -386,7 +386,7 @@ impl AudioRenderer {
                     self.is_buffering.store(false, Ordering::Release);
                     self.track_exhausted.store(true, Ordering::Release);
                 }
-            } else if is_stream {
+            } else if is_stream && !seek_pending {
                 self.is_buffering.store(true, Ordering::Release);
             }
         }
@@ -429,6 +429,12 @@ impl AudioRenderer {
         let is_stream = self.is_stream.load(Ordering::Acquire);
         let decoder_at_eof = self.decoder_eof.load(Ordering::Acquire);
         let seek_pending = self.seek_request_ms.load(Ordering::Acquire) >= 0;
+
+        if seek_pending {
+            self.emit_silence_or_fade_out(out_slice, frame_count, ch);
+            self.apply_realtime_dsp_and_visualizer(out_slice);
+            return;
+        }
 
         if is_stream && self.is_buffering.load(Ordering::Acquire) && !decoder_at_eof && !seek_pending {
             self.emit_silence_or_fade_out(out_slice, frame_count, ch);
