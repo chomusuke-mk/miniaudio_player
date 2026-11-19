@@ -8,13 +8,14 @@
 //! - `BufferBackend::Sparse`: Offset-indexed virtual address space for metadata tags, cover art,
 //!   chapters, and live ICY updates (`Metadata`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Result as IoResult;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
-use crate::sync::{lock_unpoisoned, wait_timeout_unpoisoned, MonotonicInstant};
+use super::byte_time_map::ByteTimeMap;
+use crate::sync::{lock_unpoisoned, read_unpoisoned, wait_timeout_unpoisoned, write_unpoisoned, MonotonicInstant};
 
 /// Contiguous byte range and fullness telemetry snapshot.
 #[derive(Debug, Clone, Copy, Default)]
@@ -1463,6 +1464,67 @@ impl StreamBuffer {
     }
 }
 
+/// RAII guard enabling isolated container/seek probe reads without flushing the `Body` ring.
+pub struct ProbeGuard {
+    depth: Arc<AtomicUsize>,
+}
+
+impl Drop for ProbeGuard {
+    fn drop(&mut self) {
+        self.depth.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Callback fetching up to `len` bytes starting at `offset` for isolated probe/seek reads.
+pub type ProbeFetcherFn = Arc<dyn Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync>;
+
+struct ProbePage {
+    offset: u64,
+    data: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ProbePageCache {
+    pages: VecDeque<ProbePage>,
+}
+
+impl ProbePageCache {
+    const PAGE_SIZE: usize = 64 * 1024;
+    const MAX_PAGES: usize = 32;
+
+    fn read_cached(&self, offset: u64, out: &mut [u8]) -> usize {
+        if out.is_empty() {
+            return 0;
+        }
+        for page in &self.pages {
+            let page_end = page.offset.saturating_add(page.data.len() as u64);
+            if offset >= page.offset && offset < page_end {
+                let start = (offset - page.offset) as usize;
+                let avail = page.data.len() - start;
+                let to_copy = avail.min(out.len());
+                out[..to_copy].copy_from_slice(&page.data[start..start + to_copy]);
+                return to_copy;
+            }
+        }
+        0
+    }
+
+    fn insert(&mut self, offset: u64, data: Vec<u8>) {
+        if data.is_empty() {
+            return;
+        }
+        self.pages.retain(|p| p.offset != offset);
+        if self.pages.len() >= Self::MAX_PAGES {
+            self.pages.pop_front();
+        }
+        self.pages.push_back(ProbePage { offset, data });
+    }
+
+    fn clear(&mut self) {
+        self.pages.clear();
+    }
+}
+
 /// Coordinates the three independent [`StreamBuffer`] instances (`Head`, `Body`, `Metadata`)
 /// for an active media stream.
 #[derive(Clone)]
@@ -1483,6 +1545,18 @@ pub struct StreamSession {
     is_live: bool,
     /// Whether the active consumer is currently decoding audio frames.
     is_decoding_audio: Arc<AtomicBool>,
+    /// Whether the byte source honors random-access range requests (`HTTP 206`).
+    supports_range: Arc<AtomicBool>,
+    /// Active reentrant probe depth (container open or demuxer seek-table inspection).
+    probe_depth: Arc<AtomicUsize>,
+    /// Optional on-demand range fetcher for isolated probe/seek reads.
+    probe_fetcher: Arc<RwLock<Option<ProbeFetcherFn>>>,
+    /// Bounded page cache backing isolated probe/seek reads without disturbing the `Body` ring.
+    probe_cache: Arc<Mutex<ProbePageCache>>,
+    /// Whether end-of-audio tags live inside the container tail (`moov`) rather than stripped tags.
+    has_container_tail: Arc<AtomicBool>,
+    /// Piecewise monotonic byte-to-millisecond anchor map for accurate buffered telemetry.
+    byte_time_map: Arc<RwLock<ByteTimeMap>>,
 }
 
 impl StreamSession {
@@ -1524,6 +1598,16 @@ impl StreamSession {
             total_size,
             is_live,
             is_decoding_audio: Arc::new(AtomicBool::new(false)),
+            supports_range: Arc::new(AtomicBool::new(false)),
+            probe_depth: Arc::new(AtomicUsize::new(0)),
+            probe_fetcher: Arc::new(RwLock::new(None)),
+            probe_cache: Arc::new(Mutex::new(ProbePageCache::default())),
+            has_container_tail: Arc::new(AtomicBool::new(false)),
+            byte_time_map: Arc::new(RwLock::new(ByteTimeMap::new(
+                0,
+                total_size.unwrap_or(0),
+                0,
+            ))),
         };
         if let Some(tot) = total_size {
             session.body.set_audio_end(Some(tot));
@@ -1595,6 +1679,22 @@ impl StreamSession {
             Some(ae)
         } else {
             self.total_size
+        }
+    }
+
+    /// Marks whether the tail region past `audio_end` contains required container atoms (e.g. non-faststart MP4 `moov`).
+    #[inline]
+    pub fn set_has_container_tail(&self, has_tail: bool) {
+        self.has_container_tail.store(has_tail, Ordering::Release);
+    }
+
+    /// Returns the logical container end offset for `SeekFrom::End` and `MediaSource::byte_len`.
+    #[inline]
+    pub fn logical_end_offset(&self) -> Option<u64> {
+        if self.has_container_tail.load(Ordering::Acquire) {
+            self.total_size.or_else(|| self.audio_end_offset())
+        } else {
+            self.audio_end_offset()
         }
     }
 
@@ -1688,6 +1788,12 @@ impl StreamSession {
         self.body.set_circular_anchor(start);
     }
 
+    /// Returns the byte offset where the audio payload begins in the stream.
+    #[inline]
+    pub fn audio_start_offset(&self) -> u64 {
+        self.audio_start.load(Ordering::Acquire)
+    }
+
     /// Configures the byte offset where the audio payload ends in the stream.
     pub fn set_audio_end(&self, end: u64) {
         self.audio_end.store(end, Ordering::Release);
@@ -1779,9 +1885,15 @@ impl StreamSession {
         }
 
         // 4. Read from Circular Body
+        let use_probe_fetcher = self.has_probe_fetcher();
         match self.body.read_at(offset, out) {
-            Ok(0) if !decoding && audio_end != u64::MAX && offset < audio_end => {
-                // During container probing, zero-fill unbuffered mdat gap up to trailing moov atom
+            Ok(0)
+                if !decoding
+                    && !use_probe_fetcher
+                    && audio_end != u64::MAX
+                    && offset < audio_end =>
+            {
+                // During container probing without random-access fetchers, zero-fill unbuffered mdat gap up to trailing moov atom
                 let (_r_start, r_end, _) = self.body.circular_metrics();
                 if offset >= r_end && !self.tail_data().is_empty() {
                     let gap = (audio_end - offset) as usize;
@@ -1798,7 +1910,10 @@ impl StreamSession {
                 Ok(0)
             }
             Err(BufferError::WouldBlock)
-                if !decoding && audio_end != u64::MAX && offset < audio_end =>
+                if !decoding
+                    && !use_probe_fetcher
+                    && audio_end != u64::MAX
+                    && offset < audio_end =>
             {
                 let (_r_start, r_end, _) = self.body.circular_metrics();
                 if offset >= r_end && !self.tail_data().is_empty() {
@@ -1836,7 +1951,18 @@ impl StreamSession {
                     if self.body.should_abort.load(Ordering::Acquire) {
                         return Err(BufferError::Aborted);
                     }
-                    if self.body.is_eof() {
+                    let (r_start, r_end, _) = self.body.circular_metrics();
+                    if !self.in_probe_mode()
+                        && self.supports_range()
+                        && (offset < r_start || offset > r_end.saturating_add(256 * 1024))
+                    {
+                        // Post-probe sequential read landed outside the circular window (e.g. cue scan
+                        // during ProbeMode moved cursor far ahead/behind): reposition stream download.
+                        if self.seek(offset).is_ok() {
+                            continue;
+                        }
+                    }
+                    if self.body.is_eof() && offset >= r_end {
                         return Ok(0);
                     }
                     let elapsed = start_time.elapsed();
@@ -1874,14 +2000,33 @@ impl StreamSession {
         let is_eof = self.body.is_eof();
 
         let in_head = target_offset < head_len;
-        let in_body = target_offset >= r_start
-            && (target_offset < r_end || (is_eof && target_offset <= r_end));
+        let in_body = target_offset >= r_start && target_offset < r_end;
+        let at_stream_edge =
+            target_offset >= r_start && target_offset <= r_end.saturating_add(65536);
 
         if in_head || in_body {
             self.body.set_cursor(target_offset);
             self.body.is_buffering.store(false, Ordering::Release);
             self.body.data_signal.notify_all();
+        } else if at_stream_edge {
+            // Sequential decode caught up with the active download edge: wait for incoming chunks
+            // without flushing the already buffered `[r_start .. r_end)` back-retention window.
+            self.body.set_cursor(target_offset);
+            if !is_eof {
+                self.body.is_buffering.store(true, Ordering::Release);
+            }
+            self.body.data_signal.notify_all();
         } else if self.is_decoding_audio.load(Ordering::Acquire) && target_offset >= audio_start {
+            crate::map_log!(
+                4,
+                "StreamSession::seek flush_circular target={} (r_start={}, r_end={}, head={}, eof={}, probe={})",
+                target_offset,
+                r_start,
+                r_end,
+                head_len,
+                is_eof,
+                self.in_probe_mode()
+            );
             self.body.flush_circular(target_offset);
         } else {
             self.body.set_cursor(target_offset);
@@ -1936,6 +2081,7 @@ impl StreamSession {
         self.head.abort();
         self.body.abort();
         self.metadata.abort();
+        lock_unpoisoned(&self.probe_cache).clear();
     }
 
     /// Clears abort status on `Head`, `Body`, and `Metadata`.
@@ -2026,6 +2172,213 @@ impl StreamSession {
         let a_end = self.audio_end.load(Ordering::Acquire);
         let target_end = if a_end != u64::MAX { a_end } else { tot };
         r_start <= a_start && r_end >= target_end
+    }
+
+    /// Returns whether the underlying stream source supports HTTP Range (`206`) random access.
+    #[inline]
+    pub fn supports_range(&self) -> bool {
+        self.supports_range.load(Ordering::Acquire)
+    }
+
+    /// Sets whether the underlying stream source supports HTTP Range (`206`) random access.
+    #[inline]
+    pub fn set_supports_range(&self, supported: bool) {
+        self.supports_range.store(supported, Ordering::Release);
+    }
+
+    /// Enters isolated probe mode (container open or demuxer seek-table inspection),
+    /// returning an RAII guard that decrements the active depth on drop.
+    #[inline]
+    pub fn enter_probe(&self) -> ProbeGuard {
+        self.probe_depth.fetch_add(1, Ordering::AcqRel);
+        ProbeGuard {
+            depth: Arc::clone(&self.probe_depth),
+        }
+    }
+
+    /// Returns whether one or more probe/seek scopes are currently active.
+    #[inline]
+    pub fn in_probe_mode(&self) -> bool {
+        self.probe_depth.load(Ordering::Acquire) > 0
+    }
+
+    /// Attaches or clears the on-demand range fetcher used during isolated probe/seek reads.
+    pub fn set_probe_fetcher(&self, fetcher: Option<ProbeFetcherFn>) {
+        let mut slot = write_unpoisoned(&self.probe_fetcher);
+        *slot = fetcher;
+    }
+
+    /// Returns true if random-access range support is enabled and a probe fetcher is attached.
+    #[inline]
+    pub fn has_probe_fetcher(&self) -> bool {
+        self.supports_range() && read_unpoisoned(&self.probe_fetcher).is_some()
+    }
+
+    /// Returns a cloned handle to the configured random-access probe fetcher, if active.
+    pub fn probe_fetcher(&self) -> Option<ProbeFetcherFn> {
+        if !self.supports_range() {
+            return None;
+        }
+        read_unpoisoned(&self.probe_fetcher).clone()
+    }
+
+    /// Serves an isolated probe/seek read from the bounded probe cache or via HTTP Range
+    /// without mutating or flushing the circular `Body` ring buffer.
+    ///
+    /// Returns `None` when random-access probing is unavailable (caller should fall back
+    /// to standard streaming wait).
+    pub fn read_via_probe_cache(
+        &self,
+        offset: u64,
+        out: &mut [u8],
+    ) -> Option<Result<usize, BufferError>> {
+        if out.is_empty() {
+            return Some(Ok(0));
+        }
+        if self.body.should_abort.load(Ordering::Acquire) {
+            return Some(Err(BufferError::Aborted));
+        }
+        if let Some(tot) = self.total_size {
+            if offset >= tot {
+                return Some(Ok(0));
+            }
+        }
+        if self.is_decoding_audio.load(Ordering::Acquire) {
+            let audio_end = self.audio_end.load(Ordering::Acquire);
+            if audio_end != u64::MAX && offset >= audio_end {
+                return Some(Ok(0));
+            }
+        }
+        if !self.supports_range() {
+            return None;
+        }
+        let fetcher = read_unpoisoned(&self.probe_fetcher).clone()?;
+
+        {
+            let cache = lock_unpoisoned(&self.probe_cache);
+            let n = cache.read_cached(offset, out);
+            if n > 0 {
+                return Some(Ok(n));
+            }
+        }
+
+        let page_align: u64 = 16 * 1024;
+        let head_len = self.head.linear_len() as u64;
+        let mut fetch_start = if out.len() <= ProbePageCache::PAGE_SIZE {
+            offset & !(page_align - 1)
+        } else {
+            offset
+        };
+        if offset >= head_len && fetch_start < head_len {
+            fetch_start = head_len;
+        }
+        let min_end = offset.saturating_add(out.len().min(512 * 1024) as u64);
+        let target_end = fetch_start
+            .saturating_add(ProbePageCache::PAGE_SIZE as u64)
+            .max(min_end);
+        let clamped_end = match self.total_size {
+            Some(tot) => target_end.min(tot),
+            None => target_end,
+        };
+        if clamped_end <= offset {
+            return Some(Ok(0));
+        }
+        let fetch_len = (clamped_end - fetch_start) as usize;
+
+        let mut page_offset = fetch_start;
+        let mut data = fetcher(fetch_start, fetch_len);
+        // If aligned page ended before requested offset (short read), retry directly at offset.
+        if let Some(ref bytes) = data {
+            if offset >= page_offset && (offset - page_offset) >= bytes.len() as u64 {
+                page_offset = offset;
+                let direct_end = match self.total_size {
+                    Some(tot) => offset.saturating_add(out.len().max(ProbePageCache::PAGE_SIZE) as u64).min(tot),
+                    None => offset.saturating_add(out.len().max(ProbePageCache::PAGE_SIZE) as u64),
+                };
+                if direct_end <= offset {
+                    return Some(Ok(0));
+                }
+                data = fetcher(offset, (direct_end - offset) as usize);
+            }
+        }
+
+        if self.body.should_abort.load(Ordering::Acquire) {
+            return Some(Err(BufferError::Aborted));
+        }
+
+        let Some(bytes) = data else {
+            return None;
+        };
+        if bytes.is_empty() {
+            return Some(Ok(0));
+        }
+
+        let start_in_page = (offset - page_offset) as usize;
+        if start_in_page >= bytes.len() {
+            return Some(Ok(0));
+        }
+        let to_copy = (bytes.len() - start_in_page).min(out.len());
+        out[..to_copy].copy_from_slice(&bytes[start_in_page..start_in_page + to_copy]);
+
+        {
+            let mut cache = lock_unpoisoned(&self.probe_cache);
+            cache.insert(page_offset, bytes);
+        }
+        Some(Ok(to_copy))
+    }
+
+    /// Configures stream payload bounds and total duration on the internal [`ByteTimeMap`].
+    pub fn configure_byte_time_map(&self, audio_start: u64, audio_end: u64, duration_ms: i64) {
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.set_bounds(audio_start, audio_end, duration_ms);
+    }
+
+    /// Installs pre-extracted container index `(byte_offset, time_ms)` anchors.
+    pub fn set_byte_time_anchors(&self, pts: Vec<(u64, i64)>) {
+        if pts.is_empty() {
+            return;
+        }
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.set_anchors(pts);
+    }
+
+    /// Returns true when [`ByteTimeMap`] already holds container, segment, or probed anchors.
+    pub fn has_byte_time_anchors(&self) -> bool {
+        read_unpoisoned(&self.byte_time_map).has_anchors()
+    }
+
+    /// Records a monotonic packet `(byte_offset, time_ms)` observation into [`ByteTimeMap`].
+    pub fn record_byte_time_anchor(&self, byte_offset: u64, time_ms: i64) {
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.record_anchor(byte_offset, time_ms);
+    }
+
+    /// Appends an HLS VOD segment end boundary `(byte_offset, time_ms)` into [`ByteTimeMap`].
+    pub fn push_segment_anchor(&self, byte_offset: u64, time_ms: i64) {
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.push_segment_anchor(byte_offset, time_ms);
+    }
+
+    /// Maps the active circular `[start_byte, end_byte]` cache window into conservative `[start_ms, end_ms]`.
+    pub fn mapped_buffered_range(&self, duration_ms: i64) -> (i64, i64) {
+        let (r_start, r_end, _cap) = self.body.circular_metrics();
+        if r_end <= r_start {
+            return (0, 0);
+        }
+        let map = read_unpoisoned(&self.byte_time_map);
+        let is_eof = self.body.is_eof();
+        let raw_end = if is_eof && duration_ms > 0 {
+            duration_ms
+        } else {
+            map.byte_to_ms(r_end, false)
+        };
+        let end_ms = if duration_ms > 0 {
+            raw_end.clamp(0, duration_ms)
+        } else {
+            raw_end.max(0)
+        };
+        let start_ms = map.byte_to_ms(r_start, true).clamp(0, end_ms);
+        (start_ms, end_ms)
     }
 
     /// Creates a [`DemuxedStreamReader`] over this `StreamSession`.

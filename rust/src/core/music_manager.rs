@@ -196,10 +196,18 @@ impl MusicManager {
         self.inner.deck_b.render_pcm(self.scratch_deck_b.as_mut_ptr(), frame_count);
 
         if is_xfading {
-            let (gain_a, gain_b) = self.inner.crossfade.advance_and_get_gains(frame_count as u64);
-            if !self.inner.crossfade.is_active() {
-                self.inner.crossfade_completed_flag.store(true, Ordering::Release);
-            }
+            let is_playing = crate::core::PlaybackState::from_i32(
+                self.inner.playback_state.load(Ordering::Relaxed),
+            ) == crate::core::PlaybackState::Playing;
+            let (gain_a, gain_b) = if is_playing {
+                let gains = self.inner.crossfade.advance_and_get_gains(frame_count as u64);
+                if !self.inner.crossfade.is_active() {
+                    self.inner.crossfade_completed_flag.store(true, Ordering::Release);
+                }
+                gains
+            } else {
+                self.inner.crossfade.current_gains()
+            };
 
             for i in 0..sample_count {
                 output[i] = self.scratch_deck_a[i] * gain_a + self.scratch_deck_b[i] * gain_b;

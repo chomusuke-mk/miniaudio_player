@@ -1192,7 +1192,148 @@ fn try_parse_special_containers_seekable<R: Read + Seek>(
     ];
     if n >= 40 && header[0..16] == W64_RIFF_GUID {
         parse_w64_chunks(reader, out, consumed);
+        return;
     }
+
+    // 4. Apple Core Audio Format ("caff")
+    if &header[0..4] == b"caff" {
+        parse_caf_chunks(reader, out, consumed);
+    }
+}
+
+fn parse_caf_chunks<R: Read + Seek>(
+    reader: &mut R,
+    out: &mut RustAudioMetadata,
+    consumed: &mut HashSet<String>,
+) {
+    let mut pos = 8u64;
+    let mut found_any = false;
+    let mut chunks_seen = 0u32;
+
+    while chunks_seen < 64 {
+        chunks_seen += 1;
+        if reader.seek(SeekFrom::Start(pos)).is_err() {
+            break;
+        }
+        let mut hdr = [0u8; 12];
+        if reader.read_exact(&mut hdr).is_err() {
+            break;
+        }
+        let id = &hdr[0..4];
+        let chunk_size = i64::from_be_bytes(hdr[4..12].try_into().unwrap_or([0; 8]));
+        let body_pos = pos + 12;
+
+        if id == b"info" && chunk_size > 4 && chunk_size <= 4 * 1024 * 1024 {
+            let mut body = vec![0u8; chunk_size as usize];
+            if reader.read_exact(&mut body).is_ok() && ingest_caf_info_chunk(&body, out, consumed) {
+                found_any = true;
+            }
+        } else if id == b"data" {
+            // Stop at audio payload so streaming metadata buffers never wait for multi-MB PCM payloads.
+            break;
+        }
+
+        if chunk_size < 0 {
+            break;
+        }
+        match body_pos.checked_add(chunk_size as u64) {
+            Some(next) if next > pos => pos = next,
+            _ => break,
+        }
+    }
+
+    if found_any && !out.tag_formats.iter().any(|f| f == "CAF") {
+        out.tag_formats.push("CAF".to_string());
+    }
+}
+
+fn ingest_caf_info_chunk(
+    body: &[u8],
+    out: &mut RustAudioMetadata,
+    consumed: &mut HashSet<String>,
+) -> bool {
+    if body.len() < 4 {
+        return false;
+    }
+    let entry_count = u32::from_be_bytes(body[0..4].try_into().unwrap_or([0; 4])) as usize;
+    let mut p = 4usize;
+    let mut any = false;
+
+    for _ in 0..entry_count.min(1024) {
+        if p >= body.len() {
+            break;
+        }
+        let Some(k_rel) = body[p..].iter().position(|&b| b == 0) else {
+            break;
+        };
+        let key = String::from_utf8_lossy(&body[p..p + k_rel]).trim().to_string();
+        p += k_rel + 1;
+        if p > body.len() {
+            break;
+        }
+        let v_rel = body[p..].iter().position(|&b| b == 0).unwrap_or(body.len() - p);
+        let val = String::from_utf8_lossy(&body[p..p + v_rel]).trim().to_string();
+        p = (p + v_rel + 1).min(body.len());
+
+        if key.is_empty() || val.is_empty() {
+            continue;
+        }
+        any = true;
+        let k_lower = key.to_ascii_lowercase();
+        consumed.insert(k_lower.to_uppercase());
+        match k_lower.as_str() {
+            "title" if out.title.is_none() => out.title = Some(val),
+            "artist" if out.track_artist.is_none() => out.track_artist = Some(val),
+            "album" if out.album.is_none() => out.album = Some(val),
+            "album artist" | "albumartist" if out.album_artist.is_none() => {
+                out.album_artist = Some(val);
+            }
+            "genre" if out.genre.is_none() => out.genre = Some(val),
+            "year" | "recorded date" => {
+                if out.year.is_none() {
+                    out.year = val.get(0..4).and_then(|s| s.parse::<u32>().ok());
+                }
+                if out.extended.recording_date.is_none() {
+                    out.extended.recording_date = Some(val);
+                }
+            }
+            "track number" | "track" if out.track_number.is_none() => {
+                out.track_number = parse_leading_u32(&val);
+            }
+            "disc number" | "disc" if out.disc_number.is_none() => {
+                out.disc_number = parse_leading_u32(&val);
+            }
+            "composer" if out.extended.composer.is_none() => out.extended.composer = Some(val),
+            "comments" | "comment" if out.comment.is_none() => out.comment = Some(val),
+            "copyright" if out.extended.copyright_message.is_none() => {
+                out.extended.copyright_message = Some(val);
+            }
+            "encoded by" if out.extended.encoded_by.is_none() => {
+                out.extended.encoded_by = Some(val);
+            }
+            "encoder" if out.extended.encoder_software.is_none() => {
+                out.extended.encoder_software = Some(val);
+            }
+            "tempo" if out.bpm.is_none() => {
+                out.bpm = val.parse::<f32>().ok();
+            }
+            "key signature" if out.extended.initial_key.is_none() => {
+                out.extended.initial_key = Some(val);
+            }
+            "lyrics" if out.lyrics.is_none() => out.lyrics = Some(val),
+            _ => {
+                if !out
+                    .custom_tags
+                    .iter()
+                    .any(|f| f.key.eq_ignore_ascii_case(&key))
+                {
+                    out.custom_tags.push(RustCustomTagField { key, value: val });
+                }
+            }
+        }
+    }
+
+    any
 }
 
 fn parse_raw_id3v2_slice(

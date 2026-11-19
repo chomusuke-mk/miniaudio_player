@@ -34,6 +34,8 @@ pub enum ContainerFormat {
     Hls = 12,
     /// AIFF / AIFF-C (`FORM`).
     Aiff = 13,
+    /// Apple Core Audio Format (`caff`).
+    Caf = 14,
 }
 
 impl ContainerFormat {
@@ -53,6 +55,7 @@ impl ContainerFormat {
             Self::WavPack => Some("wv"),
             Self::Hls => Some("m3u8"),
             Self::Aiff => Some("aiff"),
+            Self::Caf => Some("caf"),
             Self::Unknown => None,
         }
     }
@@ -183,6 +186,7 @@ impl StreamClassifier {
             "aac" | "adts" => Some("aac"),
             "m4a" | "mp4" | "m4b" => Some("mp4"),
             "aif" | "aiff" | "aifc" => Some("aiff"),
+            "caf" => Some("caf"),
             "w64" => Some("w64"),
             "rf64" => Some("rf64"),
             "rifx" => Some("rifx"),
@@ -229,6 +233,9 @@ impl StreamClassifier {
         }
         if data.starts_with(b"FORM") && (&data[8..12] == b"AIFF" || &data[8..12] == b"AIFC") {
             return (Self::detect_aiff(data, total_size, &mut info), info);
+        }
+        if data.starts_with(b"caff") {
+            return (Self::detect_caf(data, total_size, &mut info), info);
         }
         if data.starts_with(&W64_RIFF_MAGIC) && avail >= 40 && data[24..40] == W64_WAVE_MAGIC {
             return (Self::detect_w64(data, total_size, &mut info), info);
@@ -387,7 +394,7 @@ impl StreamClassifier {
                         end = new_end;
                         continue;
                     }
-                    Err(status) => return (status, end),
+                    Err((status, req_off)) => return (status, req_off),
                 }
             }
             if let Some(res) = Self::strip_ape_tail(tail, tail_offset, floor, end) {
@@ -396,7 +403,7 @@ impl StreamClassifier {
                         end = new_end;
                         continue;
                     }
-                    Err(status) => return (status, end),
+                    Err((status, req_off)) => return (status, req_off),
                 }
             }
             if let Some(res) = Self::strip_lyrics3v2_tail(tail, tail_offset, floor, end) {
@@ -405,7 +412,7 @@ impl StreamClassifier {
                         end = new_end;
                         continue;
                     }
-                    Err(status) => return (status, end),
+                    Err((status, req_off)) => return (status, req_off),
                 }
             }
             if let Some(res) = Self::strip_id3v2_footer_tail(tail, tail_offset, floor, end) {
@@ -414,7 +421,7 @@ impl StreamClassifier {
                         end = new_end;
                         continue;
                     }
-                    Err(status) => return (status, end),
+                    Err((status, req_off)) => return (status, req_off),
                 }
             }
             break;
@@ -428,12 +435,12 @@ impl StreamClassifier {
         tail_offset: i64,
         floor: i64,
         end: i64,
-    ) -> Option<Result<i64, BoundaryStatus>> {
+    ) -> Option<Result<i64, (BoundaryStatus, i64)>> {
         if end - 128 < floor {
             return None;
         }
         if end - 128 < tail_offset {
-            return Some(Err(BoundaryStatus::NeedMore));
+            return Some(Err((BoundaryStatus::NeedMore, (end - 128).max(floor))));
         }
         let idx = (end - 128 - tail_offset) as usize;
         if !tail[idx..].starts_with(b"TAG") {
@@ -454,7 +461,7 @@ impl StreamClassifier {
         tail_offset: i64,
         floor: i64,
         end: i64,
-    ) -> Option<Result<i64, BoundaryStatus>> {
+    ) -> Option<Result<i64, (BoundaryStatus, i64)>> {
         if end - 32 < floor || end - 32 < tail_offset {
             return None;
         }
@@ -471,7 +478,7 @@ impl StreamClassifier {
         }
         let new_end = end - ape_total;
         if new_end < tail_offset {
-            Some(Err(BoundaryStatus::NeedMore))
+            Some(Err((BoundaryStatus::NeedMore, new_end)))
         } else {
             Some(Ok(new_end))
         }
@@ -482,7 +489,7 @@ impl StreamClassifier {
         tail_offset: i64,
         floor: i64,
         end: i64,
-    ) -> Option<Result<i64, BoundaryStatus>> {
+    ) -> Option<Result<i64, (BoundaryStatus, i64)>> {
         if end - 15 < floor || end - 15 < tail_offset {
             return None;
         }
@@ -504,7 +511,7 @@ impl StreamClassifier {
         }
         let new_end = end - lyr_total;
         if new_end < tail_offset {
-            Some(Err(BoundaryStatus::NeedMore))
+            Some(Err((BoundaryStatus::NeedMore, new_end)))
         } else {
             Some(Ok(new_end))
         }
@@ -515,7 +522,7 @@ impl StreamClassifier {
         tail_offset: i64,
         floor: i64,
         end: i64,
-    ) -> Option<Result<i64, BoundaryStatus>> {
+    ) -> Option<Result<i64, (BoundaryStatus, i64)>> {
         if end - 10 < floor || end - 10 < tail_offset {
             return None;
         }
@@ -530,7 +537,7 @@ impl StreamClassifier {
         }
         let new_end = end - id3_total;
         if new_end < tail_offset {
-            Some(Err(BoundaryStatus::NeedMore))
+            Some(Err((BoundaryStatus::NeedMore, new_end)))
         } else {
             Some(Ok(new_end))
         }
@@ -796,8 +803,10 @@ impl StreamClassifier {
         const SAMPLE_RATES: [u32; 13] = [
             96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
         ];
-        let scan_limit = data.len().saturating_sub(6).min(4096);
-        for i in 0..scan_limit {
+        let mut dummy = BoundaryInfo::new();
+        let start_search = Self::skip_id3v2_chain(data, total_size, &mut dummy).unwrap_or(0);
+        let scan_limit = data.len().saturating_sub(6).min(start_search + 4096);
+        for i in start_search..scan_limit {
             let h = &data[i..];
             if is_adts_sync(h) {
                 let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
@@ -826,16 +835,17 @@ impl StreamClassifier {
                     }
 
                     if frame_count > 0 {
+                        let audio_total = (total_size as u64).saturating_sub(i as u64);
                         let dur_ms = if data.len() as i64 >= total_size && total_samples > 0 {
                             (total_samples * 1000) / sr as u64
                         } else {
                             let avg_flen = total_frame_bytes as f64 / frame_count as f64;
-                            let est_frames = total_size as f64 / avg_flen;
+                            let est_frames = audio_total as f64 / avg_flen;
                             (est_frames * 1024.0 * 1000.0 / sr as f64).round() as u64
                         } as i64;
 
                         let bitrate = if dur_ms > 0 {
-                            ((total_size * 8000) / dur_ms) as u32
+                            ((audio_total * 8000) / dur_ms as u64) as u32
                         } else {
                             0
                         };
@@ -845,6 +855,148 @@ impl StreamClassifier {
             }
         }
         None
+    }
+
+    /// Samples ADTS frame lengths at multiple interior offsets (`8%..88%`) of a seekable stream
+    /// to accurately estimate VBR ADTS duration without scanning every frame over the network.
+    pub fn sample_adts_duration_ms<R: Read + Seek>(reader: &mut R, total_bytes: u64) -> Option<(u32, u32, u64)> {
+        const SAMPLE_RATES: [u32; 13] = [
+            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+        ];
+        if total_bytes <= 512 * 1024 {
+            return Self::scan_adts_stream(reader);
+        }
+        let orig_pos = reader.stream_position().ok()?;
+        let _ = reader.seek(SeekFrom::Start(0));
+
+        // Skip any chained ID3v2 headers to locate true first ADTS frame.
+        let mut first_frame_pos = 0u64;
+        loop {
+            let mut hdr = [0u8; 10];
+            if reader.seek(SeekFrom::Start(first_frame_pos)).is_err()
+                || reader.read_exact(&mut hdr).is_err()
+            {
+                let _ = reader.seek(SeekFrom::Start(orig_pos));
+                return None;
+            }
+            if &hdr[0..3] == b"ID3" {
+                let tag_len = (((hdr[6] as u64 & 0x7F) << 21)
+                    | ((hdr[7] as u64 & 0x7F) << 14)
+                    | ((hdr[8] as u64 & 0x7F) << 7)
+                    | (hdr[9] as u64 & 0x7F))
+                    + 10
+                    + if (hdr[5] & 0x10) != 0 { 10 } else { 0 };
+                first_frame_pos = first_frame_pos.saturating_add(tag_len);
+                if first_frame_pos >= total_bytes {
+                    let _ = reader.seek(SeekFrom::Start(orig_pos));
+                    return None;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let mut head7 = [0u8; 7];
+        if reader.seek(SeekFrom::Start(first_frame_pos)).is_err()
+            || reader.read_exact(&mut head7).is_err()
+            || !is_adts_sync(&head7)
+        {
+            let _ = reader.seek(SeekFrom::Start(orig_pos));
+            return None;
+        }
+        let sr_idx = (head7[2] >> 2) & 0x0F;
+        let ch_cfg = (((head7[2] & 0x01) << 2) | ((head7[3] >> 6) & 0x03)) as u32;
+        let sample_rate = *SAMPLE_RATES.get(sr_idx as usize)?;
+        let channels = match ch_cfg {
+            1..=6 => ch_cfg,
+            7 => 8,
+            _ => 2,
+        };
+
+        let audio_len = total_bytes.saturating_sub(first_frame_pos);
+        if audio_len < 65_536 {
+            let _ = reader.seek(SeekFrom::Start(orig_pos));
+            return Self::scan_adts_stream(reader);
+        }
+
+        let mut sample_buf = vec![0u8; 32 * 1024];
+        let mut total_frame_bytes = 0u64;
+        let mut total_samples = 0u64;
+
+        for pct in [5u64, 14, 23, 32, 41, 50, 59, 68, 77, 86, 94] {
+            let probe_off = first_frame_pos + (audio_len * pct) / 100;
+            if probe_off + 1024 >= total_bytes {
+                continue;
+            }
+            if reader.seek(SeekFrom::Start(probe_off)).is_err() {
+                continue;
+            }
+            let mut got = 0usize;
+            while got < sample_buf.len() {
+                match reader.read(&mut sample_buf[got..]) {
+                    Ok(0) => break,
+                    Ok(n) => got += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            let buf = &sample_buf[..got];
+            // Find 3 consecutive ADTS frames sharing identical sample_rate/channel config.
+            let mut start_i = None;
+            for i in 0..buf.len().saturating_sub(21) {
+                let f0 = &buf[i..];
+                if !is_adts_sync(f0)
+                    || ((f0[2] >> 2) & 0x0F) != sr_idx
+                    || (((f0[2] & 0x01) << 2) | ((f0[3] >> 6) & 0x03)) != ch_cfg as u8
+                {
+                    continue;
+                }
+                let l0 = ((f0[3] as usize & 0x03) << 11) | ((f0[4] as usize) << 3) | ((f0[5] as usize) >> 5);
+                if l0 < 7 || i + l0 + 7 > buf.len() {
+                    continue;
+                }
+                let f1 = &buf[i + l0..];
+                if !is_adts_sync(f1) || ((f1[2] >> 2) & 0x0F) != sr_idx {
+                    continue;
+                }
+                let l1 = ((f1[3] as usize & 0x03) << 11) | ((f1[4] as usize) << 3) | ((f1[5] as usize) >> 5);
+                if l1 < 7 || i + l0 + l1 + 7 > buf.len() {
+                    continue;
+                }
+                if is_adts_sync(&buf[i + l0 + l1..]) {
+                    start_i = Some(i);
+                    break;
+                }
+            }
+
+            if let Some(mut pos) = start_i {
+                while pos + 7 <= buf.len() {
+                    let fh = &buf[pos..];
+                    if !is_adts_sync(fh) || ((fh[2] >> 2) & 0x0F) != sr_idx {
+                        break;
+                    }
+                    let flen = ((fh[3] as usize & 0x03) << 11)
+                        | ((fh[4] as usize) << 3)
+                        | ((fh[5] as usize) >> 5);
+                    if flen < 7 || pos + flen > buf.len() {
+                        break;
+                    }
+                    let blocks = (fh[6] as u64 & 0x03) + 1;
+                    total_samples += blocks * 1024;
+                    total_frame_bytes += flen as u64;
+                    pos += flen;
+                }
+            }
+        }
+
+        let _ = reader.seek(SeekFrom::Start(orig_pos));
+        if total_frame_bytes > 0 && total_samples > 0 {
+            let est_samples = (audio_len as f64 / total_frame_bytes as f64) * total_samples as f64;
+            let dur_ms = (est_samples * 1000.0 / sample_rate as f64).round() as u64;
+            Some((sample_rate, channels, dur_ms))
+        } else {
+            None
+        }
     }
 
     /// Fast, seek-based exact ADTS frame scanner for seekable sources (files, memory cursors).
@@ -1197,6 +1349,72 @@ impl StreamClassifier {
         }
     }
 
+    fn detect_caf(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
+        const CAF_MAX_HEADER_SCAN: usize = 4 * 1024 * 1024;
+        if d.len() < 8 || &d[0..4] != b"caff" || u16::from_be_bytes([d[4], d[5]]) != 1 {
+            out.set_direct_container(ContainerFormat::Caf, 0, total);
+            return BoundaryStatus::Found;
+        }
+        let mut p: usize = 8;
+
+        loop {
+            if p + 12 > d.len() {
+                if p >= CAF_MAX_HEADER_SCAN || (total > 0 && p as i64 >= total) {
+                    out.set_direct_container(ContainerFormat::Caf, 0, total);
+                    return BoundaryStatus::Found;
+                }
+                return Self::need_more(out, (p + 32) as i64, total, d.len());
+            }
+
+            let chunk_id = &d[p..p + 4];
+            let chunk_size = i64::from_be_bytes([
+                d[p + 4],
+                d[p + 5],
+                d[p + 6],
+                d[p + 7],
+                d[p + 8],
+                d[p + 9],
+                d[p + 10],
+                d[p + 11],
+            ]);
+
+            if chunk_id == b"data" {
+                let data_hdr_end = p + 16;
+                if data_hdr_end > d.len() && (total <= 0 || (data_hdr_end as i64) <= total) {
+                    return Self::need_more(out, data_hdr_end as i64, total, d.len());
+                }
+                out.container = ContainerFormat::Caf;
+                out.audio_start = data_hdr_end as i64;
+                out.audio_end = if chunk_size >= 4 {
+                    let end = out.audio_start.saturating_add(chunk_size - 4);
+                    if total > 0 {
+                        end.min(total)
+                    } else {
+                        end
+                    }
+                } else {
+                    total
+                };
+                return BoundaryStatus::Found;
+            }
+
+            if chunk_size < 0 {
+                out.set_direct_container(ContainerFormat::Caf, 0, total);
+                return BoundaryStatus::Found;
+            }
+
+            let Some(next_p) = (p + 12).checked_add(chunk_size as usize) else {
+                out.set_direct_container(ContainerFormat::Caf, 0, total);
+                return BoundaryStatus::Found;
+            };
+            p = next_p;
+            if p >= CAF_MAX_HEADER_SCAN || (total > 0 && p as i64 >= total) {
+                out.set_direct_container(ContainerFormat::Caf, 0, total);
+                return BoundaryStatus::Found;
+            }
+        }
+    }
+
     fn read_ebml_vint(d: &[u8], pos: usize, mask_leading: bool) -> Option<(u64, usize, bool)> {
         let &first = d.get(pos)?;
         if first == 0 {
@@ -1483,7 +1701,20 @@ impl StreamClassifier {
 
             if atom_type == b"mdat" {
                 out.container = ContainerFormat::Mp4;
-                out.audio_start = (p + hdr as usize) as i64;
+                let mut audio_start = (p + hdr as usize) as i64;
+                if let Some((_, anchors)) = crate::buffer::ByteTimeMap::extract_mp4_anchors(&d[..p])
+                {
+                    if let Some(&(first_soun_off, _)) = anchors.first() {
+                        let off_i64 = first_soun_off as i64;
+                        if off_i64 > audio_start && (off_i64 - audio_start) <= 65_536 {
+                            if (d.len() as i64) < off_i64 {
+                                return Self::need_more(out, off_i64, total, d.len());
+                            }
+                            audio_start = off_i64;
+                        }
+                    }
+                }
+                out.audio_start = audio_start;
                 if size32 == 0 {
                     out.audio_end = if total > 0 { total } else { -1 };
                 } else {

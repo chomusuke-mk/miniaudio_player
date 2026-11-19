@@ -171,6 +171,8 @@ impl ExtendedPcmReader {
             Self::parse_riff_variant(source, true, "RIFX")
         } else if header.starts_with(b"RF64") && &header[8..12] == b"WAVE" {
             Self::parse_riff_variant(source, false, "RF64")
+        } else if header.starts_with(b"caff") && u16::from_be_bytes([header[4], header[5]]) == 1 {
+            Self::parse_caf(source)
         } else {
             let _ = source.seek(SeekFrom::Start(0));
             Ok(ExtendedPcmProbe::NotMatched(source))
@@ -308,6 +310,118 @@ impl ExtendedPcmReader {
         }
 
         Self::build_from_spec(source, fmt, false, "W64", data_start, data_size)
+    }
+
+    fn parse_caf(mut source: Box<dyn MediaSource>) -> Result<ExtendedPcmProbe, SymphoniaError> {
+        let mut p = 8u64;
+        let mut fmt = WaveFmtSpec::default();
+        let mut is_big_endian = true;
+        let mut data_start = 0u64;
+        let mut data_size = 0u64;
+
+        loop {
+            if source.seek(SeekFrom::Start(p)).is_err() {
+                break;
+            }
+            let mut chunk_hdr = [0u8; 12];
+            if source.read_exact(&mut chunk_hdr).is_err() {
+                break;
+            }
+            let chunk_id = &chunk_hdr[0..4];
+            let chunk_size = i64::from_be_bytes(chunk_hdr[4..12].try_into().unwrap());
+            let body_pos = p + 12;
+
+            if chunk_id == b"desc" && chunk_size >= 32 {
+                let mut desc = [0u8; 32];
+                if source.read_exact(&mut desc).is_err() {
+                    break;
+                }
+                let sr_f64 = f64::from_be_bytes(desc[0..8].try_into().unwrap());
+                let format_id = &desc[8..12];
+                let format_flags = u32::from_be_bytes(desc[12..16].try_into().unwrap());
+                let bytes_per_packet = u32::from_be_bytes(desc[16..20].try_into().unwrap());
+                let frames_per_packet = u32::from_be_bytes(desc[20..24].try_into().unwrap());
+                let channels_per_frame = u32::from_be_bytes(desc[24..28].try_into().unwrap());
+                let bits_per_channel = u32::from_be_bytes(desc[28..32].try_into().unwrap());
+
+                if format_id != b"lpcm" {
+                    let _ = source.seek(SeekFrom::Start(0));
+                    return Ok(ExtendedPcmProbe::NotMatched(source));
+                }
+
+                let is_float = (format_flags & 1) != 0;
+                is_big_endian = (format_flags & 2) == 0;
+                let sr = if sr_f64.is_finite() && sr_f64 > 0.0 && sr_f64 <= u32::MAX as f64 {
+                    sr_f64.round() as u32
+                } else {
+                    0
+                };
+                let bits_supported = if is_float {
+                    bits_per_channel == 32
+                } else {
+                    matches!(bits_per_channel, 16 | 24 | 32)
+                };
+                let block_align = if bytes_per_packet > 0 {
+                    bytes_per_packet
+                } else {
+                    (bits_per_channel / 8).saturating_mul(channels_per_frame)
+                };
+                if sr == 0
+                    || channels_per_frame == 0
+                    || frames_per_packet != 1
+                    || !bits_supported
+                    || block_align == 0
+                    || block_align > u16::MAX as u32
+                    || channels_per_frame > u16::MAX as u32
+                {
+                    let _ = source.seek(SeekFrom::Start(0));
+                    return Ok(ExtendedPcmProbe::NotMatched(source));
+                }
+
+                fmt = WaveFmtSpec {
+                    channels: channels_per_frame as u16,
+                    sample_rate: sr,
+                    block_align: block_align as u16,
+                    bits_per_sample: bits_per_channel as u16,
+                    is_float,
+                    valid: true,
+                };
+            } else if chunk_id == b"data" {
+                // Skip 4-byte `mEditCount` and stop before payload without draining audio bytes.
+                data_start = body_pos + 4;
+                if chunk_size >= 4 {
+                    let declared = (chunk_size - 4) as u64;
+                    data_size = if let Some(total) = source.byte_len() {
+                        declared.min(total.saturating_sub(data_start))
+                    } else {
+                        declared
+                    };
+                } else if chunk_size == -1 {
+                    data_size = source
+                        .byte_len()
+                        .unwrap_or(0)
+                        .saturating_sub(data_start);
+                }
+                break;
+            }
+
+            if chunk_size < 0 {
+                break;
+            }
+            match body_pos.checked_add(chunk_size as u64) {
+                Some(next) if next > p => p = next,
+                _ => break,
+            }
+        }
+
+        Self::build_from_spec(
+            source,
+            fmt,
+            is_big_endian,
+            "CAF",
+            data_start,
+            data_size,
+        )
     }
 
     /// Returns the audio sample rate in Hz.

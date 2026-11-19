@@ -301,6 +301,7 @@ pub enum RtControlHint {
     AutoAdvanceNeeded {
         expected_deck_id: usize,
         expected_open_gen: u64,
+        expected_seek_epoch: u64,
         next_idx: usize,
         item: AudioSourceCore,
         should_auto_xfade: bool,
@@ -521,7 +522,7 @@ fn publish_snapshots(
 #[derive(Default)]
 struct LifecycleHintState {
     last_prewarm_hint_key: Option<(usize, u64, i64)>,
-    last_auto_advance_key: Option<(usize, u64, usize, i64)>,
+    last_auto_advance_key: Option<(usize, u64, u64, usize, i64)>,
 }
 
 fn tick_music_lifecycle(
@@ -627,6 +628,7 @@ fn tick_music_lifecycle(
     let active_deck = ply.music_manager.active_deck_ref();
     let cur_deck_id = active_deck.deck_id;
     let cur_open_gen = active_deck.open_generation.load(Ordering::Acquire);
+    let cur_seek_epoch = active_deck.seek_epoch.load(Ordering::Acquire);
     let pos = active_deck.position_ms.load(Ordering::Relaxed);
     let dur = active_deck.duration_ms.load(Ordering::Relaxed);
     let current_idx = ply
@@ -727,12 +729,13 @@ fn tick_music_lifecycle(
                         hint_state.last_prewarm_hint_key = None;
                         let _ = hint_tx.try_send(RtControlHint::PrewarmNeeded);
                     } else {
-                        let adv_key = (cur_deck_id, cur_open_gen, next_idx, item.id);
+                        let adv_key = (cur_deck_id, cur_open_gen, cur_seek_epoch, next_idx, item.id);
                         if hint_state.last_auto_advance_key != Some(adv_key) {
                             hint_state.last_auto_advance_key = Some(adv_key);
                             let _ = hint_tx.try_send(RtControlHint::AutoAdvanceNeeded {
                                 expected_deck_id: cur_deck_id,
                                 expected_open_gen: cur_open_gen,
+                                expected_seek_epoch: cur_seek_epoch,
                                 next_idx,
                                 item,
                                 should_auto_xfade,

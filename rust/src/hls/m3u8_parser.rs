@@ -256,6 +256,8 @@ pub struct HlsSegmentTarget {
     pub byte_range: Option<(u64, u64)>,
     /// Assigned HLS media sequence index.
     pub sequence_number: u64,
+    /// Nominal `#EXTINF` segment duration in milliseconds.
+    pub duration_ms: u64,
 }
 
 type SegmentKey = (String, Option<(u64, u64)>);
@@ -338,6 +340,7 @@ impl HlsPlaylistTracker {
                 url: resolve_hls_uri(&self.base_media_url, &s.uri),
                 byte_range: s.byte_range,
                 sequence_number: s.sequence_number,
+                duration_ms: (s.duration_seconds.max(0.0) * 1000.0).round() as u64,
             })
             .collect()
     }

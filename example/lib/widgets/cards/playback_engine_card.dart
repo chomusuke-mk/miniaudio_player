@@ -437,6 +437,13 @@ class PlaybackEngineCard extends StatelessWidget {
                                   !track!.source.uri!.toLowerCase().startsWith(
                                     'http',
                                   ));
+                          final bufferStartProgress = isLocal
+                              ? 0.0
+                              : (dur != null && dur.inMilliseconds > 0
+                                    ? (buf.start.inMilliseconds /
+                                              dur.inMilliseconds)
+                                          .clamp(0.0, 1.0)
+                                    : 0.0);
                           final bufferedProgress = isLocal
                               ? 1.0
                               : (dur != null && dur.inMilliseconds > 0
@@ -499,6 +506,8 @@ class PlaybackEngineCard extends StatelessWidget {
                                                   points:
                                                       controller.waveformPoints,
                                                   progress: progress,
+                                                  bufferStartProgress:
+                                                      bufferStartProgress,
                                                   bufferedProgress:
                                                       bufferedProgress,
                                                   playedColor:

@@ -24,7 +24,7 @@ use miniaudio_player::api::types::{AudioOutputSource, RustAudioOutput};
 use miniaudio_player::buffer::{CustomDartByteSource, CustomSourceRegistry, StreamSession};
 use miniaudio_player::core::capture::DeviceCaptureNode;
 use miniaudio_player::core::control_coordinator::ControlCoordinator;
-use miniaudio_player::core::dual_source::{AudioSourceCore, CustomSourceFactory};
+use miniaudio_player::core::dual_source::{AudioSourceCore, CustomSourceFactory, STATE_PLAYING};
 use miniaudio_player::core::effects_manager::EffectsControl;
 use miniaudio_player::core::engine_actor::EngineActorHandle;
 use miniaudio_player::core::hw_supervisor::HardwareDeviceSupervisor;
@@ -178,7 +178,9 @@ impl MockHttpServer {
         let mut buf = [0u8; 2048];
         let n = stream.read(&mut buf).unwrap_or(0);
         let req = String::from_utf8_lossy(&buf[..n]);
-        let is_fast = req.lines().next().is_some_and(|l| l.contains("/fast.wav"));
+        let req_line = req.lines().next().unwrap_or("");
+        let is_fast = req_line.contains("/fast.wav");
+        let is_delayed_valid = req_line.contains("/delayed.wav");
 
         if is_fast {
             let header = format!(
@@ -197,7 +199,17 @@ impl MockHttpServer {
             && !release.load(Ordering::Acquire)
             && start.elapsed() < tarpit_hold
         {
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        if is_delayed_valid && !stop.load(Ordering::Acquire) {
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                fast_wav.len()
+            );
+            let _ = stream.write_all(header.as_bytes());
+            let _ = stream.write_all(fast_wav);
+            let _ = stream.flush();
         }
     }
 }
@@ -850,4 +862,235 @@ fn scenario_8_poison_recovery_and_render_step_parity() {
         thread::yield_now();
     }
     assert!(reached_pos > 0, "Single-thread render_pcm stepping did not advance position");
+}
+
+#[test]
+fn scenario_9_e5_seek_near_end_then_away_and_pause_concurrency_matrix() {
+    // Track 0: 6000ms (288_000 frames @ 48 kHz), Track 1: 4000ms (192_000 frames).
+    let wav_a = SignalGenerator::pcm16_wav_bytes(288_000, 48_000, 2);
+    let wav_b = SignalGenerator::pcm16_wav_bytes(192_000, 48_000, 2);
+
+    // Phase 1: Deterministic delayed-HTTP AutoAdvance race across (xfade=0ms, xfade=1200ms) x (stay playing vs pause).
+    for (xfade_ms, do_pause) in [(0u64, false), (0, true), (1200, false), (1200, true)] {
+        let server = MockHttpServer::start(wav_b.clone(), Duration::from_secs(3));
+        let harness = TriPlaneHarness::spawn();
+        harness
+            .engine
+            .exec(move |ply| {
+                ply.music_manager.set_crossfade(xfade_ms, xfade_ms, 0);
+            })
+            .expect("set_crossfade failed");
+
+        let queue = vec![
+            mem_source(101, wav_a.clone()),
+            url_source(102, format!("http://127.0.0.1:{}/delayed.wav", server.port)),
+        ];
+        harness
+            .coordinator
+            .set_queue(queue, harness.dummy_custom_factory())
+            .expect("set_queue failed");
+        harness
+            .coordinator
+            .play(None, Some(0), None, Some(500), false)
+            .expect("play failed");
+
+        // Seek into the auto-advance/auto-crossfade window so AutoAdvanceNeeded fires against /delayed.wav.
+        let near_end_ms = if xfade_ms > 0 { 5500 } else { 5900 };
+        harness
+            .coordinator
+            .seek(near_end_ms)
+            .expect("seek near end failed");
+
+        assert!(
+            wait_until(Duration::from_secs(2), || {
+                server.tarpit_hits.load(Ordering::Acquire) >= 1
+            }),
+            "AutoAdvanceNeeded never requested /delayed.wav (xfade_ms={})",
+            xfade_ms
+        );
+
+        // Immediately seek far away from end, optionally pausing right afterwards.
+        harness
+            .coordinator
+            .seek(1200)
+            .expect("seek away failed");
+        if do_pause {
+            harness.coordinator.pause().expect("pause failed");
+        }
+
+        // Release /delayed.wav so Track 1 completes opening AFTER seek(1200) (+ pause).
+        server.release_tarpit.store(true, Ordering::Release);
+        thread::sleep(Duration::from_millis(200));
+
+        let (idx, state, xfading, deck_a_st, deck_b_st) = harness
+            .engine
+            .exec(|ply| {
+                (
+                    ply.music_manager.current_index(),
+                    PlaybackState::from_i32(
+                        ply.music_manager
+                            .inner
+                            .playback_state
+                            .load(Ordering::Relaxed),
+                    ),
+                    ply.music_manager.inner.crossfade.is_active(),
+                    ply.music_manager.inner.deck_a.state.load(Ordering::Relaxed),
+                    ply.music_manager.inner.deck_b.state.load(Ordering::Relaxed),
+                )
+            })
+            .expect("engine inspect failed");
+
+        assert_eq!(
+            idx, 0,
+            "E5 regression: stale AutoAdvance hijacked track 0 -> {} (xfade_ms={}, do_pause={})",
+            idx, xfade_ms, do_pause
+        );
+        assert!(!xfading, "Crossfade must not start after seeking back to 1200ms");
+        if do_pause {
+            assert_eq!(state, PlaybackState::Paused);
+            assert_ne!(deck_a_st, STATE_PLAYING, "Deck A still playing after pause");
+            assert_ne!(deck_b_st, STATE_PLAYING, "Deck B playing while paused");
+        } else {
+            assert_eq!(state, PlaybackState::Playing);
+            let pos = harness.engine.snapshots().position_ms();
+            assert!(
+                pos < 3500,
+                "Expected position to remain near 1200ms on Track 0, got {}ms",
+                pos
+            );
+        }
+    }
+
+    // Phase 2: Mid-AutoCrossfade pause freezes both decks and crossfade progress until resumed.
+    {
+        let harness = TriPlaneHarness::spawn();
+        harness
+            .engine
+            .exec(|ply| {
+                ply.music_manager.set_crossfade(1500, 1500, 0);
+            })
+            .expect("set_crossfade failed");
+        let queue = vec![mem_source(201, wav_a.clone()), mem_source(202, wav_b.clone())];
+        harness
+            .coordinator
+            .set_queue(queue, harness.dummy_custom_factory())
+            .expect("set_queue failed");
+        harness
+            .coordinator
+            .play(None, Some(0), None, Some(4800), false)
+            .expect("play failed");
+
+        assert!(
+            wait_until(Duration::from_secs(2), || {
+                harness.engine.snapshots().is_xfading()
+            }),
+            "AutoCrossfade did not engage near end of track 0"
+        );
+
+        harness.coordinator.pause().expect("pause during xfade failed");
+        let (f0, state0, deck_a0, deck_b0) = harness
+            .engine
+            .exec(|ply| {
+                (
+                    ply.music_manager.inner.crossfade.current_frame.load(Ordering::Relaxed),
+                    PlaybackState::from_i32(
+                        ply.music_manager
+                            .inner
+                            .playback_state
+                            .load(Ordering::Relaxed),
+                    ),
+                    ply.music_manager.inner.deck_a.state.load(Ordering::Relaxed),
+                    ply.music_manager.inner.deck_b.state.load(Ordering::Relaxed),
+                )
+            })
+            .expect("inspect failed");
+        assert_eq!(state0, PlaybackState::Paused);
+        assert_ne!(deck_a0, STATE_PLAYING, "Outgoing deck left playing when paused mid-crossfade");
+        assert_ne!(deck_b0, STATE_PLAYING, "Incoming deck left playing when paused mid-crossfade");
+
+        thread::sleep(Duration::from_millis(120));
+        let (f1, idx1, state1) = harness
+            .engine
+            .exec(|ply| {
+                (
+                    ply.music_manager.inner.crossfade.current_frame.load(Ordering::Relaxed),
+                    ply.music_manager.current_index(),
+                    PlaybackState::from_i32(
+                        ply.music_manager
+                            .inner
+                            .playback_state
+                            .load(Ordering::Relaxed),
+                    ),
+                )
+            })
+            .expect("inspect after wait failed");
+        assert_eq!(state1, PlaybackState::Paused);
+        assert_eq!(idx1, 0, "Track swapped while paused mid-crossfade");
+        assert_eq!(f1, f0, "Crossfade frame counter advanced while paused ({} -> {})", f0, f1);
+
+        // Resume and verify crossfade finishes cleanly to Track 1.
+        harness
+            .coordinator
+            .play(None, None, None, None, false)
+            .expect("resume play failed");
+        assert!(
+            wait_until(Duration::from_secs(3), || {
+                !harness.engine.snapshots().is_xfading()
+                    && harness.engine.snapshots().current_index() == 1
+            }),
+            "Resumed crossfade did not complete cleanly to index 1"
+        );
+    }
+
+    // Phase 3: Repeated user-log seek-churn + pause cycles with local/memory prewarm active.
+    for xfade_ms in [0u64, 1500] {
+        let harness = TriPlaneHarness::spawn();
+        harness
+            .engine
+            .exec(move |ply| {
+                ply.music_manager.set_crossfade(xfade_ms, xfade_ms, 0);
+            })
+            .expect("set_crossfade failed");
+        let queue = vec![mem_source(301, wav_a.clone()), mem_source(302, wav_b.clone())];
+        harness
+            .coordinator
+            .set_queue(queue, harness.dummy_custom_factory())
+            .expect("set_queue failed");
+
+        for cycle in 0..10 {
+            harness
+                .coordinator
+                .play(None, Some(0), None, Some(1000), false)
+                .expect("play failed");
+            let _ = harness.coordinator.seek(5400);
+            let _ = harness.coordinator.seek(5900);
+            thread::yield_now();
+            let _ = harness.coordinator.seek(1800);
+            let _ = harness.coordinator.seek(5850);
+            let _ = harness.coordinator.seek(1200 + (cycle as i64) * 50);
+            harness.coordinator.pause().expect("pause failed");
+            thread::sleep(Duration::from_millis(60));
+
+            let (idx, st, a_st, b_st) = harness
+                .engine
+                .exec(|ply| {
+                    (
+                        ply.music_manager.current_index(),
+                        PlaybackState::from_i32(
+                            ply.music_manager
+                                .inner
+                                .playback_state
+                                .load(Ordering::Relaxed),
+                        ),
+                        ply.music_manager.inner.deck_a.state.load(Ordering::Relaxed),
+                        ply.music_manager.inner.deck_b.state.load(Ordering::Relaxed),
+                    )
+                })
+                .expect("inspect failed");
+            assert_eq!(st, PlaybackState::Paused, "cycle {} state={:?}", cycle, st);
+            assert_eq!(idx, 0, "cycle {} switched track unexpectedly", cycle);
+            assert_ne!(a_st, STATE_PLAYING, "cycle {} deck_a active while paused", cycle);
+            assert_ne!(b_st, STATE_PLAYING, "cycle {} deck_b active while paused", cycle);
+        }
+    }
 }

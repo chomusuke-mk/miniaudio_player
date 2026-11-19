@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 class WaveformPainter extends CustomPainter {
   final List<double> points;
   final double progress;
+  final double bufferStartProgress;
   final double bufferedProgress;
   final Color playedColor;
   final Color unplayedColor;
@@ -15,6 +16,7 @@ class WaveformPainter extends CustomPainter {
   const WaveformPainter({
     required this.points,
     required this.progress,
+    this.bufferStartProgress = 0.0,
     this.bufferedProgress = 0.0,
     required this.playedColor,
     required this.unplayedColor,
@@ -95,11 +97,14 @@ class WaveformPainter extends CustomPainter {
     canvas.drawPath(path, unplayedStroke);
 
     // Layer 2: Preload buffer halo (translucent white halo, like YouTube)
-    final clampedBuffer = bufferedProgress.clamp(0.0, 1.0);
-    if (clampedBuffer > 0.0) {
+    final clampedStart = bufferStartProgress.clamp(0.0, 1.0);
+    final clampedBuffer = bufferedProgress.clamp(clampedStart, 1.0);
+    if (clampedBuffer > clampedStart) {
+      final startX = size.width * clampedStart;
+      final endX = size.width * clampedBuffer;
       canvas.save();
       canvas.clipRect(
-        Rect.fromLTWH(0, 0, size.width * clampedBuffer, size.height),
+        Rect.fromLTWH(startX, 0, endX - startX, size.height),
       );
 
       final bufferPaint = Paint()
@@ -172,6 +177,7 @@ class WaveformPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant WaveformPainter oldDelegate) {
     return oldDelegate.progress != progress ||
+        oldDelegate.bufferStartProgress != bufferStartProgress ||
         oldDelegate.bufferedProgress != bufferedProgress ||
         oldDelegate.points != points ||
         oldDelegate.playedColor != playedColor ||

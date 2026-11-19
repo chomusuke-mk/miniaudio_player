@@ -519,6 +519,9 @@ impl DualSource {
             }
             let res = self.active_deck_mut().play();
             return if res == 0 {
+                if self.crossfade.is_active() || self.crossfade_target_id.load(Ordering::Acquire) >= 0 {
+                    let _ = self.standby_deck_mut().play();
+                }
                 self.playback_state
                     .store(PlaybackState::Playing.as_i32(), Ordering::Release);
                 PlanOutcome::Immediate(Ok(()))
@@ -899,6 +902,10 @@ impl DualSource {
                 }
             }
             TransitionCommitMode::AutoCrossfade { eff_ms } => {
+                if !was_playing {
+                    to_slot.stop();
+                    return displaced;
+                }
                 to_slot.play();
                 let sr = self.sample_rate.max(1);
                 let xfade_frames = (eff_ms * sr as u64) / 1000;
@@ -914,6 +921,10 @@ impl DualSource {
                 self.planned_index.store(index as i64, Ordering::Release);
             }
             TransitionCommitMode::AutoAdvanceGapless => {
+                if !was_playing {
+                    to_slot.stop();
+                    return displaced;
+                }
                 to_slot.play();
                 let from_slot = if active_deck == 0 {
                     &mut self.deck_a

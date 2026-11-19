@@ -42,7 +42,11 @@ impl DemuxedStreamReader {
                 Ok(target as u64)
             }
             SeekFrom::End(offset) => {
-                let Some(tot) = self.session.total_size() else {
+                let Some(tot) = self
+                    .session
+                    .logical_end_offset()
+                    .or_else(|| self.session.total_size())
+                else {
                     return Err(IoError::new(
                         ErrorKind::Unsupported,
                         "cannot seek from end on live stream",
@@ -63,23 +67,68 @@ impl DemuxedStreamReader {
 
 impl Read for DemuxedStreamReader {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        let res = self
-            .session
-            .read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT));
-        match res {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        let probe_mode = self.session.in_probe_mode();
+        match self.session.read_at(self.cursor, buf) {
             Ok(bytes_read) => {
                 self.cursor += bytes_read as u64;
-                self.session.advance_read_cursor(self.cursor);
+                if bytes_read > 0 && !probe_mode {
+                    self.session.advance_read_cursor(self.cursor);
+                }
                 Ok(bytes_read)
             }
-            Err(BufferError::Eof) => Ok(0),
             Err(BufferError::Aborted) => {
                 Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
             }
             Err(BufferError::WouldBlock) => {
-                crate::map_log!(1, "DemuxedStreamReader::read WOULD_BLOCK at cursor={} (buf_len={})", self.cursor, buf.len());
-                Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
+                if probe_mode {
+                    if let Some(probe_res) = self.session.read_via_probe_cache(self.cursor, buf) {
+                        return match probe_res {
+                            Ok(n) => {
+                                self.cursor += n as u64;
+                                Ok(n)
+                            }
+                            Err(BufferError::Aborted) => {
+                                Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
+                            }
+                            Err(_) => Err(IoError::new(ErrorKind::Other, "probe read error")),
+                        };
+                    }
+                }
+
+                // Settled decode read (or fallback without probe range fetcher): re-anchor circular window.
+                let _ = self.session.seek(self.cursor);
+                match self
+                    .session
+                    .read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT))
+                {
+                    Ok(bytes_read) => {
+                        self.cursor += bytes_read as u64;
+                        if bytes_read > 0 && !probe_mode {
+                            self.session.advance_read_cursor(self.cursor);
+                        }
+                        Ok(bytes_read)
+                    }
+                    Err(BufferError::Eof) => Ok(0),
+                    Err(BufferError::Aborted) => {
+                        Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
+                    }
+                    Err(BufferError::WouldBlock) => {
+                        crate::map_log!(
+                            1,
+                            "DemuxedStreamReader::read WOULD_BLOCK at cursor={} (buf_len={})",
+                            self.cursor,
+                            buf.len()
+                        );
+                        Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
+                    }
+                    Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
+                }
             }
+            Err(BufferError::Eof) => Ok(0),
             Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
         }
     }
@@ -88,8 +137,9 @@ impl Read for DemuxedStreamReader {
 impl Seek for DemuxedStreamReader {
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
         let new_cursor = self.resolve_seek_target(pos)?;
+        // Never flush the circular buffer on seek() alone; demuxer probes jump speculatively and
+        // read() isolates probes or settles the circular window only when audio decoding commits.
         self.cursor = new_cursor;
-        let _ = self.session.seek(new_cursor);
         Ok(new_cursor)
     }
 }
@@ -102,17 +152,19 @@ impl MediaSource for DemuxedStreamReader {
         if self.session.is_decoding_audio() {
             return true;
         }
-        !self.session.tail_data().is_empty() || self.session.is_fully_buffered()
+        self.session.total_size().is_some()
+            && (self.session.supports_range()
+                || !self.session.tail_data().is_empty()
+                || self.session.is_fully_buffered())
     }
 
     fn byte_len(&self) -> Option<u64> {
-        if self.session.is_decoding_audio()
-            || !self.session.tail_data().is_empty()
-            || self.session.is_fully_buffered()
-        {
-            self.session.total_size()
-        } else {
+        if self.session.is_live() || !self.is_seekable() {
             None
+        } else {
+            self.session
+                .logical_end_offset()
+                .or_else(|| self.session.total_size())
         }
     }
 }

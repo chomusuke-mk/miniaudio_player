@@ -151,6 +151,7 @@ struct SymphoniaTrackSession {
     lossless: bool,
     duration_ms: Option<u64>,
     symphonia_meta: SymphoniaExtractedMeta,
+    last_io_unexpected_eof: bool,
 }
 
 impl SymphoniaTrackSession {
@@ -209,6 +210,7 @@ impl SymphoniaTrackSession {
             lossless,
             duration_ms,
             symphonia_meta,
+            last_io_unexpected_eof: false,
         })
     }
 
@@ -323,6 +325,7 @@ impl SymphoniaTrackSession {
     }
 
     fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
+        self.last_io_unexpected_eof = false;
         loop {
             let packet = match self.format_reader.next_packet() {
                 Ok(Some(pkt)) => pkt,
@@ -330,6 +333,7 @@ impl SymphoniaTrackSession {
                 Err(SymphoniaError::IoError(ref err))
                     if err.kind() == std::io::ErrorKind::UnexpectedEof =>
                 {
+                    self.last_io_unexpected_eof = true;
                     return Ok(false);
                 }
                 Err(err) => return Err(err),
@@ -383,10 +387,59 @@ impl SymphoniaTrackSession {
                     track_id: self.track_id,
                 },
             );
+        } else if let Err(SymphoniaError::SeekError(symphonia::core::errors::SeekErrorKind::OutOfRange)) = &res {
+            let within_known_dur = self.duration_ms.map(|d| position_ms < d).unwrap_or(true);
+            if matches!(self.container_format, "Matroska" | "WebM")
+                && position_ms > 0
+                && within_known_dur
+            {
+                let mut recovered = false;
+                let tb = self
+                    .format_reader
+                    .tracks()
+                    .iter()
+                    .find(|t| t.id == self.track_id)
+                    .and_then(|t| t.time_base);
+                for backoff in [1_500u64, 5_000, 10_000] {
+                    let fallback_ms = position_ms.saturating_sub(backoff);
+                    if self
+                        .format_reader
+                        .seek(
+                            SeekMode::Coarse,
+                            SeekTo::Time {
+                                time: Time::from_millis_u64(fallback_ms),
+                                track_id: Some(self.track_id),
+                            },
+                        )
+                        .is_ok()
+                    {
+                        let target_stop = position_ms.saturating_sub(150);
+                        while let Ok(Some(pkt)) = self.format_reader.next_packet() {
+                            if pkt.track_id != self.track_id {
+                                continue;
+                            }
+                            if let Some(t) = tb.and_then(|time_base| time_base.calc_time(pkt.pts)) {
+                                let pkt_ms = (t.as_nanos() / 1_000_000).max(0) as u64;
+                                if pkt_ms >= target_stop {
+                                    break;
+                                }
+                            }
+                        }
+                        recovered = true;
+                        break;
+                    }
+                }
+                if !recovered {
+                    res?;
+                }
+            } else {
+                res?;
+            }
         } else {
             res?;
         }
 
+        self.last_io_unexpected_eof = false;
         self.decoder.reset();
         Ok(())
     }
@@ -412,6 +465,8 @@ pub struct SymphoniaEngine {
     lossless: bool,
     duration_ms: Option<u64>,
     symphonia_meta: SymphoniaExtractedMeta,
+    anchor_ms: u64,
+    frames_from_anchor: u64,
 }
 
 impl SymphoniaEngine {
@@ -431,8 +486,15 @@ impl SymphoniaEngine {
         hint_extension: Option<&str>,
         allow_full_stream_scan: bool,
     ) -> Result<Self, SymphoniaError> {
-        let boxed_source: Box<dyn MediaSource> = Box::new(source);
+        Self::from_boxed_with_options(Box::new(source), hint_extension, allow_full_stream_scan)
+    }
 
+    /// Probes and instantiates from a pre-boxed `MediaSource` (used by dynamic reopen paths).
+    pub fn from_boxed_with_options(
+        boxed_source: Box<dyn MediaSource>,
+        hint_extension: Option<&str>,
+        allow_full_stream_scan: bool,
+    ) -> Result<Self, SymphoniaError> {
         let boxed_source = match ExtendedPcmReader::try_new(boxed_source)? {
             ExtendedPcmProbe::Matched(pcm) => {
                 let sr = pcm.sample_rate();
@@ -447,6 +509,8 @@ impl SymphoniaEngine {
                     duration_ms: pcm.duration_ms(),
                     symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::ExtendedPcm(pcm),
+                    anchor_ms: 0,
+                    frames_from_anchor: 0,
                 });
             }
             ExtendedPcmProbe::NotMatched(src) => src,
@@ -465,6 +529,8 @@ impl SymphoniaEngine {
                     duration_ms: dsf.duration_ms(),
                     symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::Dsf(dsf),
+                    anchor_ms: 0,
+                    frames_from_anchor: 0,
                 });
             }
             DsfProbe::NotMatched(src) => src,
@@ -484,6 +550,8 @@ impl SymphoniaEngine {
                     duration_ms: ape.duration_ms(),
                     symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::Ape(ape),
+                    anchor_ms: 0,
+                    frames_from_anchor: 0,
                 });
             }
             ApeProbe::NotMatched(src) => src,
@@ -503,13 +571,26 @@ impl SymphoniaEngine {
                     duration_ms: wv.duration_ms(),
                     symphonia_meta: SymphoniaExtractedMeta::default(),
                     backend: EngineBackend::WavPack(wv),
+                    anchor_ms: 0,
+                    frames_from_anchor: 0,
                 });
             }
             WavpackProbe::NotMatched(src) => src,
         };
 
-        let adts_info = if allow_full_stream_scan && boxed_source.is_seekable() {
-            crate::decoder::classifier::StreamClassifier::scan_adts_stream(&mut boxed_source)
+        let adts_info = if boxed_source.is_seekable() {
+            if allow_full_stream_scan {
+                crate::decoder::classifier::StreamClassifier::scan_adts_stream(&mut boxed_source)
+            } else if hint_extension == Some("aac") {
+                boxed_source.byte_len().and_then(|tot| {
+                    crate::decoder::classifier::StreamClassifier::sample_adts_duration_ms(
+                        &mut boxed_source,
+                        tot,
+                    )
+                })
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -532,6 +613,8 @@ impl SymphoniaEngine {
             duration_ms: session.duration_ms,
             symphonia_meta,
             backend: EngineBackend::Symphonia(session),
+            anchor_ms: 0,
+            frames_from_anchor: 0,
         })
     }
 
@@ -571,6 +654,33 @@ impl SymphoniaEngine {
         self.container_format
     }
 
+    /// Maps the detected container/codec format to an extension hint suitable for fast re-probing.
+    #[inline]
+    pub fn container_hint_ext(&self) -> Option<&'static str> {
+        match self.container_format {
+            "Matroska" | "WebM" => Some("mkv"),
+            "Ogg" => Some("ogg"),
+            "FLAC" => Some("flac"),
+            "ADTS" => Some("aac"),
+            "MP4" => Some("mp4"),
+            "MP3" => Some("mp3"),
+            "WAV" | "RF64" | "W64" | "BWF" | "RIFX" => Some("wav"),
+            "AIFF" => Some("aiff"),
+            "CAF" => Some("caf"),
+            "APE" => Some("ape"),
+            "WavPack" => Some("wv"),
+            "DSF" => Some("dsf"),
+            _ => match self.codec {
+                "MP2" => Some("mp2"),
+                "MP3" => Some("mp3"),
+                "AAC" => Some("aac"),
+                "Opus" | "Vorbis" => Some("ogg"),
+                "FLAC" => Some("flac"),
+                _ => None,
+            },
+        }
+    }
+
     /// Returns `true` if the codec is lossless.
     #[inline]
     pub fn lossless(&self) -> bool {
@@ -589,31 +699,58 @@ impl SymphoniaEngine {
         &self.symphonia_meta
     }
 
+    /// Returns `true` when the latest `decode_next_frame` EOF resulted from a truncated I/O read
+    /// (`UnexpectedEof`) rather than clean logical container/frame termination (`Ok(None)`).
+    #[inline]
+    pub fn last_eof_was_io_truncation(&self) -> bool {
+        match &self.backend {
+            EngineBackend::Symphonia(session) => session.last_io_unexpected_eof,
+            _ => false,
+        }
+    }
+
     /// Decodes the next packet or block into interleaved normalized float PCM samples.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
-        match &mut self.backend {
-            EngineBackend::ExtendedPcm(pcm) => pcm.decode_next_frame(out_pcm),
-            EngineBackend::Dsf(dsf) => dsf.decode_next_frame(out_pcm),
-            EngineBackend::Ape(ape) => ape.decode_next_frame(out_pcm),
-            EngineBackend::WavPack(wv) => wv.decode_next_frame(out_pcm),
+        let ok = match &mut self.backend {
+            EngineBackend::ExtendedPcm(pcm) => pcm.decode_next_frame(out_pcm)?,
+            EngineBackend::Dsf(dsf) => dsf.decode_next_frame(out_pcm)?,
+            EngineBackend::Ape(ape) => ape.decode_next_frame(out_pcm)?,
+            EngineBackend::WavPack(wv) => wv.decode_next_frame(out_pcm)?,
             EngineBackend::Symphonia(session) => {
                 let res = session.decode_next_frame(out_pcm)?;
                 self.sample_rate = session.sample_rate;
                 self.channels = session.channels;
-                Ok(res)
+                res
             }
+        };
+        if ok && !out_pcm.is_empty() {
+            let ch = self.channels.max(1) as usize;
+            self.frames_from_anchor += (out_pcm.len() / ch) as u64;
         }
+        Ok(ok)
+    }
+
+    /// Returns the estimated decoded playback position in milliseconds based on seeks and decoded PCM frames.
+    #[inline]
+    pub fn position_ms(&self) -> u64 {
+        let sr = self.sample_rate.max(1) as u128;
+        self.anchor_ms.saturating_add(
+            ((self.frames_from_anchor as u128 * 1000) / sr) as u64,
+        )
     }
 
     /// Seeks the underlying container stream to the specified position in milliseconds.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         match &mut self.backend {
-            EngineBackend::ExtendedPcm(pcm) => pcm.seek_ms(position_ms),
-            EngineBackend::Dsf(dsf) => dsf.seek_ms(position_ms),
-            EngineBackend::Ape(ape) => ape.seek_ms(position_ms),
-            EngineBackend::WavPack(wv) => wv.seek_ms(position_ms),
-            EngineBackend::Symphonia(session) => session.seek_ms(position_ms),
+            EngineBackend::ExtendedPcm(pcm) => pcm.seek_ms(position_ms)?,
+            EngineBackend::Dsf(dsf) => dsf.seek_ms(position_ms)?,
+            EngineBackend::Ape(ape) => ape.seek_ms(position_ms)?,
+            EngineBackend::WavPack(wv) => wv.seek_ms(position_ms)?,
+            EngineBackend::Symphonia(session) => session.seek_ms(position_ms)?,
         }
+        self.anchor_ms = position_ms;
+        self.frames_from_anchor = 0;
+        Ok(())
     }
 }
 

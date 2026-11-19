@@ -339,11 +339,13 @@ fn test_hls_playlist_tracker_live_reloads_and_endlist() {
                 url: "http://127.0.0.1/live/seg12.ts".to_string(),
                 byte_range: None,
                 sequence_number: 12,
+                duration_ms: 4000,
             },
             HlsSegmentTarget {
                 url: "http://127.0.0.1/live/seg13.ts".to_string(),
                 byte_range: None,
                 sequence_number: 13,
+                duration_ms: 4000,
             },
         ]
     );
@@ -360,6 +362,7 @@ fn test_hls_playlist_tracker_live_reloads_and_endlist() {
             url: "http://127.0.0.1/live/seg14.ts".to_string(),
             byte_range: None,
             sequence_number: 13,
+            duration_ms: 4000,
         }]
     );
 
@@ -375,6 +378,7 @@ fn test_hls_playlist_tracker_live_reloads_and_endlist() {
             url: "http://127.0.0.1/live/seg15.ts".to_string(),
             byte_range: None,
             sequence_number: 13,
+            duration_ms: 4000,
         }]
     );
     assert!(!tracker.is_live());
@@ -796,4 +800,83 @@ fn test_hls_dart_resolved_m3u8_asset_segments() {
     drop(registry);
     // Drop item/closure channel cleanly by clearing registry
     drop(responder_thread);
+}
+
+#[test]
+fn test_e12_hls_vod_progressive_buffered_range() {
+    use miniaudio_player::bridge::ffi::MiniaudioBufferedRange;
+
+    let hls_dir = FixtureResolver::resolve("hls");
+    let m3u8_bytes = std::fs::read(hls_dir.join("28_Разводят_мосты.m3u8")).unwrap();
+    let mut seg_map = std::collections::HashMap::<String, Vec<u8>>::new();
+    for entry in std::fs::read_dir(&hls_dir).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("28_seg_") && name.ends_with(".ts") {
+            seg_map.insert(format!("/{}", name), std::fs::read(entry.path()).unwrap());
+        }
+    }
+    assert!(
+        seg_map.len() >= 10,
+        "expected >=10 HLS TS segments for fixture, found {}",
+        seg_map.len()
+    );
+
+    let m3u8_arc = Arc::new(m3u8_bytes);
+    let seg_arc = Arc::new(seg_map);
+    let (base_url, stop, srv_handle) = spawn_hls_test_server(move |path, _range| {
+        if path == "/playlist.m3u8" {
+            return (
+                200,
+                "application/vnd.apple.mpegurl",
+                (*m3u8_arc).clone(),
+                None,
+            );
+        }
+        if let Some(bytes) = seg_arc.get(path) {
+            std::thread::sleep(Duration::from_millis(20));
+            return (200, "video/mp2t", bytes.clone(), None);
+        }
+        (404, "text/plain", b"not found".to_vec(), None)
+    });
+
+    let playlist_url = format!("{}/playlist.m3u8", base_url);
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&playlist_url, None, None), 0);
+
+    let dur_ms = deck.duration_ms.load(Ordering::Relaxed);
+    assert!(dur_ms > 100_000, "expected full VOD playlist duration, got {}", dur_ms);
+
+    let mut initial_br = MiniaudioBufferedRange::default();
+    assert_eq!(deck.get_buffered_range(&mut initial_br), 0);
+    assert!(
+        initial_br.end_ms > 0,
+        "HLS VOD buffer must not remain at 0 - 0 after initial segment load (got {}..{})",
+        initial_br.start_ms,
+        initial_br.end_ms
+    );
+
+    deck.play();
+    let mut max_end = initial_br.end_ms;
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(40));
+        let mut br = MiniaudioBufferedRange::default();
+        assert_eq!(deck.get_buffered_range(&mut br), 0);
+        assert!(br.start_ms >= 0 && br.start_ms <= br.end_ms);
+        assert!(br.end_ms <= dur_ms + 2_000);
+        max_end = max_end.max(br.end_ms);
+        if max_end > initial_br.end_ms + 15_000 {
+            break;
+        }
+    }
+    assert!(
+        max_end > initial_br.end_ms + 10_000,
+        "expected HLS VOD buffered end_ms to grow progressively from {} -> got max {}",
+        initial_br.end_ms,
+        max_end
+    );
+
+    let _ = deck.stop();
+    drop(deck);
+    stop.store(true, Ordering::Release);
+    let _ = srv_handle.join();
 }

@@ -503,3 +503,79 @@ fn test_stream_session_edge_case_fixtures_from_manifest() {
     assert!(w_info.audio_end < wav_trailing.len() as i64);
 }
 
+#[test]
+fn test_p0_byte_time_map_and_isolated_probe_cache() {
+    use miniaudio_player::buffer::ByteTimeMap;
+
+    // 1. Sliding circular ring eviction advances mapped `start_ms` > 0 cleanly
+    let session = StreamSession::new(256 * 1024, Some(4_200_000), false);
+    session.set_audio_start(200_000);
+    session.set_audio_end(4_000_000);
+    session.configure_byte_time_map(200_000, 4_000_000, 190_000);
+
+    assert_eq!(session.mapped_buffered_range(190_000), (0, 0));
+
+    let chunk = vec![0xAAu8; 64 * 1024];
+    session.write_at(200_000, &chunk).unwrap();
+    session.write_at(265_536, &chunk).unwrap();
+    let (s0, e0) = session.mapped_buffered_range(190_000);
+    assert_eq!(s0, 0);
+    assert!(e0 > 0 && e0 < 20_000, "unexpected initial end_ms={}", e0);
+
+    // Advance cursor & overwrite past 256 KB capacity so `range_start` moves well past `audio_start`.
+    for i in 2..10u64 {
+        let off = 200_000 + i * 65_536;
+        session.advance_read_cursor(off.saturating_sub(128 * 1024));
+        session.write_at(off, &chunk).unwrap();
+    }
+    let (s1, e1) = session.mapped_buffered_range(190_000);
+    assert!(s1 > 0, "evicted circular ring must report start_ms > 0 (got {})", s1);
+    assert!(s1 < e1 && e1 <= 190_000, "invalid range {}..={}", s1, e1);
+
+    // 2. Real M4A fixtures (E2 AAC & E3 ALAC): verify moov table extraction & monotonic mapping
+    for name in ["06_Calculated_Motion_aac.m4a", "07_Fevered_Strings_alac.m4a"] {
+        let bytes = std::fs::read(FixtureResolver::resolve(name)).unwrap();
+        let prefix = &bytes[..bytes.len().min(512 * 1024)];
+        let (dur_ms, anchors) = ByteTimeMap::extract_mp4_anchors(prefix)
+            .unwrap_or_else(|| panic!("expected MP4 anchors for {}", name));
+        assert!(dur_ms > 150_000, "{} dur_ms={}", name, dur_ms);
+        assert!(anchors.len() >= 10, "{} too few anchors={}", name, anchors.len());
+        let mut map = ByteTimeMap::new(anchors[0].0, bytes.len() as u64, dur_ms);
+        map.set_anchors(anchors.clone());
+        assert!(map.has_anchors());
+        let mid = anchors[anchors.len() / 2];
+        assert!(
+            (map.byte_to_ms(mid.0, false) - mid.1).abs() <= 5,
+            "{} mid anchor drift",
+            name
+        );
+    }
+
+    // 3. ProbeGuard isolates out-of-window range reads without flushing `Body`
+    let probe_sess = StreamSession::new(512 * 1024, Some(4_000_000), false);
+    probe_sess.set_supports_range(true);
+    let mut backing = vec![0u8; 4_000_000];
+    for (idx, b) in backing.iter_mut().enumerate() {
+        *b = ((idx * 17) & 0xFF) as u8;
+    }
+    let backing_arc = Arc::new(backing);
+    let b_clone = backing_arc.clone();
+    probe_sess.set_probe_fetcher(Some(Arc::new(move |offset, len| {
+        let s = (offset as usize).min(b_clone.len());
+        let e = s.saturating_add(len).min(b_clone.len());
+        Some(b_clone[s..e].to_vec())
+    })));
+    probe_sess.write_at(0, &backing_arc[..128 * 1024]).unwrap();
+
+    let mut reader = probe_sess.create_reader();
+    {
+        let _guard = probe_sess.enter_probe();
+        reader.seek(SeekFrom::Start(3_200_000)).unwrap();
+        let mut out = [0u8; 256];
+        reader.read_exact(&mut out).unwrap();
+        assert_eq!(&out[..], &backing_arc[3_200_000..3_200_256]);
+    }
+    assert_eq!(probe_sess.range_start(), 0);
+    assert_eq!(probe_sess.range_end(), 128 * 1024);
+}
+

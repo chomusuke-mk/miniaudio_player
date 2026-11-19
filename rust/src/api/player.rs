@@ -81,6 +81,7 @@ struct AtomicTelemetryFilter {
     state: AtomicI64,
     pos: AtomicI64,
     index: AtomicI64,
+    buffered_start: AtomicI64,
     buffered_end: AtomicI64,
     is_buffering: AtomicU8,
     is_xfading: AtomicU8,
@@ -99,6 +100,7 @@ impl Default for AtomicTelemetryFilter {
             state: AtomicI64::new(0),
             pos: AtomicI64::new(0),
             index: AtomicI64::new(-1),
+            buffered_start: AtomicI64::new(SENTINEL_NONE),
             buffered_end: AtomicI64::new(SENTINEL_NONE),
             is_buffering: AtomicU8::new(OPT_BOOL_FALSE),
             is_xfading: AtomicU8::new(OPT_BOOL_FALSE),
@@ -118,6 +120,7 @@ impl AtomicTelemetryFilter {
         self.state.store(0, Ordering::Release);
         self.pos.store(0, Ordering::Release);
         self.index.store(-1, Ordering::Release);
+        self.buffered_start.store(SENTINEL_NONE, Ordering::Release);
         self.buffered_end.store(SENTINEL_NONE, Ordering::Release);
         self.is_buffering.store(OPT_BOOL_FALSE, Ordering::Release);
         self.is_xfading.store(OPT_BOOL_FALSE, Ordering::Release);
@@ -150,6 +153,7 @@ impl AtomicTelemetryFilter {
             RustPlayerEvent::PlaybackState(s) => Self::should_emit_i64(&self.state, *s as i64),
             RustPlayerEvent::CurrentIndex(idx) => {
                 if Self::should_emit_i64(&self.index, *idx as i64) {
+                    self.buffered_start.store(SENTINEL_NONE, Ordering::Release);
                     self.buffered_end.store(SENTINEL_NONE, Ordering::Release);
                     let mut complex = lock_unpoisoned(&self.complex);
                     complex.audio_info = None;
@@ -171,10 +175,11 @@ impl AtomicTelemetryFilter {
                 Self::should_emit_i64(&self.active_voices, *v as i64)
             }
             RustPlayerEvent::Buffer(r) => {
+                let prev_start = self.buffered_start.swap(r.start_ms, Ordering::AcqRel);
                 let prev_end = self.buffered_end.swap(r.end_ms, Ordering::AcqRel);
                 let encoded_buf = encode_opt_bool(r.is_buffering);
                 let prev_buf = self.is_buffering.swap(encoded_buf, Ordering::AcqRel);
-                prev_end != r.end_ms || prev_buf != encoded_buf
+                prev_start != r.start_ms || prev_end != r.end_ms || prev_buf != encoded_buf
             }
             RustPlayerEvent::Position(p) => {
                 let mut prev = self.pos.load(Ordering::Acquire);
@@ -1118,16 +1123,9 @@ impl RustMiniaudioPlayer {
 
     /// Seeks to the specified position in milliseconds within the current track.
     pub fn seek(&self, position_ms: i64) -> Result<(), String> {
-        map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Dispatching to engine actor...", position_ms);
+        map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Cancelling stale auto-advance and dispatching to engine actor...", position_ms);
         let t0 = Instant::now();
-        let (cur_idx, state, is_playing, is_xfading) = self.engine.exec(move |ply| {
-            ply.music_manager.seek(position_ms)?;
-            let cur_idx = ply.music_manager.current_index();
-            let state = ply.music_manager.inner.playback_state.load(Ordering::Relaxed);
-            let is_playing = state == PlaybackState::Playing.as_i32();
-            let is_xfading = ply.music_manager.inner.crossfade.is_active();
-            Ok::<_, String>((cur_idx, state, is_playing, is_xfading))
-        })??;
+        let (cur_idx, state, is_playing, is_xfading) = self.coordinator.seek(position_ms)?;
         map_log!(
             3,
             "[NATIVE:SEEK:DONE] seek() completed in {}ms. Emitting events...",
@@ -2221,4 +2219,41 @@ pub fn encode_wavpack_block(
         block_index,
         &pcm_bytes,
     )
+}
+
+#[cfg(test)]
+mod p0_tests {
+    use super::*;
+    use crate::api::types::RustBuffer;
+
+    #[test]
+    fn atomic_telemetry_filter_emits_on_start_ms_change_and_resets_on_track_change() {
+        let filter = AtomicTelemetryFilter::default();
+
+        let b0 = RustPlayerEvent::Buffer(RustBuffer {
+            start_ms: 0,
+            end_ms: 30_000,
+            is_buffering: false,
+        });
+        assert!(filter.should_emit(&b0));
+        assert!(!filter.should_emit(&b0), "identical buffer range should be deduplicated");
+
+        // Advance only `start_ms` (e.g. ring eviction or forward flush): must emit even when `end_ms` is unchanged.
+        let b1 = RustPlayerEvent::Buffer(RustBuffer {
+            start_ms: 12_500,
+            end_ms: 30_000,
+            is_buffering: false,
+        });
+        assert!(filter.should_emit(&b1));
+        assert!(!filter.should_emit(&b1));
+
+        // Changing `CurrentIndex` clears buffered_start/buffered_end sentinels so new track re-emits `0..0`.
+        assert!(filter.should_emit(&RustPlayerEvent::CurrentIndex(1)));
+        let b_reset = RustPlayerEvent::Buffer(RustBuffer {
+            start_ms: 12_500,
+            end_ms: 30_000,
+            is_buffering: false,
+        });
+        assert!(filter.should_emit(&b_reset));
+    }
 }

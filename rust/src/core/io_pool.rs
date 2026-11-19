@@ -80,7 +80,19 @@ pub enum ActiveOpenKind {
     AutoAdvance {
         should_auto_xfade: bool,
         auto_ms: u64,
+        expected_deck_id: usize,
+        expected_open_gen: u64,
+        expected_seek_epoch: u64,
+        auto_epoch: u64,
     },
+}
+
+impl ActiveOpenKind {
+    /// Returns `true` when this active open was scheduled by automatic end-of-track advancement.
+    #[inline]
+    pub fn is_auto_advance(&self) -> bool {
+        matches!(self, Self::AutoAdvance { .. })
+    }
 }
 
 /// Asynchronous job opening and pre-decoding the target foreground track on a fresh deck.
@@ -132,7 +144,7 @@ pub enum IoCompletion {
 
 pub type CompletionCallback = Arc<dyn Fn(IoCompletion) + Send + Sync>;
 
-type InflightActiveEntry = (u64, CancelToken, Option<OpenWaiter>);
+type InflightActiveEntry = (u64, bool, CancelToken, Option<OpenWaiter>);
 
 struct PoolMailbox {
     shutdown: bool,
@@ -151,13 +163,37 @@ struct PoolMailbox {
 #[inline]
 fn collect_inflight_active(
     entries: &[InflightActiveEntry],
+    auto_only: bool,
     tokens: &mut Vec<CancelToken>,
     waiters: &mut Vec<OpenWaiter>,
 ) {
-    for (_, tok, waiter_opt) in entries {
+    for (_, is_auto, tok, waiter_opt) in entries {
+        if auto_only && !*is_auto {
+            continue;
+        }
         tokens.push(tok.clone());
         if let Some(ref w) = waiter_opt {
             waiters.push(w.clone());
+        }
+    }
+}
+
+#[inline]
+fn take_active_matching(
+    slot: &mut Option<ActiveOpenJob>,
+    auto_only: bool,
+    tokens: &mut Vec<CancelToken>,
+    waiters: &mut Vec<OpenWaiter>,
+) {
+    let should_take = slot
+        .as_ref()
+        .is_some_and(|job| !auto_only || job.kind.is_auto_advance());
+    if should_take {
+        if let Some(old) = slot.take() {
+            tokens.push(old.cancel);
+            if let Some(w) = old.waiter {
+                waiters.push(w);
+            }
         }
     }
 }
@@ -292,14 +328,26 @@ impl IoWorkerPool {
         }
     }
 
-    /// Returns `true` when an active track open is either queued or currently executing.
+    /// Returns `true` when an active non-cancelled track open is either queued or currently executing.
     pub fn has_active_work(&self) -> bool {
         let (lock, _) = &*self.state;
         let guard = lock_unpoisoned(lock);
-        guard.local_active.is_some()
-            || guard.net_active.is_some()
-            || !guard.inflight_local_active.is_empty()
-            || !guard.inflight_net_active.is_empty()
+        guard
+            .local_active
+            .as_ref()
+            .is_some_and(|j| !j.cancel.is_cancelled())
+            || guard
+                .net_active
+                .as_ref()
+                .is_some_and(|j| !j.cancel.is_cancelled())
+            || guard
+                .inflight_local_active
+                .iter()
+                .any(|(_, _, tok, _)| !tok.is_cancelled())
+            || guard
+                .inflight_net_active
+                .iter()
+                .any(|(_, _, tok, _)| !tok.is_cancelled())
     }
 
     /// Cancels all active and standby opens and records `epoch` as a stale-open floor.
@@ -310,47 +358,61 @@ impl IoWorkerPool {
 
     /// Cancels all active and standby opens (used on `set_queue`, `clear`, `stop`, `dispose`).
     pub fn cancel_all(&self) {
+        self.cancel_matching(false);
+    }
+
+    /// Cancels only queued and in-flight automatic advancement opens (used on `seek`),
+    /// leaving manual user track selections intact.
+    pub fn cancel_auto_advance(&self) {
+        self.cancel_matching(true);
+    }
+
+    fn cancel_matching(&self, auto_only: bool) {
         let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
         let mut waiters_to_resolve: Vec<OpenWaiter> = Vec::new();
         {
             let (lock, cv) = &*self.state;
             let mut guard = lock_unpoisoned(lock);
-            if let Some(old) = guard.local_active.take() {
-                tokens_to_cancel.push(old.cancel);
-                if let Some(w) = old.waiter {
-                    waiters_to_resolve.push(w);
-                }
-            }
-            if let Some(old) = guard.net_active.take() {
-                tokens_to_cancel.push(old.cancel);
-                if let Some(w) = old.waiter {
-                    waiters_to_resolve.push(w);
-                }
-            }
-            if let Some(old) = guard.local_prewarm.take() {
-                tokens_to_cancel.push(old.cancel);
-            }
-            if let Some(old) = guard.net_prewarm.take() {
-                tokens_to_cancel.push(old.cancel);
-            }
+            take_active_matching(
+                &mut guard.local_active,
+                auto_only,
+                &mut tokens_to_cancel,
+                &mut waiters_to_resolve,
+            );
+            take_active_matching(
+                &mut guard.net_active,
+                auto_only,
+                &mut tokens_to_cancel,
+                &mut waiters_to_resolve,
+            );
             collect_inflight_active(
                 &guard.inflight_local_active,
+                auto_only,
                 &mut tokens_to_cancel,
                 &mut waiters_to_resolve,
             );
             collect_inflight_active(
                 &guard.inflight_net_active,
+                auto_only,
                 &mut tokens_to_cancel,
                 &mut waiters_to_resolve,
             );
-            for (_, tok) in &guard.inflight_local_prewarm {
-                tokens_to_cancel.push(tok.clone());
+            if !auto_only {
+                if let Some(old) = guard.local_prewarm.take() {
+                    tokens_to_cancel.push(old.cancel);
+                }
+                if let Some(old) = guard.net_prewarm.take() {
+                    tokens_to_cancel.push(old.cancel);
+                }
+                for (_, tok) in &guard.inflight_local_prewarm {
+                    tokens_to_cancel.push(tok.clone());
+                }
+                for (_, tok) in &guard.inflight_net_prewarm {
+                    tokens_to_cancel.push(tok.clone());
+                }
+                guard.net_coalesce_until = None;
+                guard.net_burst_cap = None;
             }
-            for (_, tok) in &guard.inflight_net_prewarm {
-                tokens_to_cancel.push(tok.clone());
-            }
-            guard.net_coalesce_until = None;
-            guard.net_burst_cap = None;
             cv.notify_all();
         }
         for tok in tokens_to_cancel {
@@ -439,11 +501,13 @@ impl IoWorkerPool {
 
             collect_inflight_active(
                 &guard.inflight_local_active,
+                false,
                 &mut tokens_to_cancel,
                 &mut waiters_to_resolve,
             );
             collect_inflight_active(
                 &guard.inflight_net_active,
+                false,
                 &mut tokens_to_cancel,
                 &mut waiters_to_resolve,
             );
@@ -541,6 +605,7 @@ impl IoWorkerPool {
                         if !job.cancel.is_cancelled() {
                             guard.inflight_local_active.push((
                                 job.epoch,
+                                job.kind.is_auto_advance(),
                                 job.cancel.clone(),
                                 job.waiter.clone(),
                             ));
@@ -596,6 +661,7 @@ impl IoWorkerPool {
                         if let Some(job) = guard.net_active.take() {
                             guard.inflight_net_active.push((
                                 job.epoch,
+                                job.kind.is_auto_advance(),
                                 job.cancel.clone(),
                                 job.waiter.clone(),
                             ));
@@ -639,7 +705,7 @@ impl IoWorkerPool {
                 WorkerLane::Local => &mut guard.inflight_local_active,
                 WorkerLane::Network => &mut guard.inflight_net_active,
             };
-            if let Some(pos) = list.iter().position(|(ep, _, _)| *ep == epoch) {
+            if let Some(pos) = list.iter().position(|(ep, _, _, _)| *ep == epoch) {
                 list.swap_remove(pos);
             }
         } else {

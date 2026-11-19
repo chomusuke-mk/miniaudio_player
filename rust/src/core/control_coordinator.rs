@@ -50,13 +50,27 @@ struct CoordInner {
     custom_registry: CustomSourceRegistry,
     transport_epoch: AtomicU64,
     prewarm_epoch: AtomicU64,
+    auto_advance_epoch: AtomicU64,
     dispatch_lock: Mutex<()>,
     prewarm_lock: Mutex<()>,
     last_prewarm: Mutex<Option<(u64, i64, String, bool)>>,
-    auto_advance_inflight: Mutex<Option<(usize, u64)>>,
+    auto_advance_inflight: Mutex<Option<(usize, u64, u64)>>,
     disposed: AtomicBool,
     on_async_commit: AsyncCommitCallback,
     wake_tx: Sender<CoordWake>,
+}
+
+#[inline]
+fn is_auto_advance_due(active: &StreamingDeck, should_auto_xfade: bool, auto_ms: u64) -> bool {
+    let pos = active.position_ms.load(Ordering::Relaxed);
+    let dur = active.duration_ms.load(Ordering::Relaxed);
+    if should_auto_xfade {
+        auto_ms > 0 && dur > (auto_ms as i64) && pos + (auto_ms as i64) >= dur
+    } else {
+        active.decoder_eof.load(Ordering::Acquire)
+            || active.track_exhausted.load(Ordering::Acquire)
+            || (dur > 0 && pos >= dur && pos > 0)
+    }
 }
 
 /// Non-blocking orchestrator separating fast RT engine commands from interruptible track I/O.
@@ -82,6 +96,7 @@ impl ControlCoordinator {
             custom_registry,
             transport_epoch: AtomicU64::new(0),
             prewarm_epoch: AtomicU64::new(0),
+            auto_advance_epoch: AtomicU64::new(0),
             dispatch_lock: Mutex::new(()),
             prewarm_lock: Mutex::new(()),
             last_prewarm: Mutex::new(None),
@@ -158,6 +173,7 @@ impl ControlCoordinator {
                         Ok(RtControlHint::AutoAdvanceNeeded {
                             expected_deck_id,
                             expected_open_gen,
+                            expected_seek_epoch,
                             next_idx,
                             item,
                             should_auto_xfade,
@@ -166,6 +182,7 @@ impl ControlCoordinator {
                             coord.handle_auto_advance_hint(
                                 expected_deck_id,
                                 expected_open_gen,
+                                expected_seek_epoch,
                                 next_idx,
                                 item,
                                 should_auto_xfade,
@@ -555,6 +572,32 @@ impl ControlCoordinator {
         })
     }
 
+    /// Cancels any pending automatic track advances and seeks within the active deck.
+    pub fn seek(&self, position_ms: i64) -> Result<(i64, i32, bool, bool), String> {
+        self.inner.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
+        if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
+            pool.cancel_auto_advance();
+        }
+        let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
+        self.inner.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
+        *lock_unpoisoned(&self.inner.auto_advance_inflight) = None;
+        if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
+            pool.cancel_auto_advance();
+        }
+        self.inner.engine.exec(move |ply| {
+            ply.music_manager.seek(position_ms)?;
+            let cur_idx = ply.music_manager.current_index();
+            let state = ply
+                .music_manager
+                .inner
+                .playback_state
+                .load(Ordering::Relaxed);
+            let is_playing = state == PlaybackState::Playing.as_i32();
+            let is_xfading = ply.music_manager.inner.crossfade.is_active();
+            Ok((cur_idx, state, is_playing, is_xfading))
+        })?
+    }
+
     /// Cancels any pending opens immediately without waiting and pauses the active deck.
     pub fn pause(&self) -> Result<(i32, bool), String> {
         let pre_epoch = self.inner.bump_epochs();
@@ -623,6 +666,7 @@ impl ControlCoordinator {
 impl CoordInner {
     fn bump_epochs(&self) -> u64 {
         self.prewarm_epoch.fetch_add(1, Ordering::AcqRel);
+        self.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
         *lock_unpoisoned(&self.auto_advance_inflight) = None;
         self.transport_epoch.fetch_add(1, Ordering::AcqRel) + 1
     }
@@ -747,6 +791,7 @@ impl CoordInner {
         &self,
         expected_deck_id: usize,
         expected_open_gen: u64,
+        expected_seek_epoch: u64,
         next_idx: usize,
         hint_item: AudioSourceCore,
         should_auto_xfade: bool,
@@ -755,13 +800,12 @@ impl CoordInner {
         if self.disposed.load(Ordering::Acquire) {
             return;
         }
-        let key = (expected_deck_id, expected_open_gen);
+        let key = (expected_deck_id, expected_open_gen, expected_seek_epoch);
         {
-            let mut inflight = lock_unpoisoned(&self.auto_advance_inflight);
+            let inflight = lock_unpoisoned(&self.auto_advance_inflight);
             if *inflight == Some(key) {
                 return;
             }
-            *inflight = Some(key);
         }
 
         let _guard = lock_unpoisoned(&self.dispatch_lock);
@@ -780,6 +824,8 @@ impl CoordInner {
                 || ply.music_manager.inner.crossfade.is_active()
                 || active.deck_id != expected_deck_id
                 || active.open_generation.load(Ordering::Acquire) != expected_open_gen
+                || active.seek_epoch.load(Ordering::Acquire) != expected_seek_epoch
+                || !is_auto_advance_due(active, should_auto_xfade, auto_ms)
             {
                 return None;
             }
@@ -796,7 +842,6 @@ impl CoordInner {
                 item,
             ))
         }) else {
-            *lock_unpoisoned(&self.auto_advance_inflight) = None;
             return;
         };
 
@@ -804,6 +849,8 @@ impl CoordInner {
             return;
         };
         let epoch = self.bump_epochs();
+        let auto_epoch = self.auto_advance_epoch.load(Ordering::Acquire);
+        *lock_unpoisoned(&self.auto_advance_inflight) = Some(key);
         pool.submit_active(ActiveOpenJob {
             epoch,
             item: live_item,
@@ -814,6 +861,10 @@ impl CoordInner {
             kind: ActiveOpenKind::AutoAdvance {
                 should_auto_xfade,
                 auto_ms,
+                expected_deck_id,
+                expected_open_gen,
+                expected_seek_epoch,
+                auto_epoch,
             },
             queue_changed: false,
             include_meta: true,
@@ -872,23 +923,55 @@ impl CoordInner {
                 match outcome {
                     IoOpenOutcome::Aborted => resolve_ok_none(),
                     IoOpenOutcome::Failed(code, detail_msg) => {
-                        let is_auto_adv = matches!(job.kind, ActiveOpenKind::AutoAdvance { .. });
+                        let auto_params = match job.kind {
+                            ActiveOpenKind::AutoAdvance {
+                                expected_deck_id,
+                                expected_open_gen,
+                                expected_seek_epoch,
+                                auto_epoch,
+                                ..
+                            } => Some((
+                                expected_deck_id,
+                                expected_open_gen,
+                                expected_seek_epoch,
+                                auto_epoch,
+                            )),
+                            ActiveOpenKind::Manual { .. } => None,
+                        };
                         let coord = self.clone();
                         let expected_epoch = job.epoch;
                         let _ = self.engine.exec(move |ply| {
-                            if is_auto_adv
-                                && expected_epoch == coord.transport_epoch.load(Ordering::Acquire)
-                            {
-                                ply.music_manager.inner.sync_planned_index_to_current();
-                                ply.music_manager
-                                    .inner
-                                    .playback_state
-                                    .store(PlaybackState::Stopped.as_i32(), Ordering::Release);
-                                ply.music_manager.active_deck_mut().finish_at_end();
+                            if let Some((exp_deck, exp_gen, exp_seek, exp_auto)) = auto_params {
+                                let active = ply.music_manager.active_deck_ref();
+                                let cur_playback = PlaybackState::from_i32(
+                                    ply.music_manager
+                                        .inner
+                                        .playback_state
+                                        .load(Ordering::Relaxed),
+                                );
+                                if expected_epoch == coord.transport_epoch.load(Ordering::Acquire)
+                                    && exp_auto == coord.auto_advance_epoch.load(Ordering::Acquire)
+                                    && cur_playback == PlaybackState::Playing
+                                    && active.deck_id == exp_deck
+                                    && active.open_generation.load(Ordering::Acquire) == exp_gen
+                                    && active.seek_epoch.load(Ordering::Acquire) == exp_seek
+                                {
+                                    ply.music_manager.inner.sync_planned_index_to_current();
+                                    ply.music_manager
+                                        .inner
+                                        .playback_state
+                                        .store(PlaybackState::Stopped.as_i32(), Ordering::Release);
+                                    ply.music_manager.active_deck_mut().finish_at_end();
+                                }
                             }
                         });
-                        if is_auto_adv {
-                            *lock_unpoisoned(&self.auto_advance_inflight) = None;
+                        if let Some((exp_deck, exp_gen, exp_seek, exp_auto)) = auto_params {
+                            if exp_auto == self.auto_advance_epoch.load(Ordering::Acquire) {
+                                let mut inflight = lock_unpoisoned(&self.auto_advance_inflight);
+                                if *inflight == Some((exp_deck, exp_gen, exp_seek)) {
+                                    *inflight = None;
+                                }
+                            }
                         }
                         if let Some(ref w) = waiter {
                             w.resolve(Err(detail_msg
@@ -927,8 +1010,30 @@ impl CoordInner {
                                 ActiveOpenKind::AutoAdvance {
                                     should_auto_xfade,
                                     auto_ms,
+                                    expected_deck_id,
+                                    expected_open_gen,
+                                    expected_seek_epoch,
+                                    auto_epoch,
                                 } => {
+                                    let cur_playback = PlaybackState::from_i32(
+                                        ply.music_manager
+                                            .inner
+                                            .playback_state
+                                            .load(Ordering::Relaxed),
+                                    );
                                     let active = ply.music_manager.active_deck_ref();
+                                    if auto_epoch != coord.auto_advance_epoch.load(Ordering::Acquire)
+                                        || cur_playback != PlaybackState::Playing
+                                        || ply.music_manager.inner.crossfade.is_active()
+                                        || active.deck_id != expected_deck_id
+                                        || active.open_generation.load(Ordering::Acquire)
+                                            != expected_open_gen
+                                        || active.seek_epoch.load(Ordering::Acquire)
+                                            != expected_seek_epoch
+                                        || !is_auto_advance_due(active, should_auto_xfade, auto_ms)
+                                    {
+                                        return Err(deck);
+                                    }
                                     let dur = active.duration_ms.load(Ordering::Relaxed);
                                     let pos = active.position_ms.load(Ordering::Relaxed);
                                     let exhausted = active.track_exhausted.load(Ordering::Acquire);
