@@ -96,20 +96,23 @@ class WaveformPainter extends CustomPainter {
       ..strokeWidth = 1.0;
     canvas.drawPath(path, unplayedStroke);
 
-    // Layer 2: Preload buffer halo (translucent white halo, like YouTube)
     final clampedStart = bufferStartProgress.clamp(0.0, 1.0);
     final clampedBuffer = bufferedProgress.clamp(clampedStart, 1.0);
-    if (clampedBuffer > clampedStart) {
-      final startX = size.width * clampedStart;
-      final endX = size.width * clampedBuffer;
+    final clampedProgress = progress.clamp(0.0, 1.0);
+    final startX = size.width * clampedStart;
+    final endX = size.width * clampedBuffer;
+    final playheadX = size.width * clampedProgress;
+
+    // Layer 2a: Preload buffer halo ahead of playhead (translucent white halo, like YouTube)
+    final aheadStartX = startX.clamp(playheadX, size.width);
+    if (endX > aheadStartX) {
       canvas.save();
       canvas.clipRect(
-        Rect.fromLTWH(startX, 0, endX - startX, size.height),
+        Rect.fromLTWH(aheadStartX, 0, endX - aheadStartX, size.height),
       );
 
       final bufferPaint = Paint()
-        ..color =
-            const Color(0x55FFFFFF) // Soft white halo
+        ..color = const Color(0x55FFFFFF)
         ..style = PaintingStyle.fill;
       canvas.drawPath(path, bufferPaint);
 
@@ -121,12 +124,32 @@ class WaveformPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Layer 3: Played waveform section (accent neon cyan)
-    final clampedProgress = progress.clamp(0.0, 1.0);
-    if (clampedProgress > 0.0) {
+    // Layer 3a: Unbuffered played history behind buffer start (dimmed cyan so eviction is visible)
+    final evictedEndX = playheadX.clamp(0.0, startX);
+    if (evictedEndX > 0.0) {
+      canvas.save();
+      canvas.clipRect(Rect.fromLTWH(0, 0, evictedEndX, size.height));
+
+      final evictedPaint = Paint()
+        ..color = playedColor.withValues(alpha: 0.30)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(path, evictedPaint);
+
+      final evictedStroke = Paint()
+        ..color = playedColor.withValues(alpha: 0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+      canvas.drawPath(path, evictedStroke);
+      canvas.restore();
+    }
+
+    // Layer 3b: Buffered played section behind playhead ([startX .. min(playheadX, endX)])
+    final backBufStartX = startX.clamp(0.0, playheadX);
+    final backBufEndX = endX.clamp(backBufStartX, playheadX);
+    if (backBufEndX > backBufStartX) {
       canvas.save();
       canvas.clipRect(
-        Rect.fromLTWH(0, 0, size.width * clampedProgress, size.height),
+        Rect.fromLTWH(backBufStartX, 0, backBufEndX - backBufStartX, size.height),
       );
 
       final playedPaint = Paint()
@@ -134,12 +157,66 @@ class WaveformPainter extends CustomPainter {
         ..style = PaintingStyle.fill;
       canvas.drawPath(path, playedPaint);
 
+      // Soft translucent sheen so backward cached audio stays distinct from unbuffered played history.
+      final backHaloPaint = Paint()
+        ..color = const Color(0x38FFFFFF)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(path, backHaloPaint);
+
       final playedStroke = Paint()
-        ..color = Colors.white.withValues(alpha: 0.7)
+        ..color = Colors.white.withValues(alpha: 0.85)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
+        ..strokeWidth = 1.1;
       canvas.drawPath(path, playedStroke);
       canvas.restore();
+    }
+
+    // Layer 3c: Played region beyond buffered end (if seek/position raced ahead of buffer)
+    if (playheadX > endX) {
+      canvas.save();
+      canvas.clipRect(
+        Rect.fromLTWH(endX, 0, playheadX - endX, size.height),
+      );
+
+      final tailPaint = Paint()
+        ..color = playedColor.withValues(alpha: 0.30)
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(path, tailPaint);
+      canvas.restore();
+    }
+
+    // Layer 3d: Continuous bottom buffer rail so backward and forward buffered spans remain
+    // unmistakably legible on both sides of the playhead.
+    if (endX > startX) {
+      final railTop = (size.height - 2.5).clamp(0.0, size.height);
+      if (backBufEndX > backBufStartX) {
+        final backRailPaint = Paint()
+          ..color = const Color(0xDDFFFFFF)
+          ..style = PaintingStyle.fill;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            backBufStartX,
+            railTop,
+            backBufEndX - backBufStartX,
+            size.height - railTop,
+          ),
+          backRailPaint,
+        );
+      }
+      if (endX > aheadStartX) {
+        final fwdRailPaint = Paint()
+          ..color = const Color(0x88FFFFFF)
+          ..style = PaintingStyle.fill;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            aheadStartX,
+            railTop,
+            endX - aheadStartX,
+            size.height - railTop,
+          ),
+          fwdRailPaint,
+        );
+      }
     }
 
     // Layer 4: Center baseline

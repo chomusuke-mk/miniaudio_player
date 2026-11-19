@@ -18,6 +18,6 @@ pub use source::{
 };
 pub use stream_buffer::{
     BlockFetchOrder, BlockFetchPhase, BufferBackend, BufferError, BufferRange, ByteFetchTask,
-    ProbeFetcherFn, ProbeGuard, SlidingWindowConfig, SlidingWindowState, StreamBuffer,
-    StreamSession,
+    HlsVodSegment, HlsVodState, ProbeFetcherFn, ProbeGuard, SlidingWindowConfig,
+    SlidingWindowState, StreamBuffer, StreamSession, VodAction,
 };

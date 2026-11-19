@@ -3,7 +3,7 @@
 //! Decimates 1-bit PDM streams (DSD64: 2.8224 MHz, DSD128: 5.6448 MHz) to PCM f32.
 
 use std::f64::consts::PI;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::io::MediaSource;
 
@@ -365,6 +365,7 @@ pub struct DsfReader {
     block_size_per_channel: usize,
     data_start: u64,
     data_end: u64,
+    expected_byte_pos: u64,
     total_samples_per_channel: u64,
     current_sample_pos: u64,
     decimation_factor: usize,
@@ -392,6 +393,7 @@ impl DsfReader {
             block_size_per_channel: hdr.block_size_per_channel,
             data_start: hdr.data_start,
             data_end: hdr.data_end,
+            expected_byte_pos: hdr.data_start,
             total_samples_per_channel: hdr.total_pcm_samples_per_channel,
             current_sample_pos: 0,
             decimation_factor: hdr.decimation_factor,
@@ -445,6 +447,7 @@ impl DsfReader {
             .seek(SeekFrom::Start(target_pos))
             .map_err(SymphoniaError::IoError)?;
 
+        self.expected_byte_pos = target_pos;
         self.current_sample_pos =
             (block_idx * self.block_size_per_channel as u64 * 8) / self.decimation_factor as u64;
         self.decimator.reset();
@@ -461,7 +464,7 @@ impl DsfReader {
 
         let cur_pos = self
             .source
-            .seek(SeekFrom::Current(0))
+            .seek(SeekFrom::Start(self.expected_byte_pos))
             .map_err(SymphoniaError::IoError)?;
         if cur_pos >= self.data_end {
             return Ok(false);
@@ -472,10 +475,15 @@ impl DsfReader {
         if to_read < self.block_buffer.len() {
             self.block_buffer.fill(DSF_SILENCE_BYTE);
         }
-        match self.source.read_exact(&mut self.block_buffer[..to_read]) {
-            Ok(_) => {}
+        match super::read_exact_resilient(&mut *self.source, &mut self.block_buffer[..to_read]) {
+            Ok(()) => {
+                self.expected_byte_pos = cur_pos + to_read as u64;
+            }
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
-            Err(e) => return Err(SymphoniaError::IoError(e)),
+            Err(e) => {
+                let _ = self.source.seek(SeekFrom::Start(self.expected_byte_pos));
+                return Err(SymphoniaError::IoError(e));
+            }
         }
 
         let produced = self.decimator.process_block(

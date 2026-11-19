@@ -166,7 +166,8 @@ impl WavpackReader {
                 block_buf.resize(blen, 0);
             }
             block_buf[..HEADER_LEN].copy_from_slice(&hdr_bytes);
-            Self::read_exact_resilient(&mut *source, &mut block_buf[HEADER_LEN..blen])?;
+            super::read_exact_resilient(&mut *source, &mut block_buf[HEADER_LEN..blen])
+                .map_err(SymphoniaError::IoError)?;
 
             let decoded = decode_stream(&block_buf[..blen])
                 .map_err(|_| SymphoniaError::Unsupported("malformed WavPack stream"))?;
@@ -207,29 +208,6 @@ impl WavpackReader {
                 checkpoints,
             }));
         }
-    }
-
-    fn read_exact_resilient(
-        source: &mut dyn MediaSource,
-        mut dst: &mut [u8],
-    ) -> Result<(), SymphoniaError> {
-        while !dst.is_empty() {
-            match source.read(dst) {
-                Ok(0) => {
-                    return Err(SymphoniaError::IoError(std::io::Error::new(
-                        ErrorKind::UnexpectedEof,
-                        "unexpected EOF inside WavPack block",
-                    )));
-                }
-                Ok(n) => {
-                    let (_, rest) = dst.split_at_mut(n);
-                    dst = rest;
-                }
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-                Err(e) => return Err(SymphoniaError::IoError(e)),
-            }
-        }
-        Ok(())
     }
 
     /// Reads 32-byte block header, distinguishing clean stream boundary / trailing metadata EOF (`Ok(false)`)
@@ -299,8 +277,13 @@ impl WavpackReader {
             }
 
             let mut hdr_bytes = [0u8; HEADER_LEN];
-            if !Self::read_block_header_raw(&mut *self.source, &mut hdr_bytes)? {
-                return Ok(false);
+            match Self::read_block_header_raw(&mut *self.source, &mut hdr_bytes) {
+                Ok(true) => {}
+                Ok(false) => return Ok(false),
+                Err(e) => {
+                    let _ = self.source.seek(SeekFrom::Start(block_offset));
+                    return Err(e);
+                }
             }
 
             let hdr = BlockHeader::parse(&hdr_bytes)
@@ -322,7 +305,13 @@ impl WavpackReader {
                 self.block_buf.resize(blen, 0);
             }
             self.block_buf[..HEADER_LEN].copy_from_slice(&hdr_bytes);
-            Self::read_exact_resilient(&mut *self.source, &mut self.block_buf[HEADER_LEN..blen])?;
+            if let Err(e) = super::read_exact_resilient(
+                &mut *self.source,
+                &mut self.block_buf[HEADER_LEN..blen],
+            ) {
+                let _ = self.source.seek(SeekFrom::Start(block_offset));
+                return Err(SymphoniaError::IoError(e));
+            }
 
             let decoded = decode_stream(&self.block_buf[..blen])
                 .map_err(|_| SymphoniaError::DecodeError("failed to decode WavPack block"))?;
@@ -353,12 +342,12 @@ impl WavpackReader {
             .seek(SeekFrom::Start(offset))
             .map_err(SymphoniaError::IoError)?;
         let mut hdr_bytes = [0u8; HEADER_LEN];
-        match Self::read_exact_resilient(&mut *self.source, &mut hdr_bytes) {
+        match super::read_exact_resilient(&mut *self.source, &mut hdr_bytes) {
             Ok(()) => {}
-            Err(SymphoniaError::IoError(ref e)) if e.kind() == ErrorKind::UnexpectedEof => {
+            Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => {
                 return Ok(None);
             }
-            Err(e) => return Err(e),
+            Err(e) => return Err(SymphoniaError::IoError(e)),
         }
         let Ok(hdr) = BlockHeader::parse(&hdr_bytes) else {
             return Ok(None);
@@ -487,6 +476,12 @@ impl WavpackReader {
     #[inline]
     pub fn duration_ms(&self) -> Option<u64> {
         self.duration_ms
+    }
+
+    /// Returns the start timestamp in milliseconds of the currently loaded `"wvpk"` block.
+    #[inline]
+    pub fn current_block_start_ms(&self) -> u64 {
+        ((self.current_block_range.0 as u128 * 1000) / self.sample_rate.max(1) as u128) as u64
     }
 
     /// Seeks cleanly to `position_ms` using sparse checkpoints and verified `"wvpk"` block sync.
@@ -621,7 +616,8 @@ impl WavpackReader {
                 self.block_buf.resize(blen, 0);
             }
             self.block_buf[..HEADER_LEN].copy_from_slice(&hdr_bytes);
-            Self::read_exact_resilient(&mut *self.source, &mut self.block_buf[HEADER_LEN..blen])?;
+            super::read_exact_resilient(&mut *self.source, &mut self.block_buf[HEADER_LEN..blen])
+                .map_err(SymphoniaError::IoError)?;
             let decoded = decode_stream(&self.block_buf[..blen])
                 .map_err(|_| SymphoniaError::DecodeError("failed to decode WavPack block"))?;
             self.pending_pcm = WavpackStreamParser::normalize_samples(

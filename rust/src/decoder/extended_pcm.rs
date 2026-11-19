@@ -468,11 +468,19 @@ impl ExtendedPcmReader {
             self.read_buf.resize(bytes_to_read, 0);
         }
 
+        let expected_pos = self.data_start + self.current_frame * self.block_align as u64;
+        self.source
+            .seek(SeekFrom::Start(expected_pos))
+            .map_err(SymphoniaError::IoError)?;
+
         let buf_slice = &mut self.read_buf[..bytes_to_read];
-        match self.source.read_exact(buf_slice) {
-            Ok(_) => {}
+        match super::read_exact_resilient(&mut *self.source, buf_slice) {
+            Ok(()) => {}
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
-            Err(e) => return Err(SymphoniaError::IoError(e)),
+            Err(e) => {
+                let _ = self.source.seek(SeekFrom::Start(expected_pos));
+                return Err(SymphoniaError::IoError(e));
+            }
         }
 
         out_pcm.clear();

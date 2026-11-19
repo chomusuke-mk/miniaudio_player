@@ -1,7 +1,10 @@
 import 'dart:io';
 
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show PlatformInt64Util;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import 'package:miniaudio_player/src/rust/api/types.dart' as rust_types;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -139,6 +142,64 @@ void main() {
       expect(buf.end, greaterThanOrEqualTo(Duration.zero));
 
       await player.action.stop();
+    });
+
+    test(
+        'Error 7: IsBuffering(false) clears state.buffer.isBuffering immediately even when range is unchanged',
+        () async {
+      final emittedBuffers = <Buffer>[];
+      final emittedBuffering = <bool>[];
+      final bufSub = player.stream.buffer.listen(emittedBuffers.add);
+      final isBufSub = player.stream.isBuffering.listen(emittedBuffering.add);
+
+      try {
+        player.dispatchRustEventForTesting(
+          const rust_types.RustPlayerEvent.isBuffering(true),
+        );
+        player.dispatchRustEventForTesting(
+          rust_types.RustPlayerEvent.buffer(
+            rust_types.RustBuffer(
+              startMs: PlatformInt64Util.from(5000),
+              endMs: PlatformInt64Util.from(12000),
+              isBuffering: true,
+            ),
+          ),
+        );
+
+        expect(player.state.isBuffering, isTrue);
+        expect(player.state.buffer.isBuffering, isTrue);
+
+        // Native DecoderWorker clears buffering on seek completion before the next block loads.
+        player.dispatchRustEventForTesting(
+          const rust_types.RustPlayerEvent.isBuffering(false),
+        );
+        player.dispatchRustEventForTesting(
+          rust_types.RustPlayerEvent.buffer(
+            rust_types.RustBuffer(
+              startMs: PlatformInt64Util.from(5000),
+              endMs: PlatformInt64Util.from(12000),
+              isBuffering: false,
+            ),
+          ),
+        );
+
+        await Future<void>.delayed(Duration.zero);
+
+        expect(player.state.isBuffering, isFalse);
+        expect(player.state.buffer.isBuffering, isFalse);
+        expect(player.state.buffer.start, equals(const Duration(seconds: 5)));
+        expect(player.state.buffer.end, equals(const Duration(seconds: 12)));
+        expect(emittedBuffering, equals([true, false]));
+        // Initial [0..0, true] -> [5000..12000, true] -> [5000..12000, false] (no duplicate)
+        expect(
+          emittedBuffers.where((b) => !b.isBuffering).length,
+          equals(1),
+        );
+        expect(emittedBuffers.last.isBuffering, isFalse);
+      } finally {
+        await bufSub.cancel();
+        await isBufSub.cancel();
+      }
     });
   });
 }

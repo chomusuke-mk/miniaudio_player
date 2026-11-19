@@ -17,6 +17,7 @@ use super::stream_buffer::{BufferError, StreamBuffer, StreamSession};
 pub struct DemuxedStreamReader {
     session: StreamSession,
     cursor: u64,
+    base_offset: u64,
 }
 
 impl DemuxedStreamReader {
@@ -25,7 +26,16 @@ impl DemuxedStreamReader {
 
     /// Creates a new `DemuxedStreamReader` over the given `StreamSession`.
     pub fn new(session: StreamSession) -> Self {
-        Self { session, cursor: 0 }
+        Self::new_at(session, 0)
+    }
+
+    /// Creates a `DemuxedStreamReader` whose virtual offset `0` maps to physical `base_offset`.
+    pub fn new_at(session: StreamSession, base_offset: u64) -> Self {
+        Self {
+            session,
+            cursor: 0,
+            base_offset,
+        }
     }
 
     fn resolve_seek_target(&self, pos: SeekFrom) -> IoResult<u64> {
@@ -52,7 +62,8 @@ impl DemuxedStreamReader {
                         "cannot seek from end on live stream",
                     ));
                 };
-                let target = (tot as i64) + offset;
+                let rel_tot = tot.saturating_sub(self.base_offset) as i64;
+                let target = rel_tot + offset;
                 if target < 0 {
                     return Err(IoError::new(
                         ErrorKind::InvalidInput,
@@ -72,11 +83,17 @@ impl Read for DemuxedStreamReader {
         }
 
         let probe_mode = self.session.in_probe_mode();
-        match self.session.read_at(self.cursor, buf) {
+        let phys_cursor = self.base_offset.saturating_add(self.cursor);
+        match self.session.read_at(phys_cursor, buf) {
             Ok(bytes_read) => {
                 self.cursor += bytes_read as u64;
-                if bytes_read > 0 && !probe_mode {
-                    self.session.advance_read_cursor(self.cursor);
+                let new_phys = phys_cursor + bytes_read as u64;
+                if bytes_read > 0 {
+                    if probe_mode {
+                        self.session.note_probe_read_end(new_phys);
+                    } else {
+                        self.session.advance_read_cursor(new_phys);
+                    }
                 }
                 Ok(bytes_read)
             }
@@ -85,14 +102,20 @@ impl Read for DemuxedStreamReader {
             }
             Err(BufferError::WouldBlock) => {
                 if probe_mode {
-                    if let Some(probe_res) = self.session.read_via_probe_cache(self.cursor, buf) {
+                    if let Some(probe_res) = self.session.read_via_probe_cache(phys_cursor, buf) {
                         return match probe_res {
                             Ok(n) => {
                                 self.cursor += n as u64;
+                                if n > 0 {
+                                    self.session.note_probe_read_end(phys_cursor + n as u64);
+                                }
                                 Ok(n)
                             }
                             Err(BufferError::Aborted) => {
                                 Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
+                            }
+                            Err(BufferError::SeekInterrupted) => {
+                                Err(IoError::new(ErrorKind::TimedOut, "seek preempted"))
                             }
                             Err(_) => Err(IoError::new(ErrorKind::Other, "probe read error")),
                         };
@@ -100,15 +123,16 @@ impl Read for DemuxedStreamReader {
                 }
 
                 // Settled decode read (or fallback without probe range fetcher): re-anchor circular window.
-                let _ = self.session.seek(self.cursor);
+                let _ = self.session.seek(phys_cursor);
                 match self
                     .session
-                    .read_blocking(self.cursor, buf, Some(Self::READ_WAIT_TIMEOUT))
+                    .read_blocking(phys_cursor, buf, Some(Self::READ_WAIT_TIMEOUT))
                 {
                     Ok(bytes_read) => {
                         self.cursor += bytes_read as u64;
+                        let new_phys = phys_cursor + bytes_read as u64;
                         if bytes_read > 0 && !probe_mode {
-                            self.session.advance_read_cursor(self.cursor);
+                            self.session.advance_read_cursor(new_phys);
                         }
                         Ok(bytes_read)
                     }
@@ -116,11 +140,15 @@ impl Read for DemuxedStreamReader {
                     Err(BufferError::Aborted) => {
                         Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
                     }
+                    Err(BufferError::SeekInterrupted) => {
+                        Err(IoError::new(ErrorKind::TimedOut, "seek preempted"))
+                    }
                     Err(BufferError::WouldBlock) => {
                         crate::map_log!(
                             1,
-                            "DemuxedStreamReader::read WOULD_BLOCK at cursor={} (buf_len={})",
+                            "DemuxedStreamReader::read WOULD_BLOCK at cursor={} (phys={}, buf_len={})",
                             self.cursor,
+                            phys_cursor,
                             buf.len()
                         );
                         Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
@@ -129,6 +157,9 @@ impl Read for DemuxedStreamReader {
                 }
             }
             Err(BufferError::Eof) => Ok(0),
+            Err(BufferError::SeekInterrupted) => {
+                Err(IoError::new(ErrorKind::TimedOut, "seek preempted"))
+            }
             Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
         }
     }
@@ -136,9 +167,14 @@ impl Read for DemuxedStreamReader {
 
 impl Seek for DemuxedStreamReader {
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
+        let prev_cursor = self.cursor;
         let new_cursor = self.resolve_seek_target(pos)?;
-        // Never flush the circular buffer on seek() alone; demuxer probes jump speculatively and
-        // read() isolates probes or settles the circular window only when audio decoding commits.
+        if self.session.in_probe_mode()
+            && (matches!(pos, SeekFrom::Start(_)) || new_cursor.abs_diff(prev_cursor) > 1024)
+        {
+            self.session
+                .note_probe_seek_target(self.base_offset.saturating_add(new_cursor));
+        }
         self.cursor = new_cursor;
         Ok(new_cursor)
     }
@@ -165,6 +201,7 @@ impl MediaSource for DemuxedStreamReader {
             self.session
                 .logical_end_offset()
                 .or_else(|| self.session.total_size())
+                .map(|tot| tot.saturating_sub(self.base_offset))
         }
     }
 }

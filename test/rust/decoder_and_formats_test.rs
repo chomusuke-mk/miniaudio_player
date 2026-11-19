@@ -2066,3 +2066,690 @@ fn test_e13_dsf_real_track_local_and_http_206_no_ultrasonic_aliasing() {
     stop.store(true, Ordering::Release);
     let _ = srv.join();
 }
+
+#[test]
+fn test_problems2_e1_e3_e4_e5_e6_vbr_buffer_start_and_seek0_precision() {
+    use miniaudio_player::bridge::ffi::MiniaudioBufferedRange;
+    use miniaudio_player::core::dual_source::StreamingDeck;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    let files = [
+        "02_Bailando_con_tu_recuerdo.opus",
+        "05_Burning_in_the_Electric_Light.ogg",
+        "09_Flesh_and_Chrome.wv",
+        "11_Mar_de_cristal.mka",
+        "13_Overture_for_the_Floor.webm",
+        "14_Painting_the_Sky.mkv",
+        "16_Ribbons_on_Anchors.oga",
+    ];
+    let (port, stop, srv) = spawn_http_fixture_server(&files, None);
+
+    let wait_until_buffered = |deck: &StreamingDeck, min_span_ms: i64| {
+        let mut br = MiniaudioBufferedRange::default();
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while Instant::now() < deadline {
+            if deck.get_buffered_range(&mut br) == 0
+                && br.is_buffering == 0
+                && br.end_ms - br.start_ms >= min_span_ms
+            {
+                return br;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        deck.get_buffered_range(&mut br);
+        br
+    };
+
+    for fname in files {
+        let url = format!("http://127.0.0.1:{}/{}", port, encode_url_path(fname));
+        let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(&url, None, None), 0, "open failed for {}", fname);
+        deck.play();
+        pump_until_audible(&mut deck, "vbr_open", fname);
+
+        // Allow background Cues / concurrent VBR probes to settle cleanly.
+        let probe_wait = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < probe_wait {
+            let has_anchors = deck
+                .stream_session
+                .read()
+                .ok()
+                .and_then(|g| g.as_ref().map(|s| s.has_byte_time_anchors()))
+                .unwrap_or(false);
+            if has_anchors {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        match fname {
+            "09_Flesh_and_Chrome.wv" => {
+                assert_eq!(deck.seek(95_954), 0);
+                pump_until_audible(&mut deck, "wv_95954", fname);
+                let br = wait_until_buffered(&deck, 8_000);
+                assert!(
+                    br.start_ms <= 95_954 && br.start_ms >= 93_000,
+                    "{}: expected start_ms <= 95954 (>=93000), got {}..{}",
+                    fname,
+                    br.start_ms,
+                    br.end_ms
+                );
+                let edge_seek = br.start_ms + ((br.end_ms - br.start_ms) * 80) / 100;
+                let pre_ring_start = deck
+                    .stream_session
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .range_start();
+                assert_eq!(deck.seek(edge_seek), 0);
+                pump_until_audible(&mut deck, "wv_inbuf_edge", fname);
+                let post_ring_start = deck
+                    .stream_session
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .range_start();
+                assert_eq!(
+                    post_ring_start, pre_ring_start,
+                    "{}: in-buffer 80% seek ({}ms in [{}..{}]) unexpectedly flushed circular buffer",
+                    fname, edge_seek, br.start_ms, br.end_ms
+                );
+            }
+            "11_Mar_de_cristal.mka" => {
+                assert_eq!(deck.seek(120_309), 0);
+                pump_until_audible(&mut deck, "mka_120309", fname);
+                assert_eq!(deck.seek(25_377), 0);
+                pump_until_audible(&mut deck, "mka_25377", fname);
+                let br = wait_until_buffered(&deck, 4_000);
+                assert!(
+                    br.start_ms <= 25_377 && br.start_ms >= 21_000,
+                    "{}: expected start_ms <= 25377 (>=21000), got {}..{}",
+                    fname,
+                    br.start_ms,
+                    br.end_ms
+                );
+            }
+            "13_Overture_for_the_Floor.webm" => {
+                assert_eq!(deck.seek(77_273), 0);
+                pump_until_audible(&mut deck, "webm_77273", fname);
+                let br = wait_until_buffered(&deck, 4_000);
+                assert!(
+                    (br.start_ms == 0 || br.start_ms >= 65_000)
+                        && br.start_ms <= 77_273
+                        && br.end_ms >= 97_000,
+                    "{}: expected start_ms==0 or in [65000..=77273] and end_ms>=97000, got {}..{}",
+                    fname,
+                    br.start_ms,
+                    br.end_ms
+                );
+                // Force a guaranteed far out-of-buffer seek too so uncached WebM anchor precision is exercised even under slow scheduling.
+                assert_eq!(deck.seek(135_000), 0);
+                pump_until_audible(&mut deck, "webm_135000", fname);
+                let br135 = wait_until_buffered(&deck, 4_000);
+                assert!(
+                    (br135.start_ms == 0 || br135.start_ms >= 120_000)
+                        && br135.start_ms <= 135_000
+                        && br135.end_ms >= 145_000,
+                    "{}: expected start_ms<=135000 (>=120000 or 0 if full cache) after seek(135000), got {}..{}",
+                    fname,
+                    br135.start_ms,
+                    br135.end_ms
+                );
+            }
+            _ => {
+                // Ogg/Opus, Ogg/Vorbis, MKV, Ogg/FLAC
+                assert_eq!(deck.seek(90_000), 0);
+                pump_until_audible(&mut deck, "vbr_90000", fname);
+                let br90 = wait_until_buffered(&deck, 4_000);
+                assert!(
+                    br90.start_ms <= 90_250 && br90.start_ms >= 85_000,
+                    "{}: expected start_ms in [85000..=90250] after seek(90s), got {}..{}",
+                    fname,
+                    br90.start_ms,
+                    br90.end_ms
+                );
+
+                // Seek back to 0 must report start_ms == 0 (never 00:01.1 past Ogg/MKV cover art).
+                assert_eq!(deck.seek(0), 0);
+                pump_until_audible(&mut deck, "vbr_seek0", fname);
+                let mut br0 = MiniaudioBufferedRange::default();
+                assert_eq!(deck.get_buffered_range(&mut br0), 0);
+                assert_eq!(
+                    br0.start_ms, 0,
+                    "{}: seek(0) reported non-zero start_ms={} (end={})",
+                    fname, br0.start_ms, br0.end_ms
+                );
+            }
+        }
+        let _ = deck.stop();
+    }
+
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[test]
+fn test_problems2_e2_flac_without_seektable_rtt_latency_and_edge_prefetch() {
+    use miniaudio_player::bridge::ffi::MiniaudioBufferedRange;
+    use miniaudio_player::core::dual_source::StreamingDeck;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+
+    let flac_bytes = Arc::new(std::fs::read(FixtureResolver::resolve("04_Belaya_Tishina.flac")).unwrap());
+    let total_len = flac_bytes.len();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let req_counter = Arc::new(AtomicUsize::new(0));
+    let stop_srv = stop.clone();
+    let cnt_srv = req_counter.clone();
+
+    let srv = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Acquire) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            let _ = stream.set_nonblocking(false);
+            let data = flac_bytes.clone();
+            let cnt = cnt_srv.clone();
+            std::thread::spawn(move || {
+                let mut br = BufReader::new(stream.try_clone().unwrap());
+                let mut req_line = String::new();
+                if br.read_line(&mut req_line).is_err() || req_line.is_empty() {
+                    return;
+                }
+                let mut range_hdr: Option<String> = None;
+                loop {
+                    let mut line = String::new();
+                    if br.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let t = line.trim();
+                    if t.is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = t.split_once(':') {
+                        if k.trim().eq_ignore_ascii_case("Range") {
+                            range_hdr = Some(v.trim().to_string());
+                        }
+                    }
+                }
+                // Simulated 100ms HTTP RTT per request.
+                std::thread::sleep(Duration::from_millis(100));
+                if let Some(rh) = range_hdr {
+                    cnt.fetch_add(1, Ordering::AcqRel);
+                    let spec = rh.strip_prefix("bytes=").unwrap_or("0-");
+                    let (s_str, e_str) = spec.split_once('-').unwrap_or((spec, ""));
+                    let start: usize = s_str.parse().unwrap_or(0);
+                    let end: usize = e_str
+                        .parse::<usize>()
+                        .unwrap_or(data.len() - 1)
+                        .min(data.len() - 1);
+                    if start > end || start >= data.len() {
+                        let _ = stream.write_all(b"HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\n\r\n");
+                        return;
+                    }
+                    let body = &data[start..=end];
+                    let hdr = format!(
+                        "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                        body.len(),
+                        start,
+                        end,
+                        data.len()
+                    );
+                    let _ = stream.write_all(hdr.as_bytes());
+                    let _ = stream.write_all(body);
+                } else {
+                    let hdr = format!(
+                        "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nContent-Type: audio/flac\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        data.len()
+                    );
+                    let _ = stream.write_all(hdr.as_bytes());
+                    let _ = stream.write_all(&data);
+                }
+            });
+        }
+    });
+
+    assert!(total_len > 30_000_000);
+    let url = format!("http://127.0.0.1:{}/04_Belaya_Tishina.flac", port);
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+    deck.play();
+    pump_until_audible(&mut deck, "flac_open", "04_Belaya_Tishina.flac");
+
+    // Wait for concurrent 31-pt FLAC probe to complete (~6 RTT batches * 100ms ~ 600ms).
+    let probe_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < probe_deadline {
+        let count = deck
+            .stream_session
+            .read()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.flac_seek_points().len()))
+            .unwrap_or(0);
+        if count >= 20 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    // Repro exact E2 flow: 150s -> 47,671ms -> wait until > 84s loaded -> seek(79_063) & edge seek!
+    assert_eq!(deck.seek(150_000), 0);
+    pump_until_audible(&mut deck, "flac_150s", "04_Belaya_Tishina.flac");
+
+    assert_eq!(deck.seek(47_671), 0);
+    pump_until_audible(&mut deck, "flac_47671", "04_Belaya_Tishina.flac");
+
+    let mut br = MiniaudioBufferedRange::default();
+    let fill_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < fill_deadline {
+        if deck.get_buffered_range(&mut br) == 0 && br.end_ms >= 76_000 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(
+        br.end_ms >= 76_000,
+        "FLAC failed to buffer ahead past 76s after seek(47671): {}..{}",
+        br.start_ms,
+        br.end_ms
+    );
+
+    // 1. In-buffer seek (79_063) and edge seek (end - 1_500): must NOT hit network probes (0 extra RTT stalls!).
+    let t0 = Instant::now();
+    assert_eq!(deck.seek(79_063), 0);
+    pump_until_audible(&mut deck, "flac_79063_inbuf", "04_Belaya_Tishina.flac");
+    let seek_79_elapsed = t0.elapsed();
+    assert!(
+        seek_79_elapsed < Duration::from_millis(250),
+        "seek(79063) inside loaded buffer took {:?} (expected instant RAM bracket seek!)",
+        seek_79_elapsed
+    );
+
+    let edge_ms = br.end_ms.saturating_sub(1_500);
+    let t1 = Instant::now();
+    assert_eq!(deck.seek(edge_ms), 0);
+    pump_until_audible(&mut deck, "flac_edge_inbuf", "04_Belaya_Tishina.flac");
+    let edge_elapsed = t1.elapsed();
+    assert!(
+        edge_elapsed < Duration::from_millis(250),
+        "near-edge seek({}ms in [{}..{}]) stalled {:?}!",
+        edge_ms,
+        br.start_ms,
+        br.end_ms,
+        edge_elapsed
+    );
+
+    // Verify edge seek immediately woke lookahead download past old end_ms.
+    let old_end = br.end_ms;
+    let grow_deadline = Instant::now() + Duration::from_secs(4);
+    let mut grown = false;
+    while Instant::now() < grow_deadline {
+        let mut cur_br = MiniaudioBufferedRange::default();
+        if deck.get_buffered_range(&mut cur_br) == 0 && cur_br.end_ms > old_end + 3_000 {
+            grown = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(grown, "prefetch did not extend past {}ms after near-edge seek", old_end);
+
+    // 2. Out-of-buffer seek under 100ms RTT: synthetic SEEKTABLE keeps RTT round-trips bounded.
+    let out_reqs_before = req_counter.load(Ordering::Acquire);
+    assert_eq!(deck.seek(115_000), 0);
+    pump_until_audible(&mut deck, "flac_115000_out", "04_Belaya_Tishina.flac");
+    let out_reqs_delta = req_counter.load(Ordering::Acquire).saturating_sub(out_reqs_before);
+    assert!(
+        out_reqs_delta <= 4,
+        "expected <= 4 HTTP range requests for out-of-buffer FLAC seek via synthetic SEEKTABLE, got {}",
+        out_reqs_delta
+    );
+    let mut br_out = MiniaudioBufferedRange::default();
+    assert_eq!(deck.get_buffered_range(&mut br_out), 0);
+    assert!(
+        br_out.start_ms <= 115_000 && br_out.start_ms >= 111_000,
+        "FLAC out-of-buffer seek(115000) reported bad start_ms={}",
+        br_out.start_ms
+    );
+
+    let _ = deck.stop();
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[test]
+fn test_problems2_e8_caf_rapid_seeks_and_preemption() {
+    use miniaudio_player::core::dual_source::StreamingDeck;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    // Simulate slow/jittery remote HTTP on 33MB 24-bit CAF (~288 KB/s).
+    let (port, stop, srv) = spawn_http_fixture_server(
+        &["27_¡Yo_me_opongo_.caf"],
+        Some((131_072, 32_768, 80)),
+    );
+    let url = format!("http://127.0.0.1:{}/27_%C2%A1Yo_me_opongo_.caf", port);
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+    deck.play();
+
+    // Confirm initial audio opens rapidly without waiting for multi-megabyte full 5s block.
+    let mut out = vec![0.0f32; 2048];
+    let open_deadline = Instant::now() + Duration::from_secs(4);
+    let mut initial_ok = false;
+    while Instant::now() < open_deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        if out.iter().any(|&s| s.abs() > 0.001) {
+            initial_ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(initial_ok, "CAF initial HTTP open did not start playing within 4s");
+
+    // Burst 5 rapid uncached seeks back-to-back: earlier blocked seeks must preempt in <20ms
+    // and final target (95_000ms) must settle quickly rather than stacking 5s * N waits.
+    for target in [30_000i64, 80_000, 108_000, 45_000] {
+        assert_eq!(deck.seek(target), 0);
+        std::thread::sleep(Duration::from_millis(8));
+    }
+    let t_final = Instant::now();
+    assert_eq!(deck.seek(95_000), 0);
+
+    let mut settled_elapsed = None;
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        let pos = deck.position_ms.load(Ordering::Relaxed);
+        let peak = out.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        if peak > 0.001 && (94_000..=98_000).contains(&pos) {
+            settled_elapsed = Some(t_final.elapsed());
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let elapsed = settled_elapsed.unwrap_or_else(|| {
+        panic!(
+            "E8: rapid CAF seeks stalled past 4s (final pos={}ms)",
+            deck.position_ms.load(Ordering::Relaxed)
+        )
+    });
+    assert!(
+        elapsed < Duration::from_millis(2500),
+        "E8: expected final rapid CAF seek to settle within 2.5s under preemption + bounded bootstrap, took {:?}",
+        elapsed
+    );
+
+    let _ = deck.stop();
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[test]
+fn test_problems2_e10_dsf_slow_http_smooth_anti_pop_and_alignment() {
+    use miniaudio_player::core::dual_source::StreamingDeck;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    // Throttle 29_DSF (~352.8 KB/s real-time) down to ~180 KB/s (90ms per 16KB after 96KB)
+    // to force repeated rebuffer underruns/resumes over HTTP.
+    let (port, stop, srv) = spawn_http_fixture_server(
+        &["29_駆け抜けて、この空を.dsf"],
+        Some((98_304, 16_384, 90)),
+    );
+    let url = format!(
+        "http://127.0.0.1:{}/29_%E9%A7%86%E3%81%91%E6%8A%9C%E3%81%91%E3%81%A6%E3%80%81%E3%81%93%E3%81%AE%E7%A9%BA%E3%82%92.dsf",
+        port
+    );
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+    deck.play();
+
+    pump_until_audible(&mut deck, "dsf_slow_init", "29_駆け抜けて、この空を.dsf");
+
+    let mut out = vec![0.0f32; 2048];
+    let mut prev_l = 0.0f32;
+    let mut prev_r = 0.0f32;
+    let mut active_samples = 0usize;
+    let mut dropout_events = 0usize;
+    let mut silent_run = 0usize;
+    let mut in_dropout = true;
+    let mut transition_pops = 0usize;
+    let mut bad_spikes = 0usize;
+
+    let run_until = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < run_until {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        for frame in out.chunks_exact(2) {
+            let l = frame[0];
+            let r = frame[1];
+            assert!(l.is_finite() && r.is_finite(), "E10: non-finite DSF sample");
+            let silent_now = l.abs() < 1e-6 && r.abs() < 1e-6;
+            if silent_now {
+                silent_run += 1;
+                if !in_dropout && silent_run == 64 {
+                    in_dropout = true;
+                    dropout_events += 1;
+                }
+            } else {
+                silent_run = 0;
+                if in_dropout {
+                    in_dropout = false;
+                    if (l - prev_l).abs() > 0.05 || (r - prev_r).abs() > 0.05 {
+                        transition_pops += 1;
+                    }
+                }
+                active_samples += 1;
+                if (l - prev_l).abs() > 0.35 || (r - prev_r).abs() > 0.35 {
+                    bad_spikes += 1;
+                }
+            }
+            if !in_dropout && silent_run == 1 && ((l - prev_l).abs() > 0.05 || (r - prev_r).abs() > 0.05) {
+                transition_pops += 1;
+            }
+            prev_l = l;
+            prev_r = r;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert!(
+        active_samples > 15_000,
+        "E10: expected substantial audible DSF output under slow HTTP, got {} samples",
+        active_samples
+    );
+    assert_eq!(
+        transition_pops, 0,
+        "E10: detected {} hard step discontinuities (>0.05) across underrun/resume transitions!",
+        transition_pops
+    );
+    assert_eq!(
+        bad_spikes, 0,
+        "E10: detected {} chaotic sample spikes (>0.35), indicating DSD block misalignment!",
+        bad_spikes
+    );
+    assert!(
+        dropout_events <= 16,
+        "E10: expected hysteresis to coalesce underruns into <=16 smooth segments, got {}",
+        dropout_events
+    );
+
+    // Seek mid-track under slow HTTP and confirm clean non-noise resumption.
+    assert_eq!(deck.seek(35_000), 0);
+    pump_until_audible(&mut deck, "dsf_slow_seek35", "29_駆け抜けて、この空を.dsf");
+    let pos_after = deck.position_ms.load(Ordering::Relaxed);
+    assert!(
+        (33_000..=38_000).contains(&pos_after),
+        "E10: DSF slow HTTP seek(35000) settled at unexpected pos={}ms",
+        pos_after
+    );
+
+    let _ = deck.stop();
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[test]
+fn test_problems2_e11_live_bursty_radio_zero_micro_cut_oscillation() {
+    use miniaudio_player::core::dual_source::StreamingDeck;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+
+    // 128 kbps CBR MP3 (16 KB/s): simulate RadioFrance Icecast behavior:
+    // initial burst (enough to open stream + fill ~6.5s) -> brief pause so ring drains once
+    // (simulating ~12s burst exhaustion) -> steady ~0.55s discrete TCP bursts (9.2 KB / 550ms).
+    let mp3_bytes = Arc::new(
+        std::fs::read(FixtureResolver::resolve("03_Before_The_Dawn_cbr_noxing.mp3")).unwrap(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_srv = stop.clone();
+
+    let srv = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Acquire) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            let _ = stream.set_nonblocking(false);
+            let data = mp3_bytes.clone();
+            let stop_req = stop_srv.clone();
+            std::thread::spawn(move || {
+                let mut br = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while br.read_line(&mut line).unwrap_or(0) > 0 {
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    line.clear();
+                }
+                // Live Icecast headers (no Content-Length).
+                let hdr = "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nicy-name: FIP Test\r\nicy-br: 128\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+                if stream.write_all(hdr.as_bytes()).is_err() {
+                    return;
+                }
+                let _ = stream.flush();
+
+                // Initial burst (~144 KB so open_network's 65KB probe + ~4.5s initial buffer succeeds).
+                let mut cursor = (144 * 1024usize).min(data.len());
+                if stream.write_all(&data[..cursor]).is_err() {
+                    return;
+                }
+                let _ = stream.flush();
+
+                // Pause briefly so consumer drains initial burst and enters live rebuffer hysteresis once,
+                // then stream steady discrete 550ms bursts of 9.4 KB (~136 kbps > 128 kbps) matching FIP bursts.
+                for _ in 0..8 {
+                    if stop_req.load(Ordering::Acquire) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+
+                while !stop_req.load(Ordering::Acquire) {
+                    let burst = 9_400usize;
+                    let end = (cursor + burst).min(data.len());
+                    if stream.write_all(&data[cursor..end]).is_err() {
+                        return;
+                    }
+                    let _ = stream.flush();
+                    cursor = if end >= data.len() { 65_536.min(data.len()) } else { end };
+                    std::thread::sleep(Duration::from_millis(550));
+                }
+            });
+        }
+    });
+
+    let url = format!("http://127.0.0.1:{}/fip-midfi.mp3", port);
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+    deck.play();
+    pump_until_audible(&mut deck, "fip_live_init", "fip-midfi.mp3");
+
+    let mut out = vec![0.0f32; 2048];
+    // Drain initial burst rapidly so we enter the real-time burst regime promptly.
+    let mut entered_rebuffer = false;
+    let drain_deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < drain_deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        if deck.is_buffering.load(Ordering::Acquire) {
+            entered_rebuffer = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        entered_rebuffer,
+        "E11 test setup: expected initial live burst to drain into rebuffer hysteresis once"
+    );
+
+    // Wait for 750ms live hysteresis to recover cleanly onto real-time 1x playback (21.3ms/callback).
+    let rec_deadline = Instant::now() + Duration::from_secs(4);
+    let mut recovered = false;
+    while Instant::now() < rec_deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        if !deck.is_buffering.load(Ordering::Acquire)
+            && out.iter().any(|&s| s.abs() > 0.001)
+        {
+            recovered = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(21));
+    }
+    assert!(recovered, "E11: live radio failed to recover from rebuffer hysteresis within 4s");
+
+    // Stream at 1x real-time for 3.6 seconds (~170 callbacks) across multiple 550ms bursts:
+    // zero repeating 0.5s micro-cut dropouts or buffering flickers must occur!
+    let mut post_recovery_underruns = 0usize;
+    let mut post_recovery_pops = 0usize;
+    let mut prev_l = out[2046];
+    let mut prev_r = out[2047];
+    let stable_until = Instant::now() + Duration::from_millis(3600);
+    while Instant::now() < stable_until {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        if deck.is_buffering.load(Ordering::Acquire) || out.iter().all(|&s| s.abs() < 1e-6) {
+            post_recovery_underruns += 1;
+        }
+        let l0 = out[0];
+        let r0 = out[1];
+        if (l0 - prev_l).abs() > 0.35 || (r0 - prev_r).abs() > 0.35 {
+            post_recovery_pops += 1;
+        }
+        prev_l = out[2046];
+        prev_r = out[2047];
+        std::thread::sleep(Duration::from_millis(21));
+    }
+
+    assert_eq!(
+        post_recovery_underruns, 0,
+        "E11: live radio micro-cut regression — {} underrun callbacks occurred across 550ms TCP bursts after recovery!",
+        post_recovery_underruns
+    );
+    assert_eq!(
+        post_recovery_pops, 0,
+        "E11: detected {} callback boundary glitches (>0.35) during live playback!",
+        post_recovery_pops
+    );
+
+    let _ = deck.stop();
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}

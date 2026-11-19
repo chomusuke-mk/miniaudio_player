@@ -84,6 +84,7 @@ struct AtomicTelemetryFilter {
     buffered_start: AtomicI64,
     buffered_end: AtomicI64,
     is_buffering: AtomicU8,
+    buffer_is_buffering: AtomicU8,
     is_xfading: AtomicU8,
     is_recording: AtomicU8,
     recorded_duration: AtomicU64,
@@ -103,6 +104,7 @@ impl Default for AtomicTelemetryFilter {
             buffered_start: AtomicI64::new(SENTINEL_NONE),
             buffered_end: AtomicI64::new(SENTINEL_NONE),
             is_buffering: AtomicU8::new(OPT_BOOL_FALSE),
+            buffer_is_buffering: AtomicU8::new(OPT_BOOL_FALSE),
             is_xfading: AtomicU8::new(OPT_BOOL_FALSE),
             is_recording: AtomicU8::new(OPT_BOOL_FALSE),
             recorded_duration: AtomicU64::new(0),
@@ -123,6 +125,8 @@ impl AtomicTelemetryFilter {
         self.buffered_start.store(SENTINEL_NONE, Ordering::Release);
         self.buffered_end.store(SENTINEL_NONE, Ordering::Release);
         self.is_buffering.store(OPT_BOOL_FALSE, Ordering::Release);
+        self.buffer_is_buffering
+            .store(OPT_BOOL_FALSE, Ordering::Release);
         self.is_xfading.store(OPT_BOOL_FALSE, Ordering::Release);
         self.is_recording.store(OPT_BOOL_FALSE, Ordering::Release);
         self.recorded_duration.store(0, Ordering::Release);
@@ -178,7 +182,9 @@ impl AtomicTelemetryFilter {
                 let prev_start = self.buffered_start.swap(r.start_ms, Ordering::AcqRel);
                 let prev_end = self.buffered_end.swap(r.end_ms, Ordering::AcqRel);
                 let encoded_buf = encode_opt_bool(r.is_buffering);
-                let prev_buf = self.is_buffering.swap(encoded_buf, Ordering::AcqRel);
+                let prev_buf = self
+                    .buffer_is_buffering
+                    .swap(encoded_buf, Ordering::AcqRel);
                 prev_start != r.start_ms || prev_end != r.end_ms || prev_buf != encoded_buf
             }
             RustPlayerEvent::Position(p) => {
@@ -2255,5 +2261,31 @@ mod p0_tests {
             is_buffering: false,
         });
         assert!(filter.should_emit(&b_reset));
+    }
+
+    #[test]
+    fn atomic_telemetry_filter_does_not_alias_is_buffering_and_buffer_events() {
+        let filter = AtomicTelemetryFilter::default();
+
+        // Enter buffering with range [5_000 .. 12_000]. Both events must emit.
+        assert!(filter.should_emit(&RustPlayerEvent::IsBuffering(true)));
+        assert!(filter.should_emit(&RustPlayerEvent::Buffer(RustBuffer {
+            start_ms: 5_000,
+            end_ms: 12_000,
+            is_buffering: true,
+        })));
+
+        // Seek finishes decoding before the next block arrives: range stays [5_000 .. 12_000]
+        // while `IsBuffering(false)` is queued just before `Buffer(..., is_buffering: false)`.
+        // Previously both events mutated one shared AtomicU8, causing `Buffer` to be dropped.
+        assert!(filter.should_emit(&RustPlayerEvent::IsBuffering(false)));
+        assert!(
+            filter.should_emit(&RustPlayerEvent::Buffer(RustBuffer {
+                start_ms: 5_000,
+                end_ms: 12_000,
+                is_buffering: false,
+            })),
+            "Buffer event must still emit when is_buffering flips to false on unchanged range"
+        );
     }
 }

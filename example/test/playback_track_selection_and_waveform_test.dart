@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
@@ -147,6 +149,59 @@ void main() {
         // Drag across the waveform to seek smoothly
         await tester.drag(customPaintFinder, const Offset(30, 0));
         await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'WaveformPainter renders distinct buffered backward zone and continuous buffer rail behind playhead',
+      (tester) async {
+        const width = 200.0;
+        const height = 44.0;
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        final painter = WaveformPainter(
+          points: List.filled(40, 0.9),
+          bufferStartProgress: 0.25,
+          progress: 0.55,
+          bufferedProgress: 0.80,
+          playedColor: StudioColors.accentCyan,
+          unplayedColor: StudioColors.cardBorderFocused,
+        );
+
+        painter.paint(canvas, const Size(width, height));
+        final picture = recorder.endRecording();
+        final image = await tester.runAsync(() => picture.toImage(200, 44));
+        expect(image, isNotNull);
+        final byteData = await tester.runAsync(
+          () => image!.toByteData(format: ui.ImageByteFormat.rawRgba),
+        );
+        expect(byteData, isNotNull);
+        final rgba = byteData!.buffer.asUint8List();
+
+        int lumAt(int x, int y) {
+          final off = (y * 200 + x) * 4;
+          return rgba[off] + rgba[off + 1] + rgba[off + 2];
+        }
+
+        int alphaAt(int x, int y) {
+          final off = (y * 200 + x) * 4;
+          return rgba[off + 3];
+        }
+
+        // Waveform body middle row (y = 22):
+        // x=20 (0.10, unbuffered evicted history) must be visibly darker than
+        // x=80 (0.40, backward buffered zone behind playhead x=110)
+        expect(lumAt(80, 22), greaterThan(lumAt(20, 22)));
+        // x=130 (0.65, ahead buffered zone) must be brighter than x=180 (0.90, unbuffered future)
+        expect(lumAt(130, 22), greaterThan(lumAt(180, 22)));
+
+        // Bottom buffer rail row (y = 43):
+        // x=80 (backward buffer) & x=130 (ahead buffer) have drawn rail,
+        // while x=20 (evicted) & x=180 (unbuffered future) do not.
+        expect(alphaAt(80, 43), greaterThan(150));
+        expect(alphaAt(130, 43), greaterThan(80));
+        expect(alphaAt(20, 43), equals(0));
+        expect(alphaAt(180, 43), equals(0));
       },
     );
 

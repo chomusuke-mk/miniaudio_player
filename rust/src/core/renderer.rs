@@ -66,6 +66,28 @@ pub unsafe extern "C" fn audio_renderer_notif_trampoline(
     r.on_device_notification(notif);
 }
 
+/// Anti-pop micro-fade duration (~5.3ms at 48 kHz) applied around underrun, pause, and resume transitions.
+const ANTI_POP_FADE_FRAMES: usize = 256;
+
+/// Lock-free, allocation-free smoothing state preventing step discontinuities in `AudioRenderer`.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct AntiPopState {
+    pub last_samples: [f32; 16],
+    pub output_silenced: bool,
+    pub need_fade_in: bool,
+}
+
+impl Default for AntiPopState {
+    fn default() -> Self {
+        Self {
+            last_samples: [0.0; 16],
+            output_silenced: true,
+            need_fade_in: false,
+        }
+    }
+}
+
 /// Decoupled, real-time safe audio renderer passed exclusively to the hardware audio callback.
 #[repr(C)]
 pub struct AudioRenderer {
@@ -105,6 +127,7 @@ pub struct AudioRenderer {
     pub visualizer_enabled: Arc<AtomicBool>,
 
     pub notification_callback: Option<Arc<dyn Fn(i32) + Send + Sync>>,
+    pub anti_pop: AntiPopState,
 }
 
 // AudioRenderer is strictly Send across threads (created on main thread, sent to OS audio thread)
@@ -145,6 +168,106 @@ impl AudioRenderer {
         }
     }
 
+    #[inline]
+    fn smoothstep(u: f32) -> f32 {
+        u * u * (3.0 - 2.0 * u)
+    }
+
+    #[inline]
+    fn emit_silence_or_fade_out(
+        &mut self,
+        out_slice: &mut [f32],
+        frame_count: usize,
+        ch: usize,
+    ) {
+        if self.anti_pop.output_silenced {
+            out_slice.fill(0.0);
+            return;
+        }
+        let c = ch.min(16);
+        let fade_frames = frame_count.min(ANTI_POP_FADE_FRAMES);
+        if fade_frames == 0 || c == 0 {
+            out_slice.fill(0.0);
+        } else {
+            let denom = fade_frames as f32;
+            for f in 0..fade_frames {
+                let u = (f + 1) as f32 / denom;
+                let gain = 1.0 - Self::smoothstep(u);
+                let base = f * ch;
+                for chan in 0..c {
+                    out_slice[base + chan] = self.anti_pop.last_samples[chan] * gain;
+                }
+                for chan in c..ch {
+                    out_slice[base + chan] = 0.0;
+                }
+            }
+            out_slice[fade_frames * ch..].fill(0.0);
+        }
+        self.anti_pop.last_samples[..c].fill(0.0);
+        self.anti_pop.output_silenced = true;
+        self.anti_pop.need_fade_in = true;
+    }
+
+    #[inline]
+    fn smooth_partial_tail(
+        &mut self,
+        out_slice: &mut [f32],
+        read_frames: usize,
+        ch: usize,
+    ) {
+        if read_frames == 0 {
+            out_slice.fill(0.0);
+            self.anti_pop.last_samples[..ch.min(16)].fill(0.0);
+            self.anti_pop.output_silenced = true;
+            self.anti_pop.need_fade_in = true;
+            return;
+        }
+        let fade_frames = read_frames.min(ANTI_POP_FADE_FRAMES);
+        let start_f = read_frames - fade_frames;
+        let denom = fade_frames as f32;
+        for idx in 0..fade_frames {
+            let u = (idx + 1) as f32 / denom;
+            let gain = 1.0 - Self::smoothstep(u);
+            let base = (start_f + idx) * ch;
+            for chan in 0..ch {
+                out_slice[base + chan] *= gain;
+            }
+        }
+        out_slice[read_frames * ch..].fill(0.0);
+        self.anti_pop.last_samples[..ch.min(16)].fill(0.0);
+        self.anti_pop.output_silenced = true;
+        self.anti_pop.need_fade_in = true;
+    }
+
+    #[inline]
+    fn apply_fade_in_and_track(
+        &mut self,
+        out_slice: &mut [f32],
+        valid_frames: usize,
+        ch: usize,
+    ) {
+        if valid_frames == 0 {
+            return;
+        }
+        if self.anti_pop.need_fade_in {
+            let fade_frames = valid_frames.min(ANTI_POP_FADE_FRAMES);
+            let denom = fade_frames.max(1) as f32;
+            for f in 0..fade_frames {
+                let u = f as f32 / denom;
+                let gain = Self::smoothstep(u);
+                let base = f * ch;
+                for chan in 0..ch {
+                    out_slice[base + chan] *= gain;
+                }
+            }
+            self.anti_pop.need_fade_in = false;
+        }
+        let c = ch.min(16);
+        let last_base = (valid_frames - 1) * ch;
+        self.anti_pop.last_samples[..c].copy_from_slice(&out_slice[last_base..last_base + c]);
+        self.anti_pop.output_silenced = false;
+    }
+
     /// Acknowledges and applies pending buffer flushes requested across threads.
     #[inline]
     pub fn acknowledge_flush_if_needed(&mut self) {
@@ -153,9 +276,26 @@ impl AudioRenderer {
             self.local_flush_gen = current_flush;
             self.consumer.clear();
             self.sonic.flush();
+            if !self.anti_pop.output_silenced {
+                self.anti_pop.last_samples.fill(0.0);
+                self.anti_pop.output_silenced = true;
+                self.anti_pop.need_fade_in = true;
+            }
             self.flush_acknowledged
                 .store(current_flush, Ordering::Release);
         }
+    }
+
+    #[inline]
+    fn resolved_stretch_params(&self) -> (f32, f32, bool) {
+        let mut requested_rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
+        if requested_rate > 1.0 && self.at_live_edge.load(Ordering::Relaxed) {
+            requested_rate = 1.0;
+        }
+        let cur_rate = requested_rate.max(0.001);
+        let cur_pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed)).max(0.001);
+        let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;
+        (cur_rate, cur_pitch, is_stretched)
     }
 
     #[inline]
@@ -165,13 +305,7 @@ impl AudioRenderer {
         frame_count: usize,
         ch: usize,
     ) -> (usize, i64) {
-        let mut requested_rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
-        if requested_rate > 1.0 && self.at_live_edge.load(Ordering::Relaxed) {
-            requested_rate = 1.0;
-        }
-        let cur_rate = requested_rate.max(0.001);
-        let cur_pitch = f32::from_bits(self.pitch.load(Ordering::Relaxed)).max(0.001);
-        let is_stretched = (cur_rate - 1.0).abs() > 0.001 || (cur_pitch - 1.0).abs() > 0.001;
+        let (cur_rate, cur_pitch, is_stretched) = self.resolved_stretch_params();
 
         if !is_stretched {
             let read = self.consumer.read_chunk(out_slice);
@@ -204,28 +338,32 @@ impl AudioRenderer {
         &mut self,
         read_samples: usize,
         total_samples: usize,
+        frame_count: usize,
+        ch: usize,
         un_stretched_frames_consumed: i64,
         out_slice: &mut [f32],
     ) {
-        if read_samples < total_samples {
-            out_slice[read_samples..].fill(0.0);
-
-            let decoder_at_eof = self.decoder_eof.load(Ordering::Acquire);
-            let seek_pending = self.seek_request_ms.load(Ordering::Acquire) >= 0;
-            let dur = self.duration_ms.load(Ordering::Acquire);
-            let pos = self.position_ms.load(Ordering::Acquire);
-            if decoder_at_eof && !seek_pending && read_samples == 0 {
-                if dur <= 0 || pos > 0 || dur <= 100 {
-                    self.is_buffering.store(false, Ordering::Release);
-                    self.track_exhausted.store(true, Ordering::Release);
-                }
-            } else if read_samples == 0 && self.is_stream.load(Ordering::Acquire) {
-                self.is_buffering.store(true, Ordering::Release);
-            }
-        }
+        let is_stream = self.is_stream.load(Ordering::Acquire);
+        let decoder_at_eof = self.decoder_eof.load(Ordering::Acquire);
+        let seek_pending = self.seek_request_ms.load(Ordering::Acquire) >= 0;
 
         if read_samples > 0 {
-            self.is_buffering.store(false, Ordering::Release);
+            let read_frames = read_samples / ch.max(1);
+            if read_samples < total_samples {
+                if is_stream && !decoder_at_eof && !seek_pending {
+                    self.is_buffering.store(true, Ordering::Release);
+                }
+                if self.anti_pop.need_fade_in {
+                    self.apply_fade_in_and_track(out_slice, read_frames, ch);
+                }
+                self.smooth_partial_tail(out_slice, read_frames, ch);
+            } else {
+                if !is_stream {
+                    self.is_buffering.store(false, Ordering::Release);
+                }
+                self.apply_fade_in_and_track(out_slice, read_frames, ch);
+            }
+
             let sr = self.device_sample_rate.load(Ordering::Relaxed) as i64;
             let track_subframes = un_stretched_frames_consumed * 1024;
             let total_subframes = self
@@ -239,6 +377,18 @@ impl AudioRenderer {
                 0
             };
             self.position_ms.store(new_pos, Ordering::Relaxed);
+        } else {
+            self.emit_silence_or_fade_out(out_slice, frame_count, ch);
+            let dur = self.duration_ms.load(Ordering::Acquire);
+            let pos = self.position_ms.load(Ordering::Acquire);
+            if decoder_at_eof && !seek_pending {
+                if dur <= 0 || pos > 0 || dur <= 100 {
+                    self.is_buffering.store(false, Ordering::Release);
+                    self.track_exhausted.store(true, Ordering::Release);
+                }
+            } else if is_stream {
+                self.is_buffering.store(true, Ordering::Release);
+            }
         }
     }
 
@@ -266,13 +416,36 @@ impl AudioRenderer {
         self.drain_dsp_commands();
         self.acknowledge_flush_if_needed();
 
-        let ch = self.device_channels.load(Ordering::Relaxed) as usize;
+        let ch = (self.device_channels.load(Ordering::Relaxed) as usize).clamp(1, 16);
         let total_samples = frame_count * ch;
         let out_slice = unsafe { std::slice::from_raw_parts_mut(output_frames, total_samples) };
 
         let cur_state = PlaybackState::from_i32(self.state.load(Ordering::Relaxed));
         if cur_state != PlaybackState::Playing {
-            out_slice.fill(0.0);
+            self.emit_silence_or_fade_out(out_slice, frame_count, ch);
+            return;
+        }
+
+        let is_stream = self.is_stream.load(Ordering::Acquire);
+        let decoder_at_eof = self.decoder_eof.load(Ordering::Acquire);
+        let seek_pending = self.seek_request_ms.load(Ordering::Acquire) >= 0;
+
+        if is_stream && self.is_buffering.load(Ordering::Acquire) && !decoder_at_eof && !seek_pending {
+            self.emit_silence_or_fade_out(out_slice, frame_count, ch);
+            self.apply_realtime_dsp_and_visualizer(out_slice);
+            return;
+        }
+
+        let (_, _, is_stretched) = self.resolved_stretch_params();
+        if is_stream
+            && !decoder_at_eof
+            && !seek_pending
+            && !is_stretched
+            && self.consumer.samples_available() < total_samples
+        {
+            self.is_buffering.store(true, Ordering::Release);
+            self.emit_silence_or_fade_out(out_slice, frame_count, ch);
+            self.apply_realtime_dsp_and_visualizer(out_slice);
             return;
         }
 
@@ -282,6 +455,8 @@ impl AudioRenderer {
         self.update_playback_state_and_position(
             read_samples,
             total_samples,
+            frame_count,
+            ch,
             un_stretched_frames_consumed,
             out_slice,
         );

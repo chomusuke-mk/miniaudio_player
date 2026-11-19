@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Result as IoResult;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
@@ -54,6 +54,8 @@ pub enum BufferError {
     OutOfMemory,
     /// Requested offset is not currently cached (`null` / awaiting data).
     WouldBlock,
+    /// Blocking or probe read was preempted by a newer seek request.
+    SeekInterrupted,
 }
 
 /// Asynchronous or on-demand byte provider callback (`getRealBytes(position, size)`).
@@ -148,6 +150,8 @@ pub struct SlidingWindowState {
     pub window_filled: bool,
     /// Last `range_end` at which a pull-mode prefetch was triggered.
     pub last_pull_trigger_end: u64,
+    /// True for unbounded live streams so incoming TCP bursts drain whenever ring space allows.
+    pub is_live: bool,
 }
 
 impl SlidingWindowState {
@@ -171,6 +175,7 @@ impl SlidingWindowState {
             base_window_bytes: 0,
             window_filled: false,
             last_pull_trigger_end: 0,
+            is_live: false,
         };
         state.recalculate(capacity);
         state
@@ -429,9 +434,14 @@ impl StreamBuffer {
         let deficit = window.ahead_target_bytes.saturating_sub(ahead_bytes);
         let remaining_to_eof = audio_end.map(|end| end.saturating_sub(range_end) as usize);
 
+        const MAX_URGENT_BOOTSTRAP_BYTES: usize = 256 * 1024;
         let (phase, raw_req_len) = if ahead_bytes < win_size {
-            // Phase 1 (UrgentBootstrap): ahead < 1 window -> request 1 base window (5s)
-            (BlockFetchPhase::UrgentBootstrap, win_size)
+            // Phase 1 (UrgentBootstrap): ahead < 1 window -> request up to 1 base window,
+            // capped at 256 KiB so high-bitrate streams (CAF/DSF) wake the first post-seek frame fast.
+            (
+                BlockFetchPhase::UrgentBootstrap,
+                win_size.min(MAX_URGENT_BOOTSTRAP_BYTES),
+            )
         } else if ahead_bytes < coalesce_threshold {
             // Phase 2 (Stabilization): 1 <= ahead < coalesce_n windows -> request 1 base window (5s)
             (BlockFetchPhase::Stabilization, win_size)
@@ -444,7 +454,7 @@ impl StreamBuffer {
                 .map(|rem| rem <= deficit && rem <= free_ring_space)
                 .unwrap_or(false);
 
-            if window.window_filled && deficit < coalesce_threshold && !can_finish_eof {
+            if !window.is_live && window.window_filled && deficit < coalesce_threshold && !can_finish_eof {
                 return None;
             }
             let batch = deficit.min(coalesce_threshold);
@@ -465,7 +475,8 @@ impl StreamBuffer {
             return None;
         }
 
-        if phase == BlockFetchPhase::CoalescedCruise
+        if !window.is_live
+            && phase == BlockFetchPhase::CoalescedCruise
             && window.window_filled
             && !reaches_eof
             && length < coalesce_threshold.min(window.ahead_target_bytes)
@@ -704,12 +715,34 @@ impl StreamBuffer {
         self.read_cursor.load(Ordering::Acquire)
     }
 
-    /// Updates the read cursor offset and wakes any waiting producer thread.
+    /// Updates the read cursor offset, clears `window_filled` when remaining lookahead drops
+    /// below the coalesce threshold, and wakes any waiting producer thread.
     #[inline]
     pub fn set_cursor(&self, offset: u64) {
         self.read_cursor.store(offset, Ordering::Release);
-        if self.is_circular && self.is_producer_waiting.load(Ordering::Acquire) {
-            self.data_signal.notify_all();
+        if self.is_circular {
+            let mut guard = lock_unpoisoned(&self.backend);
+            if let BufferBackend::Circular {
+                anchor_offset,
+                range_start,
+                range_end,
+                ref mut window,
+                ..
+            } = *guard
+            {
+                let effective_cursor = offset.max(anchor_offset).max(range_start);
+                let ahead_bytes = range_end.saturating_sub(effective_cursor) as usize;
+                let coalesce_threshold = window
+                    .base_window_bytes
+                    .max(1)
+                    .saturating_mul(window.config.coalesce_windows.max(1));
+                if ahead_bytes < coalesce_threshold {
+                    window.window_filled = false;
+                }
+            }
+            if self.is_producer_waiting.load(Ordering::Acquire) {
+                self.data_signal.notify_all();
+            }
         }
     }
 
@@ -1490,7 +1523,7 @@ struct ProbePageCache {
 
 impl ProbePageCache {
     const PAGE_SIZE: usize = 64 * 1024;
-    const MAX_PAGES: usize = 32;
+    const MAX_PAGES: usize = 48;
 
     fn read_cached(&self, offset: u64, out: &mut [u8]) -> usize {
         if out.is_empty() {
@@ -1557,6 +1590,324 @@ pub struct StreamSession {
     has_container_tail: Arc<AtomicBool>,
     /// Piecewise monotonic byte-to-millisecond anchor map for accurate buffered telemetry.
     byte_time_map: Arc<RwLock<ByteTimeMap>>,
+    /// Accumulated FLAC `(file_byte_offset, sample_number)` points for synthetic SEEKTABLE generation.
+    flac_seek_points: Arc<Mutex<Vec<(u64, u64)>>>,
+    /// True when original container header already contained a native FLAC `SEEKTABLE` block.
+    has_native_flac_seektable: Arc<AtomicBool>,
+    /// Most recent `flush_circular` stream byte offset.
+    last_flush_target: Arc<AtomicU64>,
+    /// Monotonic counter incremented every time `flush_circular` executes on this session.
+    last_flush_seq: Arc<AtomicU64>,
+    /// Most recent seek target byte observed while in `probe_mode` (`u64::MAX` if unset).
+    probe_seek_target: Arc<AtomicU64>,
+    /// Cursor position following the most recent probe seek read.
+    probe_read_end: Arc<AtomicU64>,
+    /// Latest seek generation published by the engine dispatcher.
+    latest_seek_gen: Arc<AtomicU64>,
+    /// Highest seek generation already dequeued/acknowledged by `DecoderWorker`.
+    ack_seek_gen: Arc<AtomicU64>,
+    /// Optional HLS VOD lookahead & segment-jump controller.
+    hls_vod: Arc<RwLock<Option<Arc<HlsVodState>>>>,
+}
+
+/// Segment metadata descriptor for bounded-lookahead HLS VOD streaming and instant segment seek.
+#[derive(Debug, Clone)]
+pub struct HlsVodSegment {
+    /// Resolved segment URL or local path.
+    pub url: String,
+    /// Optional explicit HTTP byte range `(offset, len)`.
+    pub byte_range: Option<(u64, u64)>,
+    /// Cumulative start timestamp in milliseconds inside the VOD playlist.
+    pub start_ms: i64,
+    /// Segment duration in milliseconds.
+    pub duration_ms: i64,
+}
+
+/// Action returned to the HLS VOD background streamer loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VodAction {
+    /// A pending seek jump must be accepted before fetching any more segments.
+    JumpPending,
+    /// Fetch segment index `0` under jump epoch `1`.
+    FetchSegment(usize, u64),
+    /// Lookahead target is satisfied; wait until cursor advances or a jump arrives.
+    Sleep,
+    /// Reached end of playlist for `current_epoch`.
+    Eof {
+        /// Whether `session.mark_eof()` was already called for this run.
+        already_marked: bool,
+        /// Active jump epoch at EOF.
+        current_epoch: u64,
+    },
+}
+
+struct HlsVodInner {
+    next_fetch_idx: usize,
+    loaded_end_ms: i64,
+    cum_bytes: u64,
+    cum_ms: i64,
+    current_epoch: u64,
+    accepted_epoch: u64,
+    pending_jump: Option<(usize, u64)>,
+    eof_marked: bool,
+    fed_spans: Vec<(usize, u64, u64, i64, i64)>,
+    cached_segments: VecDeque<(usize, Vec<u8>)>,
+}
+
+/// Shared synchronization controller coordinating bounded HLS VOD prefetching and segment-level seeks.
+pub struct HlsVodState {
+    segments: Vec<HlsVodSegment>,
+    total_duration_ms: i64,
+    audio_start_offset: u64,
+    lookahead_ms: i64,
+    cursor_ms: AtomicI64,
+    loaded_end_ms_atomic: AtomicI64,
+    jump_epoch: AtomicU64,
+    inner: Mutex<HlsVodInner>,
+    wake: Condvar,
+}
+
+impl HlsVodState {
+    /// Default bounded forward prefetch window in milliseconds (`30s`, ~3 segments on 10s HLS).
+    pub const DEFAULT_LOOKAHEAD_MS: i64 = 30_000;
+    const MAX_CACHED_SEGMENTS: usize = 8;
+
+    /// Initializes HLS VOD state right after segment `0` has been pushed into `session`.
+    pub fn new(
+        segments: Vec<HlsVodSegment>,
+        total_duration_ms: i64,
+        audio_start_offset: u64,
+        first_segment_bytes: Vec<u8>,
+        first_body_end: u64,
+        first_dur_ms: i64,
+    ) -> Arc<Self> {
+        let mut cached = VecDeque::with_capacity(Self::MAX_CACHED_SEGMENTS);
+        cached.push_back((0, first_segment_bytes));
+        let fed_spans = vec![(0, audio_start_offset, first_body_end, 0, first_dur_ms)];
+        Arc::new(Self {
+            segments,
+            total_duration_ms: total_duration_ms.max(first_dur_ms),
+            audio_start_offset,
+            lookahead_ms: Self::DEFAULT_LOOKAHEAD_MS,
+            cursor_ms: AtomicI64::new(0),
+            loaded_end_ms_atomic: AtomicI64::new(first_dur_ms),
+            jump_epoch: AtomicU64::new(0),
+            inner: Mutex::new(HlsVodInner {
+                next_fetch_idx: 1,
+                loaded_end_ms: first_dur_ms,
+                cum_bytes: first_body_end,
+                cum_ms: first_dur_ms,
+                current_epoch: 0,
+                accepted_epoch: 0,
+                pending_jump: None,
+                eof_marked: false,
+                fed_spans,
+                cached_segments: cached,
+            }),
+            wake: Condvar::new(),
+        })
+    }
+
+    /// Returns total VOD playlist duration in milliseconds.
+    #[inline]
+    pub fn total_duration_ms(&self) -> i64 {
+        self.total_duration_ms
+    }
+
+    /// Returns configured initial audio start offset.
+    #[inline]
+    pub fn audio_start_offset(&self) -> u64 {
+        self.audio_start_offset
+    }
+
+    /// Returns segment index whose `[start_ms, end_ms)` contains `target_ms`.
+    pub fn segment_for_ms(&self, target_ms: i64) -> usize {
+        if self.segments.is_empty() {
+            return 0;
+        }
+        let clamped = target_ms.max(0);
+        let idx = self
+            .segments
+            .partition_point(|s| s.start_ms <= clamped)
+            .saturating_sub(1);
+        idx.min(self.segments.len() - 1)
+    }
+
+    /// Returns segment descriptor by index.
+    #[inline]
+    pub fn segment(&self, idx: usize) -> Option<&HlsVodSegment> {
+        self.segments.get(idx)
+    }
+
+    /// Updates playback cursor timestamp (ms) and wakes the streamer when lookahead falls below target.
+    pub fn update_cursor_ms(&self, ms: i64) {
+        let clamped = ms.max(0);
+        self.cursor_ms.store(clamped, Ordering::Release);
+        if clamped.saturating_add(self.lookahead_ms)
+            > self.loaded_end_ms_atomic.load(Ordering::Acquire)
+        {
+            let _guard = lock_unpoisoned(&self.inner);
+            self.wake.notify_all();
+        }
+    }
+
+    /// Checks whether `seg_idx` already resides cleanly inside `[r_start, r_end)` of the body ring.
+    pub fn find_in_ring_span(&self, seg_idx: usize, r_start: u64, r_end: u64) -> Option<(u64, i64)> {
+        let guard = lock_unpoisoned(&self.inner);
+        guard
+            .fed_spans
+            .iter()
+            .find(|&&(idx, b_start, b_end, _, _)| {
+                idx == seg_idx && b_start >= r_start && b_end <= r_end
+            })
+            .map(|&(_, b_start, _, s_ms, _)| (b_start, s_ms))
+    }
+
+    /// Requests jumping the HLS VOD download window to `seg_idx`. Returns the new monotonic jump epoch.
+    pub fn request_jump(&self, seg_idx: usize) -> u64 {
+        let clamped_idx = seg_idx.min(self.segments.len().saturating_sub(1));
+        let mut guard = lock_unpoisoned(&self.inner);
+        let epoch = self.jump_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        guard.pending_jump = Some((clamped_idx, epoch));
+        self.wake.notify_all();
+        epoch
+    }
+
+    /// Waits in short slices until `streamer` has flushed and accepted `epoch`, or `is_aborted()` triggers.
+    pub fn wait_jump_accepted<F: Fn() -> bool>(&self, epoch: u64, is_aborted: F) -> bool {
+        let mut guard = lock_unpoisoned(&self.inner);
+        loop {
+            if guard.accepted_epoch >= epoch {
+                return true;
+            }
+            if is_aborted() {
+                return false;
+            }
+            let (g, _) = wait_timeout_unpoisoned(&self.wake, guard, Duration::from_millis(10));
+            guard = g;
+        }
+    }
+
+    /// Returns true once a newer jump epoch has been issued after `epoch`.
+    #[inline]
+    pub fn is_epoch_stale(&self, epoch: u64) -> bool {
+        self.jump_epoch.load(Ordering::Acquire) != epoch
+    }
+
+    /// Pops any pending jump target and reinitializes VOD cursor/window metadata prior to flushing `session`.
+    pub fn take_pending_jump(&self) -> Option<(usize, u64, i64)> {
+        let mut guard = lock_unpoisoned(&self.inner);
+        let (seg_idx, epoch) = guard.pending_jump.take()?;
+        let start_ms = self.segments.get(seg_idx).map(|s| s.start_ms).unwrap_or(0);
+        guard.current_epoch = epoch;
+        guard.next_fetch_idx = seg_idx;
+        guard.loaded_end_ms = start_ms;
+        guard.cum_bytes = self.audio_start_offset;
+        guard.cum_ms = start_ms;
+        guard.eof_marked = false;
+        guard.fed_spans.clear();
+        self.loaded_end_ms_atomic.store(start_ms, Ordering::Release);
+        self.cursor_ms.store(start_ms, Ordering::Release);
+        Some((seg_idx, epoch, start_ms))
+    }
+
+    /// Marks `epoch` accepted after `session.flush` and `reset_hls_vod_window` complete, waking `DecoderWorker`.
+    pub fn mark_jump_accepted(&self, epoch: u64) {
+        let mut guard = lock_unpoisoned(&self.inner);
+        guard.accepted_epoch = guard.accepted_epoch.max(epoch);
+        self.wake.notify_all();
+    }
+
+    /// Determines the next action for the HLS VOD background streamer thread.
+    pub fn next_action(&self) -> VodAction {
+        let guard = lock_unpoisoned(&self.inner);
+        if guard.pending_jump.is_some() {
+            return VodAction::JumpPending;
+        }
+        if guard.next_fetch_idx < self.segments.len() {
+            let cursor = self.cursor_ms.load(Ordering::Acquire);
+            if guard.loaded_end_ms < cursor.saturating_add(self.lookahead_ms) {
+                return VodAction::FetchSegment(guard.next_fetch_idx, guard.current_epoch);
+            }
+            return VodAction::Sleep;
+        }
+        VodAction::Eof {
+            already_marked: guard.eof_marked,
+            current_epoch: guard.current_epoch,
+        }
+    }
+
+    /// Marks EOF dispatched for `epoch` so repeated loop wakes do not spam `mark_eof`.
+    pub fn mark_eof_sent(&self, epoch: u64) {
+        let mut guard = lock_unpoisoned(&self.inner);
+        if guard.current_epoch == epoch {
+            guard.eof_marked = true;
+        }
+    }
+
+    /// Returns a cloned copy of `seg_idx` audio bytes if already cached in memory.
+    pub fn get_cached_segment(&self, seg_idx: usize) -> Option<Vec<u8>> {
+        let guard = lock_unpoisoned(&self.inner);
+        guard
+            .cached_segments
+            .iter()
+            .find(|(idx, _)| *idx == seg_idx)
+            .map(|(_, bytes)| bytes.clone())
+    }
+
+    /// Stores downloaded segment bytes in a bounded FIFO cache so local backward seeks avoid HTTP fetches.
+    pub fn put_cached_segment(&self, seg_idx: usize, bytes: Vec<u8>) {
+        let mut guard = lock_unpoisoned(&self.inner);
+        if guard.cached_segments.iter().any(|(idx, _)| *idx == seg_idx) {
+            return;
+        }
+        if guard.cached_segments.len() >= Self::MAX_CACHED_SEGMENTS {
+            guard.cached_segments.pop_front();
+        }
+        guard.cached_segments.push_back((seg_idx, bytes));
+    }
+
+    /// Records a newly fetched segment under `epoch`, returning `(end_byte, end_ms)` when `epoch` is still current.
+    pub fn commit_segment_span(
+        &self,
+        epoch: u64,
+        seg_idx: usize,
+        payload_len: usize,
+        duration_ms: i64,
+    ) -> Option<(u64, i64)> {
+        let mut guard = lock_unpoisoned(&self.inner);
+        if guard.current_epoch != epoch || self.jump_epoch.load(Ordering::Acquire) != epoch {
+            return None;
+        }
+        let byte_start = guard.cum_bytes;
+        let byte_end = byte_start.saturating_add(payload_len as u64);
+        let start_ms = guard.cum_ms;
+        let end_ms = start_ms.saturating_add(duration_ms.max(0));
+        guard.cum_bytes = byte_end;
+        guard.cum_ms = end_ms;
+        guard.loaded_end_ms = end_ms;
+        guard.next_fetch_idx = seg_idx + 1;
+        guard
+            .fed_spans
+            .push((seg_idx, byte_start, byte_end, start_ms, end_ms));
+        self.loaded_end_ms_atomic.store(end_ms, Ordering::Release);
+        Some((byte_end, end_ms))
+    }
+
+    /// Sleeps up to `timeout` waiting for playback lookahead demand, a jump request, or wake notification.
+    pub fn wait_for_demand(&self, timeout: Duration) {
+        let guard = lock_unpoisoned(&self.inner);
+        if guard.pending_jump.is_some() {
+            return;
+        }
+        let _ = wait_timeout_unpoisoned(&self.wake, guard, timeout);
+    }
+
+    /// Wakes any waiters on this controller (used on abort/stop).
+    pub fn notify_all(&self) {
+        let _guard = lock_unpoisoned(&self.inner);
+        self.wake.notify_all();
+    }
 }
 
 impl StreamSession {
@@ -1587,6 +1938,12 @@ impl StreamSession {
             StreamBuffer::DEFAULT_MIN_GROWTH,
         );
         let body = StreamBuffer::new_circular(capacity_bytes, config, fetcher);
+        {
+            let mut guard = lock_unpoisoned(&body.backend);
+            if let BufferBackend::Circular { ref mut window, .. } = *guard {
+                window.is_live = is_live;
+            }
+        }
         let metadata = StreamBuffer::new_sparse(StreamBuffer::DEFAULT_MIN_GROWTH, total_size);
 
         let session = Self {
@@ -1608,6 +1965,15 @@ impl StreamSession {
                 total_size.unwrap_or(0),
                 0,
             ))),
+            flac_seek_points: Arc::new(Mutex::new(Vec::new())),
+            has_native_flac_seektable: Arc::new(AtomicBool::new(false)),
+            last_flush_target: Arc::new(AtomicU64::new(0)),
+            last_flush_seq: Arc::new(AtomicU64::new(0)),
+            probe_seek_target: Arc::new(AtomicU64::new(u64::MAX)),
+            probe_read_end: Arc::new(AtomicU64::new(0)),
+            latest_seek_gen: Arc::new(AtomicU64::new(0)),
+            ack_seek_gen: Arc::new(AtomicU64::new(0)),
+            hls_vod: Arc::new(RwLock::new(None)),
         };
         if let Some(tot) = total_size {
             session.body.set_audio_end(Some(tot));
@@ -1934,6 +2300,31 @@ impl StreamSession {
         }
     }
 
+    /// Publishes a newly dispatched seek generation and wakes any blocked reader thread.
+    pub fn publish_seek_gen(&self, gen: u64) {
+        self.latest_seek_gen.fetch_max(gen, Ordering::SeqCst);
+        let _guard = lock_unpoisoned(&self.body.backend);
+        self.body.data_signal.notify_all();
+    }
+
+    /// Marks `gen` (and earlier seeks) as dequeued by `DecoderWorker`.
+    #[inline]
+    pub fn acknowledge_seek_gen(&self, gen: u64) {
+        self.ack_seek_gen.fetch_max(gen, Ordering::AcqRel);
+    }
+
+    /// Returns the most recently published seek generation on this session.
+    #[inline]
+    pub fn latest_seek_gen(&self) -> u64 {
+        self.latest_seek_gen.load(Ordering::SeqCst)
+    }
+
+    /// Returns `true` when a newer seek generation has been dispatched than `DecoderWorker` has picked up.
+    #[inline]
+    pub fn has_pending_seek_preempt(&self) -> bool {
+        self.latest_seek_gen.load(Ordering::Acquire) > self.ack_seek_gen.load(Ordering::Acquire)
+    }
+
     /// Blocking composite read across `Head` and `Body` with `Condvar` suspension.
     pub fn read_blocking(
         &self,
@@ -1945,11 +2336,17 @@ impl StreamSession {
         let start_time = MonotonicInstant::now();
 
         loop {
+            if self.has_pending_seek_preempt() {
+                return Err(BufferError::SeekInterrupted);
+            }
             match self.read_at(offset, out) {
                 Ok(n) => return Ok(n),
                 Err(BufferError::WouldBlock) => {
                     if self.body.should_abort.load(Ordering::Acquire) {
                         return Err(BufferError::Aborted);
+                    }
+                    if self.has_pending_seek_preempt() {
+                        return Err(BufferError::SeekInterrupted);
                     }
                     let (r_start, r_end, _) = self.body.circular_metrics();
                     if !self.in_probe_mode()
@@ -1974,6 +2371,9 @@ impl StreamSession {
                     if self.body.should_abort.load(Ordering::Acquire) {
                         return Err(BufferError::Aborted);
                     }
+                    if self.has_pending_seek_preempt() {
+                        return Err(BufferError::SeekInterrupted);
+                    }
                     let _ = self.body.data_signal.wait_timeout(guard, slice_wait);
                 }
                 Err(e) => return Err(e),
@@ -1981,14 +2381,121 @@ impl StreamSession {
         }
     }
 
-    /// Advances the active read cursor on `Body`.
+    /// Advances the active read cursor on `Body` and notifies any bounded HLS VOD lookahead controller.
     pub fn advance_read_cursor(&self, cursor: u64) {
         self.body.set_cursor(cursor);
+        if let Some(ref vod) = *read_unpoisoned(&self.hls_vod) {
+            let ms = self.mapped_byte_to_ms(cursor, false);
+            vod.update_cursor_ms(ms);
+        }
+    }
+
+    /// Attaches an [`HlsVodState`] controller for bounded-lookahead streaming and segment seeks.
+    pub fn set_hls_vod(&self, vod: Arc<HlsVodState>) {
+        let mut guard = write_unpoisoned(&self.hls_vod);
+        *guard = Some(vod);
+    }
+
+    /// Returns a cloned handle to the active [`HlsVodState`] if this session backs an HLS VOD track.
+    pub fn hls_vod(&self) -> Option<Arc<HlsVodState>> {
+        read_unpoisoned(&self.hls_vod).clone()
+    }
+
+    /// Wakes threads sleeping on `Body::data_signal` (used to preempt chunk feeds on HLS VOD jump).
+    pub fn notify_data_signal(&self) {
+        let _guard = lock_unpoisoned(&self.body.backend);
+        self.body.data_signal.notify_all();
+    }
+
+    /// Resets [`ByteTimeMap`] anchors for a fresh HLS VOD segment window starting at `(audio_start, start_ms)`.
+    pub fn reset_hls_vod_window(&self, audio_start: u64, start_ms: i64, duration_ms: i64) {
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.reset_window(audio_start, start_ms, duration_ms);
     }
 
     /// Flushes `Body` to `new_stream_offset` after an uncached seek.
     pub fn flush(&self, new_stream_offset: u64) {
+        self.last_flush_target
+            .store(new_stream_offset, Ordering::Release);
+        self.last_flush_seq.fetch_add(1, Ordering::AcqRel);
         self.body.flush_circular(new_stream_offset);
+    }
+
+    /// Monotonic sequence counter incremented each time `flush` or `seek` re-anchors the circular buffer.
+    #[inline]
+    pub fn flush_seq(&self) -> u64 {
+        self.last_flush_seq.load(Ordering::Acquire)
+    }
+
+    /// Byte offset passed to the most recent `flush_circular`.
+    #[inline]
+    pub fn last_flush_target(&self) -> u64 {
+        self.last_flush_target.load(Ordering::Acquire)
+    }
+
+    /// Resets per-seek probe cursor tracking before dispatching a demuxer seek.
+    #[inline]
+    pub fn reset_probe_seek_tracking(&self) {
+        self.probe_seek_target.store(u64::MAX, Ordering::Release);
+        self.probe_read_end.store(0, Ordering::Release);
+    }
+
+    /// Records a demuxer seek target byte encountered while in probe mode and resets the
+    /// sequential post-seek probe read cursor so earlier bisection jumps don't pollute it.
+    #[inline]
+    pub fn note_probe_seek_target(&self, offset: u64) {
+        self.probe_seek_target.store(offset, Ordering::Release);
+        self.probe_read_end.store(offset, Ordering::Release);
+    }
+
+    /// Records the cursor offset after a sequential probe read.
+    #[inline]
+    pub fn note_probe_read_end(&self, end_offset: u64) {
+        self.probe_read_end.store(end_offset, Ordering::Release);
+    }
+
+    /// Returns `(last_probe_seek_target, furthest_probe_read_end)`.
+    #[inline]
+    pub fn probe_seek_tracking(&self) -> (Option<u64>, u64) {
+        let tgt = self.probe_seek_target.load(Ordering::Acquire);
+        let end = self.probe_read_end.load(Ordering::Acquire);
+        (if tgt == u64::MAX { None } else { Some(tgt) }, end)
+    }
+
+    /// Re-anchors the circular `Body` window directly to `anchor_byte` right after a seek whose
+    /// probing reads came from `ProbePageCache` rather than triggering `flush_circular`, seeding
+    /// any cached bytes up to `resume_cursor` so `MediaSourceStream` continues cleanly with zero shift.
+    pub fn reanchor_circular_after_probe_seek(&self, anchor_byte: u64, resume_cursor: u64) {
+        let audio_start = self.audio_start.load(Ordering::Acquire);
+        if anchor_byte < audio_start {
+            return;
+        }
+        let (r_start, r_end, cap) = self.body.circular_metrics();
+        if anchor_byte >= r_start && anchor_byte < r_end {
+            return;
+        }
+        self.flush(anchor_byte);
+        let max_seed = (cap / 2).max(65_536);
+        let mut seeded = 0usize;
+        let mut cur = anchor_byte;
+        let mut tmp = [0u8; 32 * 1024];
+        while seeded < max_seed {
+            let n = {
+                let cache = lock_unpoisoned(&self.probe_cache);
+                cache.read_cached(cur, &mut tmp)
+            };
+            if n == 0 {
+                break;
+            }
+            if self.body.feed_sequential(cur, &tmp[..n]).is_err() {
+                break;
+            }
+            cur = cur.saturating_add(n as u64);
+            seeded += n;
+        }
+        if resume_cursor > anchor_byte {
+            self.body.set_cursor(resume_cursor);
+        }
     }
 
     /// Updates the read cursor to `target_offset`, serving from `[Back | Ahead]` on a cache hit
@@ -2027,6 +2534,9 @@ impl StreamSession {
                 is_eof,
                 self.in_probe_mode()
             );
+            self.last_flush_target
+                .store(target_offset, Ordering::Release);
+            self.last_flush_seq.fetch_add(1, Ordering::AcqRel);
             self.body.flush_circular(target_offset);
         } else {
             self.body.set_cursor(target_offset);
@@ -2082,6 +2592,9 @@ impl StreamSession {
         self.body.abort();
         self.metadata.abort();
         lock_unpoisoned(&self.probe_cache).clear();
+        if let Some(ref vod) = *read_unpoisoned(&self.hls_vod) {
+            vod.notify_all();
+        }
     }
 
     /// Clears abort status on `Head`, `Body`, and `Metadata`.
@@ -2238,6 +2751,9 @@ impl StreamSession {
         if self.body.should_abort.load(Ordering::Acquire) {
             return Some(Err(BufferError::Aborted));
         }
+        if self.has_pending_seek_preempt() {
+            return Some(Err(BufferError::SeekInterrupted));
+        }
         if let Some(tot) = self.total_size {
             if offset >= tot {
                 return Some(Ok(0));
@@ -2305,6 +2821,9 @@ impl StreamSession {
         if self.body.should_abort.load(Ordering::Acquire) {
             return Some(Err(BufferError::Aborted));
         }
+        if self.has_pending_seek_preempt() {
+            return Some(Err(BufferError::SeekInterrupted));
+        }
 
         let Some(bytes) = data else {
             return None;
@@ -2327,10 +2846,45 @@ impl StreamSession {
         Some(Ok(to_copy))
     }
 
+    /// Returns a linear copy of the pinned `Head` container bytes (`0..head.linear_len()`).
+    pub fn head_bytes_copy(&self) -> Vec<u8> {
+        let len = self.head.linear_len();
+        if len == 0 {
+            return Vec::new();
+        }
+        let mut buf = vec![0u8; len];
+        let got = self.head.read_at(0, &mut buf).unwrap_or(0);
+        buf.truncate(got);
+        buf
+    }
+
+    /// Returns circular body ring metrics `(range_start, range_end, capacity)`.
+    #[inline]
+    pub fn body_metrics(&self) -> (u64, u64, usize) {
+        self.body.circular_metrics()
+    }
+
+    /// Reads bytes directly from the in-RAM circular `Body` cache at `offset` without HTTP I/O.
+    pub fn read_cached_body_at(&self, offset: u64, out: &mut [u8]) -> usize {
+        self.body.read_at(offset, out).unwrap_or(0)
+    }
+
+    /// Inserts a probed byte slice into `ProbePageCache` for subsequent zero-HTTP reuse.
+    pub fn cache_probe_slice(&self, offset: u64, data: Vec<u8>) {
+        let mut cache = lock_unpoisoned(&self.probe_cache);
+        cache.insert(offset, data);
+    }
+
     /// Configures stream payload bounds and total duration on the internal [`ByteTimeMap`].
     pub fn configure_byte_time_map(&self, audio_start: u64, audio_end: u64, duration_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.set_bounds(audio_start, audio_end, duration_ms);
+    }
+
+    /// Refines the logical start byte offset where `t = 0 ms` begins on [`ByteTimeMap`].
+    pub fn refine_byte_time_audio_start(&self, first_audio_byte: u64) {
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.refine_audio_start(first_audio_byte);
     }
 
     /// Installs pre-extracted container index `(byte_offset, time_ms)` anchors.
@@ -2342,6 +2896,30 @@ impl StreamSession {
         map.set_anchors(pts);
     }
 
+    /// Merges newly discovered anchors with any existing runtime/seek anchors cleanly.
+    pub fn merge_byte_time_anchors(&self, pts: Vec<(u64, i64)>) {
+        if pts.is_empty() {
+            return;
+        }
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.merge_anchors(pts);
+    }
+
+    /// Returns a cloned copy of the sorted `(byte_offset, ms)` anchors currently known.
+    pub fn byte_time_anchors(&self) -> Vec<(u64, i64)> {
+        read_unpoisoned(&self.byte_time_map).anchors().to_vec()
+    }
+
+    /// Estimates the timestamp in milliseconds for an arbitrary `byte_offset` via [`ByteTimeMap`].
+    pub fn mapped_byte_to_ms(&self, byte_offset: u64, is_range_start: bool) -> i64 {
+        read_unpoisoned(&self.byte_time_map).byte_to_ms(byte_offset, is_range_start)
+    }
+
+    /// Estimates the file byte offset for `time_ms` using [`ByteTimeMap`].
+    pub fn estimate_byte_for_ms(&self, time_ms: i64) -> Option<u64> {
+        read_unpoisoned(&self.byte_time_map).estimate_byte_for_ms(time_ms)
+    }
+
     /// Returns true when [`ByteTimeMap`] already holds container, segment, or probed anchors.
     pub fn has_byte_time_anchors(&self) -> bool {
         read_unpoisoned(&self.byte_time_map).has_anchors()
@@ -2351,6 +2929,42 @@ impl StreamSession {
     pub fn record_byte_time_anchor(&self, byte_offset: u64, time_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.record_anchor(byte_offset, time_ms);
+    }
+
+    /// Records an authoritative seek/frame anchor `(byte_offset, time_ms)`, overriding
+    /// conflicting nearby coarse probe anchors so `mapped_buffered_range` matches the actual seek.
+    pub fn record_verified_byte_time_anchor(&self, byte_offset: u64, time_ms: i64) {
+        let mut map = write_unpoisoned(&self.byte_time_map);
+        map.record_verified_anchor(byte_offset, time_ms);
+    }
+
+    /// Marks whether the open FLAC stream already carried an embedded `SEEKTABLE` block.
+    #[inline]
+    pub fn set_has_native_flac_seektable(&self, present: bool) {
+        self.has_native_flac_seektable.store(present, Ordering::Release);
+    }
+
+    /// Returns whether the stream carries a native FLAC `SEEKTABLE` block.
+    #[inline]
+    pub fn has_native_flac_seektable(&self) -> bool {
+        self.has_native_flac_seektable.load(Ordering::Acquire)
+    }
+
+    /// Records verified `(file_byte_offset, sample_number)` FLAC frame seek points for synthetic
+    /// `SEEKTABLE` synthesis on seektable-less streams.
+    pub fn record_flac_seek_points(&self, pts: &[(u64, u64)]) {
+        if pts.is_empty() {
+            return;
+        }
+        let mut guard = lock_unpoisoned(&self.flac_seek_points);
+        guard.extend_from_slice(pts);
+        guard.sort_by_key(|&(off, smp)| (off, smp));
+        guard.dedup_by(|a, b| a.0 == b.0 || a.1 == b.1);
+    }
+
+    /// Returns a cloned sorted snapshot of discovered `(file_byte_offset, sample_number)` FLAC points.
+    pub fn flac_seek_points(&self) -> Vec<(u64, u64)> {
+        lock_unpoisoned(&self.flac_seek_points).clone()
     }
 
     /// Appends an HLS VOD segment end boundary `(byte_offset, time_ms)` into [`ByteTimeMap`].
@@ -2384,5 +2998,16 @@ impl StreamSession {
     /// Creates a [`DemuxedStreamReader`] over this `StreamSession`.
     pub fn create_reader(&self) -> super::demux_reader::DemuxedStreamReader {
         super::demux_reader::DemuxedStreamReader::new(self.clone())
+    }
+
+    /// Creates a [`DemuxedStreamReader`] rooted at physical stream offset `base_offset`.
+    pub fn create_reader_at(&self, base_offset: u64) -> super::demux_reader::DemuxedStreamReader {
+        super::demux_reader::DemuxedStreamReader::new_at(self.clone(), base_offset)
+    }
+
+    /// Returns byte length currently pinned in the non-circular `Head` buffer.
+    #[inline]
+    pub fn head_len(&self) -> usize {
+        self.head.linear_len()
     }
 }

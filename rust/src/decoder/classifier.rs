@@ -212,6 +212,7 @@ impl StreamClassifier {
                 | ContainerFormat::WavPack
                 | ContainerFormat::OggVorbis
                 | ContainerFormat::OggOpus
+                | ContainerFormat::Matroska
         )
     }
 
@@ -378,6 +379,9 @@ impl StreamClassifier {
             return (BoundaryStatus::Unsupported, total_size);
         }
         if !Self::container_needs_tail_scan(container) {
+            return (BoundaryStatus::Found, total_size);
+        }
+        if container == ContainerFormat::Matroska {
             return (BoundaryStatus::Found, total_size);
         }
         if tail.is_empty() || tail_offset + tail.len() as i64 != total_size {

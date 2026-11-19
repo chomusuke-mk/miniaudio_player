@@ -69,6 +69,7 @@ fn test_audio_renderer_instant_rate_and_pitch_response() {
         visualizer_seqlock: Arc::new(CachePaddedSeqlock::new(VisualizerData::default())),
         visualizer_enabled: Arc::new(AtomicBool::new(false)),
         notification_callback: None,
+        anti_pop: Default::default(),
     };
 
     let frame_count = 480usize; // 10 ms at 48 kHz

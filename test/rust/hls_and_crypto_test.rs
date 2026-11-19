@@ -880,3 +880,147 @@ fn test_e12_hls_vod_progressive_buffered_range() {
     stop.store(true, Ordering::Release);
     let _ = srv_handle.join();
 }
+
+#[test]
+fn test_problems2_e9_hls_vod_block_lookahead_and_segment_seek() {
+    use miniaudio_player::bridge::ffi::MiniaudioBufferedRange;
+    use std::sync::Mutex;
+
+    let hls_dir = FixtureResolver::resolve("hls");
+    let m3u8_bytes = std::fs::read(hls_dir.join("28_Разводят_мосты.m3u8")).unwrap();
+    let mut seg_map = std::collections::HashMap::<String, Vec<u8>>::new();
+    for entry in std::fs::read_dir(&hls_dir).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with("28_seg_") && name.ends_with(".ts") {
+            seg_map.insert(format!("/{}", name), std::fs::read(entry.path()).unwrap());
+        }
+    }
+    let total_segs = seg_map.len();
+    assert!(total_segs >= 15, "expected >=15 TS segments, found {}", total_segs);
+
+    let m3u8_arc = Arc::new(m3u8_bytes);
+    let seg_arc = Arc::new(seg_map);
+    let req_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let req_log_srv = req_log.clone();
+
+    let (base_url, stop, srv_handle) = spawn_hls_test_server(move |path, _range| {
+        if path == "/playlist.m3u8" {
+            return (
+                200,
+                "application/vnd.apple.mpegurl",
+                (*m3u8_arc).clone(),
+                None,
+            );
+        }
+        if let Some(bytes) = seg_arc.get(path) {
+            req_log_srv.lock().unwrap().push(path.to_string());
+            std::thread::sleep(Duration::from_millis(15));
+            return (200, "video/mp2t", bytes.clone(), None);
+        }
+        (404, "text/plain", b"not found".to_vec(), None)
+    });
+
+    let playlist_url = format!("{}/playlist.m3u8", base_url);
+    let mut deck = StreamingDeck::new_deck(48000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&playlist_url, None, None), 0);
+
+    // Wait 1.0s while idle: bounded lookahead (~30s) must NOT eagerly download all 19 segments.
+    std::thread::sleep(Duration::from_millis(1000));
+    let initial_reqs = req_log.lock().unwrap().clone();
+    assert!(
+        initial_reqs.len() <= 5,
+        "E9: HLS VOD eagerly downloaded {} / {} segments at open: {:?}",
+        initial_reqs.len(),
+        total_segs,
+        initial_reqs
+    );
+    let mut initial_br = MiniaudioBufferedRange::default();
+    assert_eq!(deck.get_buffered_range(&mut initial_br), 0);
+    assert!(
+        initial_br.end_ms >= 25_000 && initial_br.end_ms <= 45_000,
+        "expected ~30-40s initial VOD lookahead, got {}..{}",
+        initial_br.start_ms,
+        initial_br.end_ms
+    );
+
+    // Jump straight to 120s (far past lookahead) and verify playback produces clean PCM near 120s.
+    deck.play();
+    assert_eq!(deck.seek(120_000), 0);
+    let mut out = vec![0.0f32; 2048];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut heard = false;
+    while Instant::now() < deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        let pos = deck.position_ms.load(Ordering::Relaxed);
+        let peak = out.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        if peak > 0.001 && pos >= 118_000 && pos <= 123_000 {
+            heard = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        heard,
+        "E9: HLS VOD seek(120000) did not produce audible audio at 120s (pos={})",
+        deck.position_ms.load(Ordering::Relaxed)
+    );
+
+    let mut br_after_jump = MiniaudioBufferedRange::default();
+    assert_eq!(deck.get_buffered_range(&mut br_after_jump), 0);
+    assert!(
+        br_after_jump.start_ms >= 110_000 && br_after_jump.start_ms <= 120_000,
+        "E9: post-jump buffered range start_ms expected near 116s, got {}..{}",
+        br_after_jump.start_ms,
+        br_after_jump.end_ms
+    );
+
+    // Skipped middle segments must NEVER have been downloaded.
+    let all_reqs_after_jump = req_log.lock().unwrap().clone();
+    for skipped in ["/28_seg_6.ts", "/28_seg_7.ts", "/28_seg_8.ts", "/28_seg_9.ts"] {
+        assert!(
+            !all_reqs_after_jump.iter().any(|r| r == skipped),
+            "E9: middle skipped segment {} was downloaded during seek to 120s: {:?}",
+            skipped,
+            all_reqs_after_jump
+        );
+    }
+
+    // Wait briefly so cached_segments settles, then seek back to 10s (seg 1 cached in RAM = 0 extra HTTP).
+    std::thread::sleep(Duration::from_millis(200));
+    let reqs_before_back = req_log.lock().unwrap().len();
+    assert_eq!(deck.seek(10_000), 0);
+    let back_deadline = Instant::now() + Duration::from_secs(3);
+    let mut back_ok = false;
+    while Instant::now() < back_deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        let pos = deck.position_ms.load(Ordering::Relaxed);
+        let peak = out.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        if peak > 0.001 && (9_000..=14_000).contains(&pos) {
+            back_ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        back_ok,
+        "E9: backward seek(10000) failed after jump to 120s (pos={})",
+        deck.position_ms.load(Ordering::Relaxed)
+    );
+    let reqs_after_back = req_log.lock().unwrap().clone();
+    let new_reqs = &reqs_after_back[reqs_before_back..];
+    assert!(
+        !new_reqs.iter().any(|r| r == "/28_seg_1.ts"),
+        "E9: expected cached seg 1 NOT to be re-fetched over HTTP after backward seek(10s): {:?}",
+        new_reqs
+    );
+    assert!(
+        new_reqs.len() <= 2,
+        "E9: expected at most lookahead seg 4 / in-flight seg 15 on backward seek(10s), got {:?}",
+        new_reqs
+    );
+
+    let _ = deck.stop();
+    drop(deck);
+    stop.store(true, Ordering::Release);
+    let _ = srv_handle.join();
+}

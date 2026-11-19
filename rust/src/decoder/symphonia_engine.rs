@@ -369,7 +369,36 @@ impl SymphoniaTrackSession {
         }
     }
 
-    fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
+    fn advance_to_ms(&mut self, target_stop_ms: u64) -> Option<u64> {
+        let tb = self
+            .format_reader
+            .tracks()
+            .iter()
+            .find(|t| t.id == self.track_id)
+            .and_then(|t| t.time_base)?;
+        let mut last_ms = None;
+        while let Ok(Some(pkt)) = self.format_reader.next_packet() {
+            if pkt.track_id != self.track_id {
+                continue;
+            }
+            if let Some(t) = tb.calc_time(pkt.pts) {
+                let pkt_ms = (t.as_nanos() / 1_000_000).max(0) as u64;
+                last_ms = Some(pkt_ms);
+                if pkt_ms >= target_stop_ms {
+                    break;
+                }
+            }
+        }
+        last_ms
+    }
+
+    fn seek_ms(&mut self, position_ms: u64) -> Result<u64, SymphoniaError> {
+        let tb = self
+            .format_reader
+            .tracks()
+            .iter()
+            .find(|t| t.id == self.track_id)
+            .and_then(|t| t.time_base);
         let time = Time::from_millis_u64(position_ms);
         let res = self.format_reader.seek(
             SeekMode::Coarse,
@@ -378,15 +407,27 @@ impl SymphoniaTrackSession {
                 track_id: Some(self.track_id),
             },
         );
+        let time_to_ms = |t: Time| -> u64 { (t.as_nanos() / 1_000_000).max(0) as u64 };
+        let mut actual_ms = position_ms;
 
-        if res.is_err() && position_ms == 0 {
-            let _ = self.format_reader.seek(
+        if let Ok(seeked) = res {
+            if let Some(t) = tb.and_then(|time_base| time_base.calc_time(seeked.actual_ts)) {
+                actual_ms = time_to_ms(t);
+            }
+        } else if res.is_err() && position_ms == 0 {
+            if let Ok(seeked) = self.format_reader.seek(
                 SeekMode::Coarse,
                 SeekTo::Timestamp {
                     ts: Timestamp::default(),
                     track_id: self.track_id,
                 },
-            );
+            ) {
+                if let Some(t) = tb.and_then(|time_base| time_base.calc_time(seeked.actual_ts)) {
+                    actual_ms = time_to_ms(t);
+                } else {
+                    actual_ms = 0;
+                }
+            }
         } else if let Err(SymphoniaError::SeekError(symphonia::core::errors::SeekErrorKind::OutOfRange)) = &res {
             let within_known_dur = self.duration_ms.map(|d| position_ms < d).unwrap_or(true);
             if matches!(self.container_format, "Matroska" | "WebM")
@@ -394,12 +435,6 @@ impl SymphoniaTrackSession {
                 && within_known_dur
             {
                 let mut recovered = false;
-                let tb = self
-                    .format_reader
-                    .tracks()
-                    .iter()
-                    .find(|t| t.id == self.track_id)
-                    .and_then(|t| t.time_base);
                 for backoff in [1_500u64, 5_000, 10_000] {
                     let fallback_ms = position_ms.saturating_sub(backoff);
                     if self
@@ -413,17 +448,8 @@ impl SymphoniaTrackSession {
                         )
                         .is_ok()
                     {
-                        let target_stop = position_ms.saturating_sub(150);
-                        while let Ok(Some(pkt)) = self.format_reader.next_packet() {
-                            if pkt.track_id != self.track_id {
-                                continue;
-                            }
-                            if let Some(t) = tb.and_then(|time_base| time_base.calc_time(pkt.pts)) {
-                                let pkt_ms = (t.as_nanos() / 1_000_000).max(0) as u64;
-                                if pkt_ms >= target_stop {
-                                    break;
-                                }
-                            }
+                        if let Some(pkt_ms) = self.advance_to_ms(position_ms.saturating_sub(150)) {
+                            actual_ms = pkt_ms;
                         }
                         recovered = true;
                         break;
@@ -441,7 +467,7 @@ impl SymphoniaTrackSession {
 
         self.last_io_unexpected_eof = false;
         self.decoder.reset();
-        Ok(())
+        Ok(actual_ms)
     }
 }
 
@@ -741,16 +767,165 @@ impl SymphoniaEngine {
 
     /// Seeks the underlying container stream to the specified position in milliseconds.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
-        match &mut self.backend {
-            EngineBackend::ExtendedPcm(pcm) => pcm.seek_ms(position_ms)?,
-            EngineBackend::Dsf(dsf) => dsf.seek_ms(position_ms)?,
-            EngineBackend::Ape(ape) => ape.seek_ms(position_ms)?,
-            EngineBackend::WavPack(wv) => wv.seek_ms(position_ms)?,
+        self.seek_ms_with_actual(position_ms).map(|_| ())
+    }
+
+    /// Seeks to `position_ms` and returns the actual keyframe/block start timestamp landed on.
+    pub fn seek_ms_with_actual(&mut self, position_ms: u64) -> Result<u64, SymphoniaError> {
+        let actual_ms = match &mut self.backend {
+            EngineBackend::ExtendedPcm(pcm) => {
+                pcm.seek_ms(position_ms)?;
+                position_ms
+            }
+            EngineBackend::Dsf(dsf) => {
+                dsf.seek_ms(position_ms)?;
+                position_ms
+            }
+            EngineBackend::Ape(ape) => {
+                ape.seek_ms(position_ms)?;
+                position_ms
+            }
+            EngineBackend::WavPack(wv) => {
+                wv.seek_ms(position_ms)?;
+                wv.current_block_start_ms()
+            }
             EngineBackend::Symphonia(session) => session.seek_ms(position_ms)?,
-        }
+        };
         self.anchor_ms = position_ms;
         self.frames_from_anchor = 0;
-        Ok(())
+        Ok(actual_ms)
+    }
+
+    /// Returns true if the active decoder is a Symphonia FLAC container session.
+    #[inline]
+    pub fn is_flac_stream(&self) -> bool {
+        matches!(&self.backend, EngineBackend::Symphonia(s) if s.container_format == "FLAC")
+    }
+
+    /// Returns true if the active decoder is a Symphonia Matroska/WebM session.
+    #[inline]
+    pub fn is_mkv_or_webm(&self) -> bool {
+        matches!(
+            &self.backend,
+            EngineBackend::Symphonia(s) if matches!(s.container_format, "Matroska" | "WebM")
+        )
+    }
+
+    /// Advances demuxed packets without decoding up to `target_stop_ms` (returns last seen ms).
+    pub fn advance_to_ms(&mut self, target_stop_ms: u64) -> Option<u64> {
+        match &mut self.backend {
+            EngineBackend::Symphonia(s) => s.advance_to_ms(target_stop_ms),
+            _ => None,
+        }
+    }
+
+    /// Updates the decoder playback timestamp anchor after external seek adjustments.
+    #[inline]
+    pub fn set_anchor_ms(&mut self, anchor_ms: u64) {
+        self.anchor_ms = anchor_ms;
+        self.frames_from_anchor = 0;
+    }
+
+    /// Initializes a Symphonia FLAC decoder backed by a memory-resident synthetic `SEEKTABLE`
+    /// header (`virtual_head`) followed by `inner` starting past `actual_first_frame`.
+    pub fn new_patched_flac<S: MediaSource + 'static>(
+        virtual_head: Vec<u8>,
+        virtual_delta: u64,
+        inner: S,
+    ) -> Result<Self, SymphoniaError> {
+        let inner_len = inner.byte_len();
+        let src = PatchedFlacSource::new(virtual_head, virtual_delta, Box::new(inner), inner_len);
+        Self::new_with_options(src, Some("flac"), false)
+    }
+}
+
+struct PatchedFlacSource {
+    virtual_head: Vec<u8>,
+    delta: u64,
+    pos: u64,
+    inner: Box<dyn MediaSource>,
+    inner_synced: bool,
+    total_virtual_len: Option<u64>,
+}
+
+impl PatchedFlacSource {
+    fn new(
+        virtual_head: Vec<u8>,
+        delta: u64,
+        inner: Box<dyn MediaSource>,
+        inner_len: Option<u64>,
+    ) -> Self {
+        Self {
+            virtual_head,
+            delta,
+            pos: 0,
+            inner,
+            inner_synced: false,
+            total_virtual_len: inner_len.map(|n| n.saturating_add(delta)),
+        }
+    }
+}
+
+impl std::io::Read for PatchedFlacSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let head_len = self.virtual_head.len() as u64;
+        if self.pos < head_len {
+            let off = self.pos as usize;
+            let avail = self.virtual_head.len() - off;
+            let n = avail.min(buf.len());
+            buf[..n].copy_from_slice(&self.virtual_head[off..off + n]);
+            self.pos += n as u64;
+            return Ok(n);
+        }
+        let real_pos = self.pos.saturating_sub(self.delta);
+        if !self.inner_synced {
+            self.inner.seek(std::io::SeekFrom::Start(real_pos))?;
+            self.inner_synced = true;
+        }
+        let n = self.inner.read(buf)?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl std::io::Seek for PatchedFlacSource {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let next = match pos {
+            std::io::SeekFrom::Start(p) => p,
+            std::io::SeekFrom::Current(d) => (self.pos as i64).saturating_add(d).max(0) as u64,
+            std::io::SeekFrom::End(d) => {
+                let len = self.total_virtual_len.ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "PatchedFlacSource missing byte_len for SeekFrom::End",
+                    )
+                })?;
+                (len as i64).saturating_add(d).max(0) as u64
+            }
+        };
+        self.pos = next;
+        let head_len = self.virtual_head.len() as u64;
+        if next >= head_len {
+            let real_pos = next.saturating_sub(self.delta);
+            self.inner.seek(std::io::SeekFrom::Start(real_pos))?;
+            self.inner_synced = true;
+        } else {
+            self.inner_synced = false;
+        }
+        Ok(next)
+    }
+}
+
+impl MediaSource for PatchedFlacSource {
+    fn is_seekable(&self) -> bool {
+        self.inner.is_seekable()
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.total_virtual_len
     }
 }
 

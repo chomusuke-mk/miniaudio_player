@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data' show ByteData, BytesBuilder, Endian;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart' show RootIsolateToken;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Float32List, Int64List, PlatformInt64Util, Uint8List;
@@ -736,6 +737,12 @@ class MiniaudioPlayer<T> {
   // Native Rust Event Dispatcher (Fine-Grained Active Stream Ingestion)
   // =========================================================================
 
+  /// Feeds a native Rust player event directly into [_onRustEvent] for
+  /// deterministic telemetry synchronization tests.
+  @visibleForTesting
+  void dispatchRustEventForTesting(rust_types.RustPlayerEvent event) =>
+      _onRustEvent(event);
+
   void _onRustEvent(rust_types.RustPlayerEvent event) {
     if (_isDisposed) return;
     switch (event) {
@@ -772,6 +779,15 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_IsBuffering(:final field0):
         state._isBuffering = field0;
         stream._bufferingController.add(field0);
+        if (state._buffer.isBuffering != field0) {
+          final synced = Buffer(
+            start: state._buffer.start,
+            end: state._buffer.end,
+            isBuffering: field0,
+          );
+          state._buffer = synced;
+          stream._bufferController.add(synced);
+        }
       case rust_types.RustPlayerEvent_Position(:final field0):
         final pos = Duration(milliseconds: field0.toInt());
         state._position = pos;
@@ -788,8 +804,17 @@ class MiniaudioPlayer<T> {
           end: Duration(milliseconds: field0.endMs.toInt()),
           isBuffering: field0.isBuffering,
         );
+        final bufferChanged = state._buffer.start != b.start ||
+            state._buffer.end != b.end ||
+            state._buffer.isBuffering != b.isBuffering;
         state._buffer = b;
-        stream._bufferController.add(b);
+        if (bufferChanged) {
+          stream._bufferController.add(b);
+        }
+        if (state._isBuffering != field0.isBuffering) {
+          state._isBuffering = field0.isBuffering;
+          stream._bufferingController.add(field0.isBuffering);
+        }
       case rust_types.RustPlayerEvent_Volume(:final field0):
         state._volume = field0;
         stream._volumeController.add(field0);
