@@ -474,56 +474,137 @@ fn response_header_str<'a>(
     res.headers().get(name).and_then(|v| v.to_str().ok())
 }
 
-fn synthesize_icy_id3_container(raw_icy: &[u8]) -> Option<Vec<u8>> {
-    let text = String::from_utf8_lossy(raw_icy);
-    let trimmed = text.trim_end_matches('\0').trim();
+fn response_final_url(
+    res: &ureq::http::Response<ureq::Body>,
+    fallback_url: &str,
+) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = fallback_url;
+        response_header_str(res, "x-miniaudio-final-url")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| fallback_url.to_string())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use ureq::ResponseExt;
+        let _ = fallback_url;
+        res.get_uri().to_string()
+    }
+}
+
+fn build_metadata_probe_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
+        .timeout_connect(Some(Duration::from_secs(3)))
+        .timeout_recv_response(Some(Duration::from_secs(4)))
+        .timeout_per_read(Some(Duration::from_secs(4)))
+        .max_idle_connections(0)
+        .build()
+        .into()
+}
+
+fn is_opaque_stream_id(s: &str) -> bool {
+    let t = s.trim();
+    t.len() >= 16
+        && t.bytes()
+            .all(|b| b.is_ascii_hexdigit() || b == b'-' || b == b'_')
+}
+
+#[inline]
+fn encode_synchsafe_u32(v: u32) -> [u8; 4] {
+    [
+        ((v >> 21) & 0x7F) as u8,
+        ((v >> 14) & 0x7F) as u8,
+        ((v >> 7) & 0x7F) as u8,
+        (v & 0x7F) as u8,
+    ]
+}
+
+fn copy_utf8_prefix_max(dst: &mut [u8], s: &str) {
+    let mut end = s.len().min(dst.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    dst[..end].copy_from_slice(&s.as_bytes()[..end]);
+}
+
+fn append_id3v24_text_frame(frames: &mut Vec<u8>, id: &[u8; 4], text: &str) {
+    let trimmed = text.trim();
     if trimmed.is_empty() {
+        return;
+    }
+    let payload_len = 1 + trimmed.len();
+    frames.extend_from_slice(id);
+    frames.extend_from_slice(&encode_synchsafe_u32(payload_len as u32));
+    frames.extend_from_slice(&[0x00, 0x00, 0x03]); // flags=0, encoding=UTF-8
+    frames.extend_from_slice(trimmed.as_bytes());
+}
+
+fn synthesize_live_id3_container(
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+) -> Option<Vec<u8>> {
+    let clean_title = title.map(str::trim).filter(|s| !crate::hls::is_live_ad_marker(s));
+    let clean_artist = artist.map(str::trim).filter(|s| !crate::hls::is_live_ad_marker(s));
+    let clean_album = album.map(str::trim).filter(|s| !s.is_empty());
+
+    if clean_title.is_none() && clean_artist.is_none() {
         return None;
     }
 
-    let title = if let Some(idx) = trimmed.find("StreamTitle='") {
-        let rest = &trimmed[idx + "StreamTitle='".len()..];
-        let end = rest
-            .find("';")
-            .or_else(|| rest.find('\''))
-            .unwrap_or(rest.len());
-        rest[..end].trim()
-    } else {
-        trimmed
-    };
-    if title.is_empty() {
+    let mut frames = Vec::with_capacity(128);
+    if let Some(t) = clean_title {
+        append_id3v24_text_frame(&mut frames, b"TIT2", t);
+    }
+    if let Some(a) = clean_artist {
+        append_id3v24_text_frame(&mut frames, b"TPE1", a);
+    }
+    if let Some(al) = clean_album {
+        append_id3v24_text_frame(&mut frames, b"TALB", al);
+    }
+    if frames.is_empty() {
         return None;
     }
 
-    let title_bytes = title.as_bytes();
-    let frame_payload_len = 1 + title_bytes.len();
-    let mut id3 = Vec::with_capacity(10 + 10 + frame_payload_len + 128);
+    let mut id3 = Vec::with_capacity(10 + frames.len() + 128);
+    // ID3v2.4 header (10 bytes, UTF-8 text encoding byte 0x03 is native to v2.4)
+    id3.extend_from_slice(b"ID3\x04\x00\x00");
+    id3.extend_from_slice(&encode_synchsafe_u32(frames.len() as u32));
+    id3.extend_from_slice(&frames);
 
-    // ID3v2.3 header (10 bytes)
-    let tag_size = (10 + frame_payload_len) as u32;
-    let synchsafe = [
-        ((tag_size >> 21) & 0x7F) as u8,
-        ((tag_size >> 14) & 0x7F) as u8,
-        ((tag_size >> 7) & 0x7F) as u8,
-        (tag_size & 0x7F) as u8,
-    ];
-    id3.extend_from_slice(b"ID3\x03\x00\x00");
-    id3.extend_from_slice(&synchsafe);
-
-    // TIT2 frame (10-byte header + encoding byte + UTF-8/Latin1 text)
-    id3.extend_from_slice(b"TIT2");
-    id3.extend_from_slice(&(frame_payload_len as u32).to_be_bytes());
-    id3.extend_from_slice(&[0x00, 0x00, 0x03]);
-    id3.extend_from_slice(title_bytes);
-
-    // 128-byte ID3v1 trailer starting with "TAG"
+    // 128-byte ID3v1 trailer starting with "TAG" (genre=0xFF = unknown)
     let mut trailer = [0u8; 128];
     trailer[0..3].copy_from_slice(b"TAG");
-    let copy_len = title_bytes.len().min(30);
-    trailer[3..3 + copy_len].copy_from_slice(&title_bytes[..copy_len]);
+    if let Some(t) = clean_title {
+        copy_utf8_prefix_max(&mut trailer[3..33], t);
+    }
+    if let Some(a) = clean_artist {
+        copy_utf8_prefix_max(&mut trailer[33..63], a);
+    }
+    if let Some(al) = clean_album {
+        copy_utf8_prefix_max(&mut trailer[63..93], al);
+    }
+    trailer[127] = 0xFF;
     id3.extend_from_slice(&trailer);
 
     Some(id3)
+}
+
+fn synthesize_icy_id3_container(raw_icy: &[u8], station_name: Option<&str>) -> Option<Vec<u8>> {
+    let (stream_title, _) = crate::metadata::parse_icy_stream_block(raw_icy);
+    let st = stream_title?;
+    let trimmed = st.trim();
+    if let Some((artist_part, title_part)) = trimmed.split_once(" - ") {
+        let a = artist_part.trim();
+        let t = title_part.trim();
+        if !a.is_empty() && !t.is_empty() {
+            return synthesize_live_id3_container(Some(t), Some(a), station_name);
+        }
+    }
+    synthesize_live_id3_container(Some(trimmed), None, station_name)
 }
 
 struct IcyDemuxReader {
@@ -584,7 +665,7 @@ impl Read for IcyDemuxReader {
                 }
                 let (stream_title, stream_url) =
                     crate::metadata::parse_icy_stream_block(&meta_buf);
-                if stream_title.is_some() || stream_url.is_some() {
+                let station_name = if stream_title.is_some() || stream_url.is_some() {
                     if let Ok(mut guard) = self.icy_metadata.write() {
                         let entry = guard.get_or_insert_with(Default::default);
                         if stream_title.is_some() {
@@ -593,16 +674,34 @@ impl Read for IcyDemuxReader {
                         if stream_url.is_some() {
                             entry.stream_url = stream_url;
                         }
+                        entry.station_name.clone()
+                    } else {
+                        None
                     }
-                }
-                if let Some(synthesized) = synthesize_icy_id3_container(&meta_buf) {
-                    crate::map_log!(3, "ICY Metadata parsed (length={} bytes)", synthesized.len());
+                } else {
+                    None
+                };
+                if let Some(synthesized) =
+                    synthesize_icy_id3_container(&meta_buf, station_name.as_deref())
+                {
+                    let mut changed = true;
                     if let Ok(mut latest) = self.latest_icy.lock() {
-                        *latest = Some(synthesized.clone());
+                        if latest.as_ref() == Some(&synthesized) {
+                            changed = false;
+                        } else {
+                            *latest = Some(synthesized.clone());
+                        }
                     }
-                    if let Ok(guard) = self.session_slot.lock() {
-                        if let Some(ref session) = *guard {
-                            session.set_icy_meta(&synthesized);
+                    if changed {
+                        crate::map_log!(
+                            3,
+                            "ICY Metadata parsed (length={} bytes)",
+                            synthesized.len()
+                        );
+                        if let Ok(guard) = self.session_slot.lock() {
+                            if let Some(ref session) = *guard {
+                                session.set_icy_meta(&synthesized);
+                            }
                         }
                     }
                 }
@@ -617,11 +716,132 @@ impl Read for IcyDemuxReader {
     }
 }
 
+struct HlsSegmentPayload {
+    audio_bytes: Vec<u8>,
+    format_code: i32,
+    id3_bytes: Option<Vec<u8>>,
+}
+
+fn split_leading_id3v2(raw: Vec<u8>) -> (Option<Vec<u8>>, Vec<u8>) {
+    let mut offset = 0usize;
+    while offset + 10 <= raw.len() {
+        let s = &raw[offset..];
+        if &s[0..3] != b"ID3"
+            || s[3] == 0xFF
+            || s[4] == 0xFF
+            || ((s[6] | s[7] | s[8] | s[9]) & 0x80) != 0
+        {
+            break;
+        }
+        let tag_size = (((s[6] as usize) & 0x7F) << 21)
+            | (((s[7] as usize) & 0x7F) << 14)
+            | (((s[8] as usize) & 0x7F) << 7)
+            | ((s[9] as usize) & 0x7F);
+        let footer = if (s[5] & 0x10) != 0 { 10 } else { 0 };
+        let next = offset.saturating_add(10 + tag_size + footer);
+        if next > raw.len() {
+            break;
+        }
+        offset = next;
+    }
+    if offset > 0 {
+        let id3 = raw[..offset].to_vec();
+        let audio = raw[offset..].to_vec();
+        (Some(id3), audio)
+    } else {
+        (None, raw)
+    }
+}
+
+fn resolve_hls_segment_tags(
+    raw_extinf_title: Option<&str>,
+    segment_id3_bytes: Option<&[u8]>,
+) -> Option<(Option<String>, Option<String>, Option<String>)> {
+    let extinf = raw_extinf_title.and_then(crate::hls::parse_hls_extinf_metadata);
+    let (id3_title, id3_artist, id3_album) = segment_id3_bytes
+        .map(crate::metadata::extract_basic_id3v2_tags)
+        .unwrap_or((None, None, None));
+
+    let (ext_title, ext_artist) = match extinf {
+        Some(m) => (m.title, m.artist),
+        None => (None, None),
+    };
+    let title = ext_title.or(id3_title);
+    let artist = ext_artist.or(id3_artist);
+    if title.is_none() && artist.is_none() {
+        None
+    } else {
+        Some((title, artist, id3_album))
+    }
+}
+
+fn format_icy_stream_title(title: Option<&str>, artist: Option<&str>) -> Option<String> {
+    match (title.map(str::trim).filter(|s| !s.is_empty()), artist.map(str::trim).filter(|s| !s.is_empty())) {
+        (Some(t), Some(a)) => Some(format!("{} - {}", a, t)),
+        (Some(t), None) => Some(t.to_string()),
+        (None, Some(a)) => Some(a.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn update_live_metadata_state(
+    icy_metadata: &Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
+    session: Option<&StreamSession>,
+    latest_icy: Option<&Arc<Mutex<Option<Vec<u8>>>>>,
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+    station_url: Option<&str>,
+) -> bool {
+    let Some(new_stream_title) = format_icy_stream_title(title, artist) else {
+        return false;
+    };
+
+    let effective_album: Option<String>;
+    {
+        let mut guard = write_unpoisoned(icy_metadata);
+        let entry = guard.get_or_insert_with(Default::default);
+        if entry.station_name.is_none() {
+            if let Some(a) = album.map(str::trim).filter(|s| !s.is_empty() && !is_opaque_stream_id(s)) {
+                entry.station_name = Some(a.to_string());
+            }
+        }
+        if entry.station_url.is_none() {
+            if let Some(u) = station_url.map(str::trim).filter(|s| !s.is_empty()) {
+                entry.station_url = Some(u.to_string());
+            }
+        }
+        if entry.stream_title.as_deref() == Some(new_stream_title.as_str()) {
+            return false;
+        }
+        entry.stream_title = Some(new_stream_title);
+        effective_album = entry.station_name.clone();
+    }
+
+    if let Some(synthesized) = synthesize_live_id3_container(
+        title,
+        artist,
+        effective_album.as_deref().or(album),
+    ) {
+        if let Some(slot) = latest_icy {
+            if let Ok(mut latest) = slot.lock() {
+                *latest = Some(synthesized.clone());
+            }
+        }
+        if let Some(sess) = session {
+            sess.set_icy_meta(&synthesized);
+        }
+        return true;
+    }
+
+    false
+}
+
 fn demux_or_wrap_hls_segment(
     seg_url: &str,
     content_type: Option<&str>,
     raw_bytes: Vec<u8>,
-) -> Option<(Vec<u8>, i32)> {
+) -> Option<HlsSegmentPayload> {
     if raw_bytes.is_empty() {
         return None;
     }
@@ -633,11 +853,30 @@ fn demux_or_wrap_hls_segment(
             _ => 0,
         };
         if !demuxed.audio_bytes.is_empty() {
-            return Some((demuxed.audio_bytes, fmt));
+            return Some(HlsSegmentPayload {
+                audio_bytes: demuxed.audio_bytes,
+                format_code: fmt,
+                id3_bytes: demuxed.id3_bytes,
+            });
         }
     }
-    let fmt = infer_network_encoding_format(seg_url, content_type);
-    Some((raw_bytes, fmt))
+    let (id3_bytes, audio_bytes) = split_leading_id3v2(raw_bytes);
+    if audio_bytes.is_empty() {
+        return None;
+    }
+    let mut fmt = infer_network_encoding_format(seg_url, content_type);
+    if fmt == 0 && audio_bytes.len() >= 3 && audio_bytes[0] == 0xFF {
+        if (audio_bytes[1] & 0xF6) == 0xF0 {
+            fmt = 5;
+        } else if (audio_bytes[1] & 0xE0) == 0xE0 {
+            fmt = 3;
+        }
+    }
+    Some(HlsSegmentPayload {
+        audio_bytes,
+        format_code: fmt,
+        id3_bytes,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -663,12 +902,12 @@ fn read_local_segment_bytes(path: &str, byte_range: Option<(u64, u64)>) -> Optio
     }
 }
 
-fn fetch_hls_segment_audio(
+fn fetch_hls_segment_payload(
     agent: &ureq::Agent,
     seg_url: &str,
     headers: Option<&[crate::api::types::RustHttpHeader]>,
     byte_range: Option<(u64, u64)>,
-) -> Option<(Vec<u8>, i32)> {
+) -> Option<HlsSegmentPayload> {
     let mut req = apply_http_headers(agent.get(seg_url), headers);
     if let Some((length, offset)) = byte_range {
         if length == 0 {
@@ -705,6 +944,30 @@ fn fetch_hls_segment_audio(
         buf
     };
     demux_or_wrap_hls_segment(seg_url, content_type.as_deref(), raw_bytes)
+}
+
+fn fetch_playlist_bytes_with_status(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+) -> Result<(Vec<u8>, String), Option<u16>> {
+    const MAX_PLAYLIST_BYTES: u64 = 2 * 1024 * 1024;
+    let req = apply_http_headers(agent.get(url), headers);
+    let res = req.call().map_err(|e| match e {
+        ureq::Error::StatusCode(code) => Some(code),
+        _ => None,
+    })?;
+    let final_url = response_final_url(&res, url);
+    let mut bytes = Vec::new();
+    res.into_body()
+        .into_reader()
+        .take(MAX_PLAYLIST_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|_| None)?;
+    if bytes.is_empty() {
+        return Err(None);
+    }
+    Ok((bytes, final_url))
 }
 
 #[derive(Clone)]
@@ -746,42 +1009,36 @@ impl HlsFetchBackend {
         }
     }
 
-    fn fetch_playlist(&self, url: &str) -> Result<Vec<u8>, i32> {
+    fn fetch_playlist_resolved(&self, url: &str) -> Result<(Vec<u8>, String), i32> {
         match self {
             Self::Network { agent, headers } => {
-                let req = apply_http_headers(agent.get(url), headers.as_deref());
-                match req.call() {
-                    Ok(res) => {
-                        let mut bytes = Vec::new();
-                        res.into_body()
-                            .into_reader()
-                            .read_to_end(&mut bytes)
-                            .map_err(|_| MAP_ERROR_DECODE_FAILED)?;
-                        if bytes.is_empty() {
-                            Err(MAP_ERROR_DECODE_FAILED)
-                        } else {
-                            Ok(bytes)
-                        }
-                    }
-                    Err(ureq::Error::StatusCode(code)) => Err(if code == 404 {
+                match fetch_playlist_bytes_with_status(agent, url, headers.as_deref()) {
+                    Ok(res) => Ok(res),
+                    Err(Some(code)) => Err(if code == 404 {
                         MAP_ERROR_FILE_NOT_FOUND
                     } else if code == 401 || code == 403 {
                         MAP_ERROR_ACCESS_DENIED
                     } else {
                         MAP_ERROR_DECODE_FAILED
                     }),
-                    Err(_) => Err(MAP_ERROR_FILE_NOT_FOUND),
+                    Err(None) => Err(MAP_ERROR_DECODE_FAILED),
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            Self::LocalFile => std::fs::read(url).map_err(|_| MAP_ERROR_FILE_NOT_FOUND),
+            Self::LocalFile => std::fs::read(url)
+                .map(|b| (b, url.to_string()))
+                .map_err(|_| MAP_ERROR_FILE_NOT_FOUND),
             Self::DartResolved { resolver, headers } => {
                 let resolved = resolver
                     .resolve(url, headers.as_deref(), None)
                     .map_err(|f| f.code)?;
-                Self::read_resolved_bytes(resolved)
+                Self::read_resolved_bytes(resolved).map(|b| (b, url.to_string()))
             }
         }
+    }
+
+    fn fetch_playlist(&self, url: &str) -> Result<Vec<u8>, i32> {
+        self.fetch_playlist_resolved(url).map(|(b, _)| b)
     }
 
     fn read_resolved_bytes(resolved: ResolvedCoreSource) -> Result<Vec<u8>, i32> {
@@ -822,14 +1079,14 @@ impl HlsFetchBackend {
         }
     }
 
-    fn fetch_segment_audio(
+    fn fetch_segment_payload(
         &self,
         seg_url: &str,
         byte_range: Option<(u64, u64)>,
-    ) -> Option<(Vec<u8>, i32)> {
+    ) -> Option<HlsSegmentPayload> {
         match self {
             Self::Network { agent, headers } => {
-                fetch_hls_segment_audio(agent, seg_url, headers.as_deref(), byte_range)
+                fetch_hls_segment_payload(agent, seg_url, headers.as_deref(), byte_range)
             }
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => {
@@ -839,16 +1096,23 @@ impl HlsFetchBackend {
             Self::DartResolved { resolver, headers } => {
                 let resolved = resolver.resolve(seg_url, headers.as_deref(), None).ok()?;
                 let all_bytes = Self::read_resolved_bytes(resolved).ok()?;
-                let sliced = if let Some((offset, len)) = byte_range {
-                    let start = (offset as usize).min(all_bytes.len());
-                    let end = start.saturating_add(len as usize).min(all_bytes.len());
-                    all_bytes[start..end].to_vec()
+                let sliced = if let Some((length, offset)) = byte_range {
+                    crate::hls::slice_byte_range(&all_bytes, length, offset)?
                 } else {
                     all_bytes
                 };
                 demux_or_wrap_hls_segment(seg_url, None, sliced)
             }
         }
+    }
+
+    fn fetch_segment_audio(
+        &self,
+        seg_url: &str,
+        byte_range: Option<(u64, u64)>,
+    ) -> Option<(Vec<u8>, i32)> {
+        self.fetch_segment_payload(seg_url, byte_range)
+            .map(|p| (p.audio_bytes, p.format_code))
     }
 }
 
@@ -984,6 +1248,8 @@ fn spawn_hls_streamer_thread(
     initial_cum_bytes: u64,
     initial_cum_ms: i64,
     vod_state: Option<Arc<crate::buffer::HlsVodState>>,
+    icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
+    source_url: String,
 ) {
     let max_unchanged: u32 = if backend.is_remote_http() { 12 } else { 3 };
     const MAX_RELOAD_ERRORS: u32 = 5;
@@ -1008,15 +1274,29 @@ fn spawn_hls_streamer_thread(
                     {
                         return;
                     }
-                    if let Some((audio_bytes, _)) =
-                        backend.fetch_segment_audio(&target.url, target.byte_range)
+                    if let Some(payload) =
+                        backend.fetch_segment_payload(&target.url, target.byte_range)
                     {
-                        cum_bytes = cum_bytes.saturating_add(audio_bytes.len() as u64);
+                        if let Some((title, artist, album)) = resolve_hls_segment_tags(
+                            target.title.as_deref(),
+                            payload.id3_bytes.as_deref(),
+                        ) {
+                            update_live_metadata_state(
+                                &icy_metadata,
+                                Some(&session),
+                                None,
+                                title.as_deref(),
+                                artist.as_deref(),
+                                album.as_deref(),
+                                Some(&source_url),
+                            );
+                        }
+                        cum_bytes = cum_bytes.saturating_add(payload.audio_bytes.len() as u64);
                         cum_ms = cum_ms.saturating_add(target.duration_ms as i64);
                         session.push_segment_anchor(cum_bytes, cum_ms);
                         if !feed_hls_audio_chunked(
                             &session,
-                            &audio_bytes,
+                            &payload.audio_bytes,
                             &abort_stream,
                             &decoder_running,
                             None,
@@ -1100,6 +1380,195 @@ fn spawn_hls_streamer_thread(
         });
 }
 
+struct CompanionHlsState {
+    master_url: Option<String>,
+    media_url: String,
+    target_duration_secs: f64,
+}
+
+fn extract_newest_hls_extinf_meta(
+    segments: &[crate::hls::SegmentInfo],
+) -> Option<crate::hls::HlsExtinfMetadata> {
+    segments
+        .iter()
+        .rev()
+        .find_map(|seg| seg.title.as_deref().and_then(crate::hls::parse_hls_extinf_metadata))
+}
+
+fn resolve_companion_hls_state(
+    agent: &ureq::Agent,
+    candidate_urls: &[String],
+    headers: Option<&[crate::api::types::RustHttpHeader]>,
+    cancel: Option<&CancelToken>,
+) -> Option<(CompanionHlsState, Option<crate::hls::HlsExtinfMetadata>)> {
+    for candidate in candidate_urls {
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            return None;
+        }
+        let Ok((bytes, resolved_url)) = fetch_playlist_bytes_with_status(agent, candidate, headers)
+        else {
+            continue;
+        };
+        match crate::hls::M3u8Parser::parse(&bytes) {
+            Ok(crate::hls::ParsedHlsPlaylist::Master { variants }) => {
+                let Some(first_var) = variants.first() else {
+                    continue;
+                };
+                if cancel.is_some_and(|c| c.is_cancelled()) {
+                    return None;
+                }
+                let media_url = crate::hls::resolve_hls_uri(&resolved_url, &first_var.uri);
+                let Ok((media_bytes, resolved_media_url)) =
+                    fetch_playlist_bytes_with_status(agent, &media_url, headers)
+                else {
+                    continue;
+                };
+                if let Ok(crate::hls::ParsedHlsPlaylist::Media {
+                    target_duration,
+                    segments,
+                    ..
+                }) = crate::hls::M3u8Parser::parse(&media_bytes)
+                {
+                    let meta = extract_newest_hls_extinf_meta(&segments);
+                    return Some((
+                        CompanionHlsState {
+                            master_url: Some(resolved_url),
+                            media_url: resolved_media_url,
+                            target_duration_secs: target_duration as f64,
+                        },
+                        meta,
+                    ));
+                }
+            }
+            Ok(crate::hls::ParsedHlsPlaylist::Media {
+                target_duration,
+                segments,
+                ..
+            }) => {
+                let meta = extract_newest_hls_extinf_meta(&segments);
+                return Some((
+                    CompanionHlsState {
+                        master_url: None,
+                        media_url: resolved_url,
+                        target_duration_secs: target_duration as f64,
+                    },
+                    meta,
+                ));
+            }
+            Err(_) => {}
+        }
+    }
+    None
+}
+
+fn spawn_hls_metadata_sidecar_poller(
+    session: StreamSession,
+    abort_stream: Arc<AtomicBool>,
+    decoder_running: Arc<AtomicBool>,
+    icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
+    mut state: CompanionHlsState,
+    headers: Option<Vec<crate::api::types::RustHttpHeader>>,
+    source_url: String,
+) {
+    const MAX_ERRORS: u32 = 10;
+    let _ = thread::Builder::new()
+        .name("miniaudio-hls-meta-poller".to_string())
+        .spawn(move || {
+            let agent = build_metadata_probe_agent();
+            let mut consecutive_errors = 0u32;
+
+            loop {
+                let wait_secs = if state.target_duration_secs.is_finite() {
+                    state.target_duration_secs.clamp(3.0, 6.0)
+                } else {
+                    4.0
+                };
+                if !sleep_interruptible(
+                    Duration::from_secs_f64(wait_secs),
+                    &abort_stream,
+                    &decoder_running,
+                ) {
+                    return;
+                }
+
+                let mut failed_status: Option<u16> = None;
+                let mut had_error = false;
+                match fetch_playlist_bytes_with_status(&agent, &state.media_url, headers.as_deref()) {
+                    Ok((bytes, _)) => match crate::hls::M3u8Parser::parse(&bytes) {
+                        Ok(crate::hls::ParsedHlsPlaylist::Media {
+                            target_duration,
+                            segments,
+                            ..
+                        }) => {
+                            consecutive_errors = 0;
+                            if target_duration > 0.0 {
+                                state.target_duration_secs = target_duration as f64;
+                            }
+                            if let Some(meta) = extract_newest_hls_extinf_meta(&segments) {
+                                update_live_metadata_state(
+                                    &icy_metadata,
+                                    Some(&session),
+                                    None,
+                                    meta.title.as_deref(),
+                                    meta.artist.as_deref(),
+                                    None,
+                                    Some(&source_url),
+                                );
+                            }
+                        }
+                        Ok(crate::hls::ParsedHlsPlaylist::Master { .. }) | Err(_) => {
+                            had_error = true;
+                        }
+                    },
+                    Err(status_opt) => {
+                        had_error = true;
+                        failed_status = status_opt;
+                    }
+                }
+
+                if had_error {
+                    consecutive_errors += 1;
+                    let should_refresh_master = matches!(failed_status, Some(403 | 404 | 410))
+                        || consecutive_errors == 3;
+                    if should_refresh_master {
+                        if let Some(ref master_url) = state.master_url {
+                            if let Some((new_state, meta_opt)) = resolve_companion_hls_state(
+                                &agent,
+                                std::slice::from_ref(master_url),
+                                headers.as_deref(),
+                                None,
+                            ) {
+                                state = new_state;
+                                consecutive_errors = 0;
+                                if let Some(meta) = meta_opt {
+                                    update_live_metadata_state(
+                                        &icy_metadata,
+                                        Some(&session),
+                                        None,
+                                        meta.title.as_deref(),
+                                        meta.artist.as_deref(),
+                                        None,
+                                        Some(&source_url),
+                                    );
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    if consecutive_errors >= MAX_ERRORS {
+                        crate::map_log!(
+                            2,
+                            "HLS companion metadata poller stopped after {} consecutive errors for {}",
+                            consecutive_errors,
+                            source_url
+                        );
+                        return;
+                    }
+                }
+            }
+        });
+}
+
 fn fetch_range_bytes_status(
     agent: &ureq::Agent,
     url: &str,
@@ -1143,14 +1612,16 @@ fn fetch_range_bytes(
         .filter(|buf| buf.len() == expected)
 }
 
-fn prefetch_initial_stream_bytes_cancellable(
+fn prefetch_initial_stream_bytes_with_live_icy(
     reader: &mut impl Read,
     content_length: i64,
     cancel: Option<&CancelToken>,
+    live_icy: Option<(&Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>, bool)>,
 ) -> (Vec<u8>, bool, bool) {
     let mut initial_data = Vec::with_capacity(131072);
     let mut read_buf = [0u8; 32768];
     let mut reached_eof = false;
+    let mut first_byte_at: Option<MonotonicInstant> = None;
 
     loop {
         if cancel.is_some_and(|c| c.is_cancelled()) {
@@ -1165,11 +1636,46 @@ fn prefetch_initial_stream_bytes_cancellable(
                 if cancel.is_some_and(|c| c.is_cancelled()) {
                     return (Vec::new(), true, false);
                 }
+                if first_byte_at.is_none() && n > 0 {
+                    first_byte_at = Some(MonotonicInstant::now());
+                }
                 initial_data.extend_from_slice(&read_buf[..n]);
                 if crate::hls::M3u8Parser::is_m3u8(&initial_data) {
                     break;
                 }
-                if initial_data.len() >= 65536 {
+                if let Some((icy_ref, has_icy)) = live_icy {
+                    if initial_data.len() >= 16384 {
+                        let (status, boundary) =
+                            StreamClassifier::detect_head_boundary(&initial_data, content_length);
+                        if status != BoundaryStatus::NeedMore {
+                            let min_required = (boundary.audio_start.max(0) as usize)
+                                .saturating_add(16384);
+                            let has_valid_title = !has_icy
+                                || icy_ref
+                                    .read()
+                                    .ok()
+                                    .and_then(|g| {
+                                        g.as_ref().and_then(|m| m.stream_title.as_ref()).map(|t| {
+                                            let tr = t.trim();
+                                            !tr.is_empty() && !crate::hls::is_live_ad_marker(tr)
+                                        })
+                                    })
+                                    .unwrap_or(false);
+                            if initial_data.len() >= min_required
+                                && (has_valid_title
+                                    || initial_data.len() >= 98304
+                                    || first_byte_at.is_some_and(|t| {
+                                        t.elapsed() >= Duration::from_millis(3500)
+                                    }))
+                            {
+                                break;
+                            }
+                        }
+                        if initial_data.len() >= 16 * 1024 * 1024 {
+                            break;
+                        }
+                    }
+                } else if initial_data.len() >= 65536 {
                     let (status, boundary) =
                         StreamClassifier::detect_head_boundary(&initial_data, content_length);
                     if status != BoundaryStatus::NeedMore {
@@ -4095,25 +4601,26 @@ impl StreamingDeck {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
                 let media_url = crate::hls::resolve_hls_uri(url, &first_var.uri);
-                let media_bytes = match backend.fetch_playlist(&media_url) {
-                    Ok(b) => b,
-                    Err(code) => {
-                        if cancel.is_some_and(|c| c.is_cancelled()) {
-                            return self.mark_open_error(MAP_ERROR_ABORTED);
+                let (media_bytes, resolved_media_url) =
+                    match backend.fetch_playlist_resolved(&media_url) {
+                        Ok(res) => res,
+                        Err(code) => {
+                            if cancel.is_some_and(|c| c.is_cancelled()) {
+                                return self.mark_open_error(MAP_ERROR_ABORTED);
+                            }
+                            crate::map_log!(
+                                1,
+                                "open_hls_playlist failed to fetch media playlist from {}",
+                                media_url
+                            );
+                            return self.mark_open_error(code);
                         }
-                        crate::map_log!(
-                            1,
-                            "open_hls_playlist failed to fetch media playlist from {}",
-                            media_url
-                        );
-                        return self.mark_open_error(code);
-                    }
-                };
+                    };
                 if cancel.is_some_and(|c| c.is_cancelled()) {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
                 match crate::hls::M3u8Parser::parse(&media_bytes) {
-                    Ok(p) => (media_url, p),
+                    Ok(p) => (resolved_media_url, p),
                     Err(_) => {
                         crate::map_log!(
                             1,
@@ -4157,23 +4664,26 @@ impl StreamingDeck {
             let mut combined_audio = Vec::new();
             let mut hint_ext: Option<&'static str> = None;
 
-            for seg in segments.iter().take(max_segs) {
+            for (idx, seg) in segments.iter().take(max_segs).enumerate() {
                 if cancel.is_some_and(|c| c.is_cancelled()) {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
                 let seg_url = crate::hls::resolve_hls_uri(&base_media_url, &seg.uri);
-                let Some((audio_bytes, fmt)) =
-                    backend.fetch_segment_audio(&seg_url, seg.byte_range)
-                else {
+                let Some(payload) = backend.fetch_segment_payload(&seg_url, seg.byte_range) else {
                     if combined_audio.is_empty() {
                         return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
                     }
                     break;
                 };
                 if hint_ext.is_none() {
-                    hint_ext = encoding_format_to_extension(fmt);
+                    hint_ext = encoding_format_to_extension(payload.format_code);
                 }
-                combined_audio.extend_from_slice(&audio_bytes);
+                if idx == 0 {
+                    if let Some(id3) = payload.id3_bytes {
+                        combined_audio.extend_from_slice(&id3);
+                    }
+                }
+                combined_audio.extend_from_slice(&payload.audio_bytes);
             }
 
             if combined_audio.is_empty() {
@@ -4198,17 +4708,29 @@ impl StreamingDeck {
             0
         };
         let first_seg_url = crate::hls::resolve_hls_uri(&base_media_url, &first_seg.uri);
-        let Some((first_audio, seg_fmt)) =
-            backend.fetch_segment_audio(&first_seg_url, first_seg.byte_range)
+        let Some(first_payload) =
+            backend.fetch_segment_payload(&first_seg_url, first_seg.byte_range)
         else {
             if cancel.is_some_and(|c| c.is_cancelled()) {
                 return self.mark_open_error(MAP_ERROR_ABORTED);
             }
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         };
+        let first_audio = first_payload.audio_bytes;
+        let seg_fmt = first_payload.format_code;
+        let first_id3 = first_payload.id3_bytes;
         if cancel.is_some_and(|c| c.is_cancelled()) {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
+
+        let initial_hls_tags =
+            resolve_hls_segment_tags(first_seg.title.as_deref(), first_id3.as_deref()).or_else(
+                || {
+                    segments
+                        .iter()
+                        .find_map(|s| resolve_hls_segment_tags(s.title.as_deref(), None))
+                },
+            );
 
         let vod_segments: Option<Vec<crate::buffer::HlsVodSegment>> = if !is_live {
             let mut cum_ms = 0i64;
@@ -4238,6 +4760,7 @@ impl StreamingDeck {
         } else {
             Vec::new()
         };
+        let is_analysis_deck = self.is_analysis;
         let mut attached_vod: Option<Arc<crate::buffer::HlsVodState>> = None;
         let res_code = self.open_stream_ex_with_setup(
             &first_audio,
@@ -4246,11 +4769,29 @@ impl StreamingDeck {
             is_live,
             4 * 1024 * 1024,
             seg_fmt,
-            |_, _, session, boundary| {
+            |_, _, session, boundary, icy_slot| {
                 let a_start = boundary.audio_start.max(0) as u64;
                 session.configure_byte_time_map(a_start, 0, total_vod_dur_ms);
                 if first_dur_ms > 0 {
                     session.push_segment_anchor(first_len, first_dur_ms);
+                }
+                if let Some((ref title, ref artist, ref album)) = initial_hls_tags {
+                    update_live_metadata_state(
+                        icy_slot,
+                        Some(session),
+                        None,
+                        title.as_deref(),
+                        artist.as_deref(),
+                        album.as_deref(),
+                        Some(url),
+                    );
+                } else if !is_live {
+                    if let Some(ref id3) = first_id3 {
+                        let _ = session.metadata.commit_chunk(0, id3);
+                    }
+                }
+                if is_live && is_analysis_deck {
+                    session.mark_eof();
                 }
                 if let Some(ref segs) = vod_segments {
                     let vod = crate::buffer::HlsVodState::new(
@@ -4328,6 +4869,8 @@ impl StreamingDeck {
                 first_len,
                 first_dur_ms,
                 attached_vod,
+                self.icy_metadata.clone(),
+                url.to_string(),
             );
         }
 
@@ -4402,6 +4945,7 @@ impl StreamingDeck {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
 
+        let final_url = response_final_url(&res, url);
         let content_length: i64 = response_header_str(&res, "content-length")
             .and_then(|s| s.parse().ok())
             .unwrap_or(-1);
@@ -4420,6 +4964,13 @@ impl StreamingDeck {
         let icy_name = response_header_str(&res, "icy-name")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        let icy_description = response_header_str(&res, "icy-description")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let effective_station_name = match icy_name {
+            Some(ref name) if !is_opaque_stream_id(name) => Some(name.clone()),
+            other => icy_description.or(other),
+        };
         let icy_genre = response_header_str(&res, "icy-genre")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
@@ -4430,7 +4981,7 @@ impl StreamingDeck {
             response_header_str(&res, "icy-br").and_then(|s| s.trim().parse().ok());
 
         if icy_metaint > 0
-            || icy_name.is_some()
+            || effective_station_name.is_some()
             || icy_genre.is_some()
             || icy_url.is_some()
             || icy_br.is_some()
@@ -4439,7 +4990,7 @@ impl StreamingDeck {
             *guard = Some(crate::api::types::RustIcyMetadata {
                 stream_title: None,
                 stream_url: None,
-                station_name: icy_name,
+                station_name: effective_station_name,
                 station_genre: icy_genre,
                 station_url: icy_url,
                 bitrate_kbps: icy_br,
@@ -4470,8 +5021,17 @@ impl StreamingDeck {
             Box::new(res.into_body().into_reader())
         };
 
-        let (initial_data, was_aborted, reached_eof) =
-            prefetch_initial_stream_bytes_cancellable(&mut reader, content_length, cancel);
+        let (mut initial_data, was_aborted, reached_eof) =
+            prefetch_initial_stream_bytes_with_live_icy(
+                &mut reader,
+                content_length,
+                cancel,
+                if self.is_analysis && content_length <= 0 {
+                    Some((&self.icy_metadata, icy_metaint > 0))
+                } else {
+                    None
+                },
+            );
         if was_aborted {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
@@ -4483,7 +5043,7 @@ impl StreamingDeck {
         if crate::hls::M3u8Parser::is_m3u8(&initial_data) {
             return self.open_hls_network_with_cancel(
                 agent,
-                url,
+                &final_url,
                 headers,
                 initial_data,
                 &mut reader,
@@ -4598,8 +5158,47 @@ impl StreamingDeck {
             }
         }
 
-        let preserved_icy = self.icy_metadata.read().ok().and_then(|g| g.clone());
         let is_live = effective_content_length <= 0;
+        let mut companion_state: Option<CompanionHlsState> = None;
+        if is_live {
+            let (_st, pre_b) = StreamClassifier::detect_head_boundary(&initial_data, -1);
+            if matches!(
+                pre_b.container,
+                crate::decoder::ContainerFormat::Adts | crate::decoder::ContainerFormat::Mp3
+            ) && pre_b.audio_start > 0
+                && !initial_data.starts_with(b"ID3")
+            {
+                let trim = pre_b.audio_start as usize;
+                if trim < initial_data.len() && (initial_data.len() - trim) >= 2048 {
+                    initial_data.drain(..trim);
+                }
+            }
+            if icy_metaint == 0 && !cancel.is_some_and(|c| c.is_cancelled()) {
+                let companion_urls =
+                    crate::hls::derive_companion_hls_metadata_urls(url, Some(&final_url));
+                if !companion_urls.is_empty() {
+                    let probe_agent = build_metadata_probe_agent();
+                    if let Some((state, initial_meta)) =
+                        resolve_companion_hls_state(&probe_agent, &companion_urls, headers, cancel)
+                    {
+                        if let Some(meta) = initial_meta {
+                            update_live_metadata_state(
+                                &self.icy_metadata,
+                                None,
+                                Some(&latest_icy),
+                                meta.title.as_deref(),
+                                meta.artist.as_deref(),
+                                None,
+                                Some(url),
+                            );
+                        }
+                        companion_state = Some(state);
+                    }
+                }
+            }
+        }
+
+        let mut preserved_icy = self.icy_metadata.read().ok().and_then(|g| g.clone());
         let is_analysis_deck = self.is_analysis;
         let mut reader_opt = Some(reader);
         let tail_ref = tail_data.as_deref();
@@ -4611,7 +5210,10 @@ impl StreamingDeck {
             is_live,
             StreamSession::DEFAULT_RING_CAPACITY,
             encoding_format,
-            |abort_slot, dec_running, session, boundary| {
+            |abort_slot, dec_running, session, boundary, icy_slot| {
+                if let Some(icy) = preserved_icy.take() {
+                    *write_unpoisoned(icy_slot) = Some(icy);
+                }
                 if range_supported && !is_live {
                     session.set_supports_range(true);
                     let range_url = url.to_string();
@@ -4681,6 +5283,7 @@ impl StreamingDeck {
                 }
 
                 if is_live && is_analysis_deck {
+                    session.mark_eof();
                     crate::map_log!(
                         3,
                         "open_network: livestream detected on analysis deck; skipping background network streamer thread for {}",
@@ -4697,21 +5300,27 @@ impl StreamingDeck {
                     spawn_network_streamer_thread(
                         net_reader,
                         session.clone(),
-                        new_abort,
+                        new_abort.clone(),
                         dec_running.clone(),
                         url.to_string(),
                         headers.map(|h| h.to_vec()),
                         effective_content_length,
                         is_live,
                     );
+                    if let Some(companion) = companion_state.take() {
+                        spawn_hls_metadata_sidecar_poller(
+                            session.clone(),
+                            new_abort,
+                            dec_running.clone(),
+                            icy_slot.clone(),
+                            companion,
+                            headers.map(|h| h.to_vec()),
+                            url.to_string(),
+                        );
+                    }
                 }
             },
         );
-        if let Ok(mut guard) = self.icy_metadata.write() {
-            if guard.is_none() {
-                *guard = preserved_icy;
-            }
-        }
         if res_code != MAP_SUCCESS {
             return res_code;
         }
@@ -5054,7 +5663,7 @@ impl StreamingDeck {
             is_live,
             buffer_capacity_bytes,
             encoding_format,
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
         )
     }
 
@@ -5075,6 +5684,7 @@ impl StreamingDeck {
             &Arc<AtomicBool>,
             &StreamSession,
             &mut crate::decoder::BoundaryInfo,
+            &Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
         ),
     {
         let _ = self.begin_open();
@@ -5106,6 +5716,7 @@ impl StreamingDeck {
             &self.decoder_running,
             &session,
             &mut boundary,
+            &self.icy_metadata,
         );
         let container = boundary.container;
         if !initial_data.is_empty() {

@@ -1488,5 +1488,423 @@ fn test_replay_gain_modes_and_live_updates_preserve_per_deck_isolation_during_cr
     }
 }
 
+fn load_clean_adts_chunk(min_bytes: usize) -> Vec<u8> {
+    let raw = std::fs::read(FixtureResolver::resolve("10_La_cicatriz_del_andén.aac"))
+        .expect("read AAC fixture");
+    let mut off = 0usize;
+    if raw.len() >= 10 && &raw[..3] == b"ID3" {
+        let size = (((raw[6] as usize) & 0x7F) << 21)
+            | (((raw[7] as usize) & 0x7F) << 14)
+            | (((raw[8] as usize) & 0x7F) << 7)
+            | ((raw[9] as usize) & 0x7F);
+        let footer = if (raw[5] & 0x10) != 0 { 10 } else { 0 };
+        off = (10 + size + footer).min(raw.len());
+    }
+    while off + 7 <= raw.len() {
+        if raw[off] == 0xFF && (raw[off + 1] & 0xF6) == 0xF0 {
+            break;
+        }
+        off += 1;
+    }
+    let mut pass = Vec::new();
+    let mut cur = off;
+    while cur + 7 <= raw.len() && pass.len() < 8192 {
+        if raw[cur] != 0xFF || (raw[cur + 1] & 0xF6) != 0xF0 {
+            break;
+        }
+        let flen = ((((raw[cur + 3] as usize) & 0x03) << 11)
+            | ((raw[cur + 4] as usize) << 3)
+            | (((raw[cur + 5] >> 5) & 0x07) as usize))
+            .max(7);
+        if cur + flen > raw.len() {
+            break;
+        }
+        pass.extend_from_slice(&raw[cur..cur + flen]);
+        cur += flen;
+    }
+    assert!(!pass.is_empty());
+    let mut out = Vec::with_capacity(min_bytes.max(pass.len()));
+    while out.len() < min_bytes {
+        out.extend_from_slice(&pass);
+    }
+    out
+}
+
+fn encode_icy_block(stream_title: Option<&str>) -> Vec<u8> {
+    let Some(title) = stream_title else {
+        return vec![0u8];
+    };
+    let payload = format!("StreamTitle='{}';", title);
+    let raw = payload.as_bytes();
+    let blocks = raw.len().div_ceil(16).min(255);
+    let mut block = vec![0u8; 1 + blocks * 16];
+    block[0] = blocks as u8;
+    let copy_len = raw.len().min(blocks * 16);
+    block[1..1 + copy_len].copy_from_slice(&raw[..copy_len]);
+    block
+}
+
+fn build_interleaved_icy_body(audio: &[u8], metaint: usize, titles: &[Option<&str>]) -> Vec<u8> {
+    let aligned_len = (audio.len() / metaint) * metaint;
+    let mut body = Vec::with_capacity(aligned_len + 256);
+    let mut pos = 0usize;
+    let mut block_idx = 0usize;
+    while pos < aligned_len {
+        let end = pos + metaint;
+        body.extend_from_slice(&audio[pos..end]);
+        pos = end;
+        let meta = titles.get(block_idx).copied().flatten();
+        body.extend_from_slice(&encode_icy_block(meta));
+        block_idx += 1;
+    }
+    body
+}
+
+#[test]
+fn test_redirected_live_icecast_adts_metadata_static_analysis() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    use miniaudio_player::api::types::RustAnalysisConfig;
+    use miniaudio_player::core::dual_source::AudioSourceCore;
+    use miniaudio_player::dsp::analysis::analyze_audio_source;
+
+    let clean_adts = load_clean_adts_chunk(96 * 1024);
+
+    // Case A body: valid sync from byte 0, immediate StreamTitle at Block 0.
+    let body_a = Arc::new(build_interleaved_icy_body(
+        &clean_adts,
+        1024,
+        &[Some("Artist A - Song A")],
+    ));
+
+    // Case B body: 300 bytes of non-ID3 mid-frame garbage before valid ADTS,
+    // empty Block 0, ADWSRTAG_START Block 1, >30 char UTF-8 StreamTitle at Block 2.
+    let mut dirty_adts = vec![0x5Au8; 300];
+    dirty_adts.extend_from_slice(&clean_adts);
+    let body_b = Arc::new(build_interleaved_icy_body(
+        &dirty_adts,
+        1024,
+        &[
+            None,
+            Some("ADWSRTAG_START"),
+            Some("Long Artist Name Beyond Thirty Chars - Canción Con Acentos y Título Muy Largo"),
+        ],
+    ));
+    let mut tail_chunk = Vec::with_capacity(1025);
+    tail_chunk.extend_from_slice(&clean_adts[..1024]);
+    tail_chunk.push(0u8);
+    let tail_chunk = Arc::new(tail_chunk);
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_srv = stop.clone();
+
+    let body_a_srv = body_a.clone();
+    let body_b_srv = body_b.clone();
+    let tail_srv = tail_chunk.clone();
+    let handle = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Acquire) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut req_line = String::new();
+                    if reader.read_line(&mut req_line).is_err() {
+                        continue;
+                    }
+                    let path = req_line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                            break;
+                        }
+                    }
+
+                    match path.as_str() {
+                        "/case_a/icecast.audio" => {
+                            let hdr = format!(
+                                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/case_a/stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                port
+                            );
+                            let _ = stream.write_all(hdr.as_bytes());
+                            let _ = stream.flush();
+                        }
+                        "/case_b/icecast.audio" => {
+                            let hdr = format!(
+                                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/case_b/stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                port
+                            );
+                            let _ = stream.write_all(hdr.as_bytes());
+                            let _ = stream.flush();
+                        }
+                        "/case_a/stream" | "/case_b/stream" => {
+                            let (hdr, body) = if path == "/case_a/stream" {
+                                (
+                                    "HTTP/1.1 200 OK\r\nContent-Type: audio/aac\r\n\
+icy-metaint: 1024\r\nicy-name: 6598b65ab398c90871aff8cc\r\n\
+icy-description: GPR-Radio Onda Cero\r\nicy-genre: various\r\nicy-br: 125\r\n\
+Connection: close\r\n\r\n",
+                                    body_a_srv.clone(),
+                                )
+                            } else {
+                                (
+                                    "HTTP/1.1 200 OK\r\nContent-Type: audio/aac\r\n\
+icy-metaint: 1024\r\nicy-name: 6598b65ab398c90871aff8cc\r\n\
+icy-description: GPR-Radio Onda Cero\r\nicy-br: 125\r\n\
+Connection: close\r\n\r\n",
+                                    body_b_srv.clone(),
+                                )
+                            };
+                            let stop_conn = stop_srv.clone();
+                            let tail_conn = tail_srv.clone();
+                            std::thread::spawn(move || {
+                                if stream.write_all(hdr.as_bytes()).is_err()
+                                    || stream.write_all(&body).is_err()
+                                    || stream.flush().is_err()
+                                {
+                                    return;
+                                }
+                                while !stop_conn.load(Ordering::Acquire) {
+                                    if stream.write_all(&tail_conn).is_err() {
+                                        break;
+                                    }
+                                    std::thread::sleep(Duration::from_millis(25));
+                                }
+                            });
+                        }
+                        _ => {
+                            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        }
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Case A
+    let start_a = Instant::now();
+    let res_a = analyze_audio_source(
+        AudioSourceCore {
+            id: 201,
+            source: format!("http://127.0.0.1:{}/case_a/icecast.audio", port),
+            ..Default::default()
+        },
+        RustAnalysisConfig {
+            metadata: true,
+            replay_gain: true,
+            waveform: true,
+            ..Default::default()
+        },
+    )
+    .expect("Case A static analysis should succeed");
+    assert!(start_a.elapsed() < Duration::from_secs(3));
+    assert_eq!(res_a.audio_info.bitrate, 125_000);
+    assert!(res_a.audio_info.duration_ms.is_none());
+    let meta_a = res_a.metadata.expect("Case A expected metadata");
+    assert_eq!(meta_a.title.as_deref(), Some("Song A"));
+    assert_eq!(meta_a.track_artist.as_deref(), Some("Artist A"));
+    assert_eq!(meta_a.album.as_deref(), Some("GPR-Radio Onda Cero"));
+    assert_eq!(meta_a.genre.as_deref(), Some("various"));
+
+    // Case B
+    let start_b = Instant::now();
+    let res_b = analyze_audio_source(
+        AudioSourceCore {
+            id: 202,
+            source: format!("http://127.0.0.1:{}/case_b/icecast.audio", port),
+            ..Default::default()
+        },
+        RustAnalysisConfig {
+            metadata: true,
+            replay_gain: true,
+            waveform: true,
+            ..Default::default()
+        },
+    )
+    .expect("Case B static analysis should succeed");
+    assert!(
+        start_b.elapsed() < Duration::from_secs(3),
+        "Case B took too long: {:?}",
+        start_b.elapsed()
+    );
+    assert!(res_b.audio_info.duration_ms.is_none());
+    let meta_b = res_b.metadata.expect("Case B expected metadata");
+    assert_eq!(
+        meta_b.title.as_deref(),
+        Some("Canción Con Acentos y Título Muy Largo")
+    );
+    assert_eq!(
+        meta_b.track_artist.as_deref(),
+        Some("Long Artist Name Beyond Thirty Chars")
+    );
+    assert_ne!(meta_b.genre.as_deref(), Some("Blues"));
+
+    stop.store(true, Ordering::Release);
+    let _ = handle.join();
+}
+
+#[test]
+#[ignore = "requires live internet access"]
+fn test_live_radio_moda_and_onda_cero_metadata() {
+    use std::time::{Duration, Instant};
+
+    use miniaudio_player::api::types::RustAnalysisConfig;
+    use miniaudio_player::core::dual_source::AudioSourceCore;
+    use miniaudio_player::dsp::analysis::analyze_audio_source;
+
+    let stations = [
+        (
+            "Radio Moda",
+            "https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6839e1c82cc4c480fcd318dd",
+            "CRP-Moda",
+            128_000u32,
+        ),
+        (
+            "Onda Cero",
+            "https://mdstrm.com/audio/6598b65ab398c90871aff8cc/icecast.audio",
+            "GPR-Radio Onda Cero",
+            125_000u32,
+        ),
+    ];
+
+    for (idx, (label, url, expected_album, expected_bitrate)) in stations.iter().enumerate() {
+        let t0 = Instant::now();
+        let static_res = analyze_audio_source(
+            AudioSourceCore {
+                id: 9000 + idx as i64,
+                source: (*url).to_string(),
+                ..Default::default()
+            },
+            RustAnalysisConfig {
+                metadata: true,
+                replay_gain: true,
+                waveform: true,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("{} static analysis failed: {}", label, e));
+
+        println!(
+            "[STATIC {}] elapsed={:.2}s bitrate={} duration_ms={:?} meta={:?}",
+            label,
+            t0.elapsed().as_secs_f32(),
+            static_res.audio_info.bitrate,
+            static_res.audio_info.duration_ms,
+            static_res.metadata.as_ref().map(|m| (
+                &m.title,
+                &m.track_artist,
+                &m.album,
+                &m.genre,
+                m.icy.as_ref().map(|i| (&i.stream_title, &i.station_name, i.bitrate_kbps)),
+            ))
+        );
+        assert!(static_res.audio_info.duration_ms.is_none());
+        assert_eq!(static_res.audio_info.bitrate, *expected_bitrate);
+        let static_meta = static_res
+            .metadata
+            .unwrap_or_else(|| panic!("{} static metadata missing", label));
+        assert_eq!(static_meta.album.as_deref(), Some(*expected_album));
+        assert_eq!(static_meta.genre.as_deref(), Some("various"));
+        assert!(
+            static_meta.title.as_deref().is_some_and(|s| !s.trim().is_empty()),
+            "{} expected non-empty static title",
+            label
+        );
+
+        let mut deck = StreamingDeck::new_deck(44100, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(url, None, None), 0);
+        deck.play();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut dyn_meta = deck.get_parsed_metadata();
+        while Instant::now() < deadline {
+            if dyn_meta
+                .as_ref()
+                .and_then(|m| m.title.as_deref())
+                .is_some_and(|s| !s.trim().is_empty())
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            dyn_meta = deck.get_parsed_metadata();
+        }
+        let dyn_info = deck.get_audio_info();
+        println!(
+            "[DYNAMIC {}] bitrate={} meta={:?}",
+            label,
+            dyn_info.bitrate,
+            dyn_meta.as_ref().map(|m| (&m.title, &m.track_artist, &m.album, &m.genre))
+        );
+        assert_eq!(dyn_info.bitrate, *expected_bitrate);
+        let dyn_m = dyn_meta.unwrap_or_else(|| panic!("{} dynamic metadata missing", label));
+        assert_eq!(dyn_m.album.as_deref(), Some(*expected_album));
+        assert_eq!(dyn_m.genre.as_deref(), Some("various"));
+        assert!(
+            dyn_m.title.as_deref().is_some_and(|s| !s.trim().is_empty()),
+            "{} expected non-empty dynamic title",
+            label
+        );
+        let _ = deck.stop();
+    }
+
+    let companion_hls_urls = [
+        (
+            "Radio Moda HLS",
+            "https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6839e1c82cc4c480fcd318dd/playlist.m3u8",
+        ),
+        (
+            "Onda Cero HLS",
+            "https://mdstrm.com/live-stream-playlist/6598b65ab398c90871aff8cc.m3u8",
+        ),
+    ];
+
+    for (idx, (label, hls_url)) in companion_hls_urls.iter().enumerate() {
+        let t0 = Instant::now();
+        let hls_res = analyze_audio_source(
+            AudioSourceCore {
+                id: 9100 + idx as i64,
+                source: (*hls_url).to_string(),
+                ..Default::default()
+            },
+            RustAnalysisConfig {
+                metadata: true,
+                replay_gain: true,
+                waveform: true,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("{} static analysis failed: {}", label, e));
+        let hls_meta = hls_res
+            .metadata
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} metadata missing", label));
+        println!(
+            "[COMPANION {}] elapsed={:.2}s duration_ms={:?} title={:?} artist={:?}",
+            label,
+            t0.elapsed().as_secs_f32(),
+            hls_res.audio_info.duration_ms,
+            hls_meta.title,
+            hls_meta.track_artist
+        );
+        assert!(hls_res.audio_info.duration_ms.is_none());
+        assert!(
+            hls_meta
+                .title
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty()),
+            "{} expected non-empty title",
+            label
+        );
+    }
+}
+
 
 

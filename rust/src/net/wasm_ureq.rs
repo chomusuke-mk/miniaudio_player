@@ -154,10 +154,20 @@ var FORBIDDEN = {
     'keep-alive': true,
     'accept-encoding': true,
     'origin': true,
-    'referer': true,
-    'icy-metadata': true
+    'referer': true
 };
+var icyBlockedHosts = new Set();
 
+function getHostKey(url) {
+    try {
+        var base = (typeof self !== 'undefined' && self.location && self.location.href)
+            ? self.location.href
+            : undefined;
+        return new URL(url, base).origin;
+    } catch (_) {
+        return url;
+    }
+}
 function getCtrl(ptr) {
     return new Int32Array(wasmMem.buffer, ptr, CTRL_WORDS);
 }
@@ -173,7 +183,7 @@ function writeResponseHeaders(res, ctrlPtr, hdrPtr, hdrCap) {
     var enc = new TextEncoder();
     var buf = getBuf(hdrPtr, hdrCap);
     var off = 0;
-    res.headers.forEach(function(v, k) {
+    function writePair(k, v) {
         var cleanK = String(k).toLowerCase().replace(/[\r\n\0]/g, '');
         var cleanV = String(v).replace(/[\r\n\0]/g, ' ');
         var b = enc.encode(cleanK + '\0' + cleanV + '\n');
@@ -181,10 +191,16 @@ function writeResponseHeaders(res, ctrlPtr, hdrPtr, hdrCap) {
             buf.set(b, off);
             off += b.byteLength;
         }
+    }
+    res.headers.forEach(function(v, k) {
+        writePair(k, v);
     });
+    if (res.url && typeof res.url === 'string') {
+        writePair('x-miniaudio-final-url', res.url);
+    }
     Atomics.store(getCtrl(ctrlPtr), CTRL_HDR_LEN, off);
 }
-function buildFetchHeaders(hdrPairs, includeRange) {
+function buildFetchHeaders(hdrPairs, includeRange, includeIcy) {
     var h = new Headers();
     if (hdrPairs && hdrPairs.length) {
         for (var i = 0; i < hdrPairs.length; i++) {
@@ -192,35 +208,68 @@ function buildFetchHeaders(hdrPairs, includeRange) {
             var low = k.toLowerCase();
             if (FORBIDDEN[low]) continue;
             if (!includeRange && low === 'range') continue;
+            if (!includeIcy && low === 'icy-metadata') continue;
             try { h.append(k, String(hdrPairs[i][1] || '')); } catch (_) {}
         }
     }
     return h;
 }
-async function fetchWithRangeFallback(url, hdrPairs, ac) {
+async function fetchWithHeaderFallback(url, hdrPairs, ac) {
     var hasRange = false;
+    var hasIcy = false;
     if (hdrPairs && hdrPairs.length) {
         for (var i = 0; i < hdrPairs.length; i++) {
-            if (String(hdrPairs[i][0] || '').toLowerCase() === 'range') {
-                hasRange = true;
-                break;
-            }
+            var low = String(hdrPairs[i][0] || '').toLowerCase();
+            if (low === 'range') hasRange = true;
+            if (low === 'icy-metadata') hasIcy = true;
         }
     }
-    var useRangeAttempts = (hasRange && url.indexOf('blob:') !== 0 && url.indexOf('data:') !== 0)
-        ? [true, false]
-        : [false];
+    var isLocalScheme = (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0);
+    if (isLocalScheme) {
+        hasRange = false;
+        hasIcy = false;
+    }
+    var hostKey = getHostKey(url);
+    var tryIcy = hasIcy && !icyBlockedHosts.has(hostKey);
+    var attempts = [];
+    function pushAttempt(r, ic) {
+        for (var j = 0; j < attempts.length; j++) {
+            if (attempts[j].range === r && attempts[j].icy === ic) return;
+        }
+        attempts.push({ range: r, icy: ic });
+    }
+    if (tryIcy) {
+        pushAttempt(hasRange, true);
+    }
+    if (hasRange) {
+        pushAttempt(true, false);
+    }
+    pushAttempt(false, false);
+
     var lastErr = null;
-    for (var a = 0; a < useRangeAttempts.length; a++) {
+    var icyFailed = false;
+    for (var a = 0; a < attempts.length; a++) {
+        var opt = attempts[a];
         try {
             var res = await fetch(url, {
-                headers: buildFetchHeaders(hdrPairs, useRangeAttempts[a]),
+                headers: buildFetchHeaders(hdrPairs, opt.range, opt.icy),
                 signal: ac.signal
             });
-            if (res.status === 0) continue;
+            if (res.status === 0) {
+                if (opt.icy) icyFailed = true;
+                continue;
+            }
+            if (icyFailed && !opt.icy && hostKey) {
+                if (icyBlockedHosts.size >= 256) {
+                    var oldest = icyBlockedHosts.values().next().value;
+                    if (oldest !== undefined) icyBlockedHosts.delete(oldest);
+                }
+                icyBlockedHosts.add(hostKey);
+            }
             return { ok: true, res: res };
         } catch (err) {
             if (ac.signal.aborted) throw err;
+            if (opt.icy) icyFailed = true;
             lastErr = err;
         }
     }
@@ -283,7 +332,7 @@ async function pumpStream(d) {
             wakeRust(d.ctrlPtr);
             return;
         }
-        var attempt = await fetchWithRangeFallback(url, d.headers, ac);
+        var attempt = await fetchWithHeaderFallback(url, d.headers, ac);
         var chosenRes = attempt.ok ? attempt.res : null;
         if (!chosenRes) {
             var cFail = getCtrl(d.ctrlPtr);

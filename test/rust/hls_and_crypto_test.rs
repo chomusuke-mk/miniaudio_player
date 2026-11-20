@@ -10,10 +10,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::FixtureResolver;
-use miniaudio_player::core::dual_source::StreamingDeck;
+use miniaudio_player::api::types::RustAnalysisConfig;
+use miniaudio_player::core::dual_source::{AudioSourceCore, StreamingDeck};
 use miniaudio_player::decoder::SymphoniaEngine;
+use miniaudio_player::dsp::analysis::analyze_audio_source;
 use miniaudio_player::hls::{
-    resolve_hls_uri, HlsPlaylistTracker, HlsSegmentTarget, M3u8Parser, MpegTsDemuxer,
+    derive_companion_hls_metadata_urls, parse_hls_extinf_metadata, resolve_hls_uri,
+    HlsExtinfMetadata, HlsPlaylistTracker, HlsSegmentTarget, M3u8Parser, MpegTsDemuxer,
     ParsedHlsPlaylist, TsAudioCodec,
 };
 
@@ -340,12 +343,14 @@ fn test_hls_playlist_tracker_live_reloads_and_endlist() {
                 byte_range: None,
                 sequence_number: 12,
                 duration_ms: 4000,
+                title: None,
             },
             HlsSegmentTarget {
                 url: "http://127.0.0.1/live/seg13.ts".to_string(),
                 byte_range: None,
                 sequence_number: 13,
                 duration_ms: 4000,
+                title: None,
             },
         ]
     );
@@ -363,6 +368,7 @@ fn test_hls_playlist_tracker_live_reloads_and_endlist() {
             byte_range: None,
             sequence_number: 13,
             duration_ms: 4000,
+            title: None,
         }]
     );
 
@@ -379,6 +385,7 @@ fn test_hls_playlist_tracker_live_reloads_and_endlist() {
             byte_range: None,
             sequence_number: 13,
             duration_ms: 4000,
+            title: None,
         }]
     );
     assert!(!tracker.is_live());
@@ -1018,6 +1025,288 @@ fn test_problems2_e9_hls_vod_block_lookahead_and_segment_seek() {
         "E9: expected at most lookahead seg 4 / in-flight seg 15 on backward seek(10s), got {:?}",
         new_reqs
     );
+
+    let _ = deck.stop();
+    drop(deck);
+    stop.store(true, Ordering::Release);
+    let _ = srv_handle.join();
+}
+
+fn load_valid_adts_frames_chunk(min_bytes: usize) -> Vec<u8> {
+    let raw = std::fs::read(FixtureResolver::resolve("10_La_cicatriz_del_andén.aac"))
+        .expect("read AAC fixture");
+    let mut off = 0usize;
+    if raw.len() >= 10 && &raw[..3] == b"ID3" {
+        let size = (((raw[6] as usize) & 0x7F) << 21)
+            | (((raw[7] as usize) & 0x7F) << 14)
+            | (((raw[8] as usize) & 0x7F) << 7)
+            | ((raw[9] as usize) & 0x7F);
+        let footer = if (raw[5] & 0x10) != 0 { 10 } else { 0 };
+        off = (10 + size + footer).min(raw.len());
+    }
+    while off + 7 <= raw.len() {
+        if raw[off] == 0xFF && (raw[off + 1] & 0xF6) == 0xF0 {
+            break;
+        }
+        off += 1;
+    }
+    let mut single_pass = Vec::new();
+    let mut cursor = off;
+    while cursor + 7 <= raw.len() && single_pass.len() < 8192 {
+        if raw[cursor] != 0xFF || (raw[cursor + 1] & 0xF6) != 0xF0 {
+            break;
+        }
+        let frame_len = ((((raw[cursor + 3] as usize) & 0x03) << 11)
+            | ((raw[cursor + 4] as usize) << 3)
+            | (((raw[cursor + 5] as usize) >> 5) & 0x07))
+            .max(7);
+        if cursor + frame_len > raw.len() {
+            break;
+        }
+        single_pass.extend_from_slice(&raw[cursor..cursor + frame_len]);
+        cursor += frame_len;
+    }
+    assert!(
+        !single_pass.is_empty(),
+        "expected valid ADTS frames in 10_La_cicatriz_del_andén.aac"
+    );
+    let mut out = Vec::with_capacity(min_bytes.max(single_pass.len()));
+    while out.len() < min_bytes {
+        out.extend_from_slice(&single_pass);
+    }
+    out
+}
+
+fn build_id3v24_aac_segment(title: &str, artist: &str, adts_audio: &[u8]) -> Vec<u8> {
+    fn enc_ss(v: u32) -> [u8; 4] {
+        [
+            ((v >> 21) & 0x7F) as u8,
+            ((v >> 14) & 0x7F) as u8,
+            ((v >> 7) & 0x7F) as u8,
+            (v & 0x7F) as u8,
+        ]
+    }
+    let mut frames = Vec::new();
+    for (id, text) in [(b"TIT2", title), (b"TPE1", artist)] {
+        let len = (1 + text.len()) as u32;
+        frames.extend_from_slice(id);
+        frames.extend_from_slice(&enc_ss(len));
+        frames.extend_from_slice(&[0x00, 0x00, 0x03]);
+        frames.extend_from_slice(text.as_bytes());
+    }
+    let mut seg = Vec::with_capacity(10 + frames.len() + adts_audio.len());
+    seg.extend_from_slice(b"ID3\x04\x00\x00");
+    seg.extend_from_slice(&enc_ss(frames.len() as u32));
+    seg.extend_from_slice(&frames);
+    seg.extend_from_slice(adts_audio);
+    seg
+}
+
+#[test]
+fn test_mediastream_resolve_hls_triple_slash_uri() {
+    let base = "https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6839e1c82cc4c480fcd318dd/playlist.m3u8";
+    let seg = ":///live-audio-aw/6839e1c82cc4c480fcd318dd/seg.aac";
+    assert_eq!(
+        resolve_hls_uri(base, seg),
+        "https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6839e1c82cc4c480fcd318dd/seg.aac"
+    );
+}
+
+#[test]
+fn test_parse_hls_extinf_metadata_variants() {
+    assert_eq!(
+        parse_hls_extinf_metadata("title=\"Moda\""),
+        Some(HlsExtinfMetadata {
+            title: Some("Moda".to_string()),
+            artist: None,
+        })
+    );
+    assert_eq!(
+        parse_hls_extinf_metadata("title=\"Soy igual que tu\",artist=\"Alexis y Fido\""),
+        Some(HlsExtinfMetadata {
+            title: Some("Soy igual que tu".to_string()),
+            artist: Some("Alexis y Fido".to_string()),
+        })
+    );
+    assert_eq!(parse_hls_extinf_metadata("ADWSRTAG_START"), None);
+    assert_eq!(
+        parse_hls_extinf_metadata("title=\"ADWSRTAG_END\""),
+        None
+    );
+    assert_eq!(
+        parse_hls_extinf_metadata("Just A Song Title"),
+        Some(HlsExtinfMetadata {
+            title: Some("Just A Song Title".to_string()),
+            artist: None,
+        })
+    );
+    assert_eq!(
+        parse_hls_extinf_metadata("title=\"Hello, \\\"World\\\"\",artist=\"A & B\""),
+        Some(HlsExtinfMetadata {
+            title: Some("Hello, \"World\"".to_string()),
+            artist: Some("A & B".to_string()),
+        })
+    );
+
+    let playlist = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n#EXT-X-MEDIA-SEQUENCE:42\n\
+#EXTINF:4.992,title=\"Soy igual que tu\",artist=\"Alexis y Fido\"\n\
+:///live-audio-aw/6598b65ab398c90871aff8cc/seg.aac\n";
+    match M3u8Parser::parse(playlist).expect("M3U8 with EXTINF commas should parse") {
+        ParsedHlsPlaylist::Media { segments, .. } => {
+            assert_eq!(segments.len(), 1);
+            assert_eq!(
+                segments[0].uri,
+                ":///live-audio-aw/6598b65ab398c90871aff8cc/seg.aac"
+            );
+            assert_eq!(
+                segments[0].title.as_deref(),
+                Some("title=\"Soy igual que tu\",artist=\"Alexis y Fido\"")
+            );
+        }
+        _ => panic!("Expected Media playlist"),
+    }
+}
+
+#[test]
+fn test_derive_companion_hls_metadata_urls() {
+    let moda = "https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6839e1c82cc4c480fcd318dd";
+    let moda_urls = derive_companion_hls_metadata_urls(moda, None);
+    assert!(
+        moda_urls.contains(&"https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6839e1c82cc4c480fcd318dd/playlist.m3u8".to_string()),
+        "expected edge playlist.m3u8 in {:?}",
+        moda_urls
+    );
+    assert!(
+        moda_urls.contains(&"https://mdstrm.com/live-stream-playlist/6839e1c82cc4c480fcd318dd.m3u8".to_string()),
+        "expected live-stream-playlist in {:?}",
+        moda_urls
+    );
+
+    let onda = "https://mdstrm.com/audio/6598b65ab398c90871aff8cc/icecast.audio";
+    let onda_only = derive_companion_hls_metadata_urls(onda, None);
+    assert_eq!(
+        onda_only,
+        vec!["https://mdstrm.com/live-stream-playlist/6598b65ab398c90871aff8cc.m3u8".to_string()]
+    );
+
+    let onda_final = "https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6598b65ab398c90871aff8cc";
+    let onda_both = derive_companion_hls_metadata_urls(onda, Some(onda_final));
+    assert!(
+        onda_both.contains(&"https://us-b4-p-e-zs14-audio.cdn.mdstrm.com/live-audio-aw/6598b65ab398c90871aff8cc/playlist.m3u8".to_string()),
+        "expected edge URL derived from final_url in {:?}",
+        onda_both
+    );
+    assert!(
+        onda_both.contains(&"https://mdstrm.com/live-stream-playlist/6598b65ab398c90871aff8cc.m3u8".to_string()),
+        "expected origin URL in {:?}",
+        onda_both
+    );
+
+    assert!(derive_companion_hls_metadata_urls("https://example.com/live/radio.mp3", None).is_empty());
+}
+
+#[test]
+fn test_live_hls_aac_extinf_and_id3_static_and_dynamic_metadata() {
+    let adts = load_valid_adts_frames_chunk(20_000);
+    let seg1 = build_id3v24_aac_segment("Song One", "Artist One", &adts);
+    let seg2 = build_id3v24_aac_segment("Song Two", "Artist Two", &adts);
+    let seg3 = build_id3v24_aac_segment("Song Two", "Artist Two", &adts);
+
+    let dyn_polls = Arc::new(AtomicUsize::new(0));
+    let dyn_polls_srv = dyn_polls.clone();
+
+    let (base_url, stop, srv_handle) = spawn_hls_test_server(move |path, _range| match path {
+        "/static/playlist.m3u8" => (
+            200,
+            "application/vnd.apple.mpegurl",
+            b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:10\n\
+#EXTINF:1.0,title=\"Song One\",artist=\"Artist One\"\n/seg1.aac\n"
+                .to_vec(),
+            None,
+        ),
+        "/dynamic/playlist.m3u8" => {
+            let poll = dyn_polls_srv.fetch_add(1, Ordering::AcqRel);
+            if poll == 0 {
+                (
+                    200,
+                    "application/vnd.apple.mpegurl",
+                    b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:10\n\
+#EXTINF:1.0,title=\"Song One\",artist=\"Artist One\"\n/seg1.aac\n"
+                        .to_vec(),
+                    None,
+                )
+            } else {
+                (
+                    200,
+                    "application/vnd.apple.mpegurl",
+                    b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:11\n\
+#EXTINF:1.0,title=\"Song Two\",artist=\"Artist Two\"\n/seg2.aac\n\
+#EXTINF:1.0,title=\"Song Two\",artist=\"Artist Two\"\n/seg3.aac\n"
+                        .to_vec(),
+                    None,
+                )
+            }
+        }
+        "/seg1.aac" => (200, "audio/aac", seg1.clone(), None),
+        "/seg2.aac" => (200, "audio/aac", seg2.clone(), None),
+        "/seg3.aac" => (200, "audio/aac", seg3.clone(), None),
+        _ => (404, "text/plain", b"Not Found".to_vec(), None),
+    });
+
+    // 1. Static analysis returns Song One / Artist One quickly on live HLS.
+    let static_url = format!("{}/static/playlist.m3u8", base_url);
+    let analysis_start = Instant::now();
+    let res = analyze_audio_source(
+        AudioSourceCore {
+            id: 101,
+            source: static_url,
+            ..Default::default()
+        },
+        RustAnalysisConfig {
+            metadata: true,
+            replay_gain: true,
+            waveform: true,
+            ..Default::default()
+        },
+    )
+    .expect("live HLS static analysis should succeed");
+    assert!(
+        analysis_start.elapsed() < Duration::from_secs(3),
+        "live HLS static analysis took too long: {:?}",
+        analysis_start.elapsed()
+    );
+    assert!(res.audio_info.duration_ms.is_none());
+    let static_meta = res.metadata.expect("expected static metadata");
+    assert_eq!(static_meta.title.as_deref(), Some("Song One"));
+    assert_eq!(static_meta.track_artist.as_deref(), Some("Artist One"));
+
+    // 2. Live playback loads initial Song One then updates dynamically to Song Two.
+    let dyn_url = format!("{}/dynamic/playlist.m3u8", base_url);
+    let mut deck = StreamingDeck::new_deck(44100, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&dyn_url, None, None), 0);
+    let init_meta = deck
+        .get_parsed_metadata()
+        .expect("expected initial live HLS metadata");
+    assert_eq!(init_meta.title.as_deref(), Some("Song One"));
+    assert_eq!(init_meta.track_artist.as_deref(), Some("Artist One"));
+
+    deck.play();
+    let mut out = vec![0.0f32; 2048];
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let mut updated = false;
+    while Instant::now() < deadline {
+        deck.render_pcm(out.as_mut_ptr(), 1024);
+        if let Some(m) = deck.get_parsed_metadata() {
+            if m.title.as_deref() == Some("Song Two")
+                && m.track_artist.as_deref() == Some("Artist Two")
+            {
+                updated = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(updated, "live HLS deck did not update dynamic metadata to Song Two");
 
     let _ = deck.stop();
     drop(deck);

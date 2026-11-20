@@ -307,17 +307,17 @@ impl UniversalMetadataExtractor {
             }
             if let Some(ref st) = icy.stream_title {
                 let trimmed = st.trim();
-                if !trimmed.is_empty() {
+                if !crate::hls::is_live_ad_marker(trimmed) {
                     if let Some((artist_part, title_part)) = trimmed.split_once(" - ") {
                         let a = artist_part.trim();
                         let t = title_part.trim();
-                        if !a.is_empty() && out.track_artist.is_none() {
+                        if !a.is_empty() {
                             out.track_artist = Some(a.to_string());
                         }
                         if !t.is_empty() {
                             out.title = Some(t.to_string());
                         }
-                    } else if out.title.is_none() {
+                    } else {
                         out.title = Some(trimmed.to_string());
                     }
                 }
@@ -3335,13 +3335,38 @@ pub fn parse_icy_stream_block(raw_icy: &[u8]) -> (Option<String>, Option<String>
         }
     };
 
-    let title = extract_kv("StreamTitle='").or_else(|| {
-        if !trimmed.contains('=') {
-            Some(trimmed.to_string())
-        } else {
-            None
-        }
-    });
+    let title = extract_kv("StreamTitle='")
+        .or_else(|| {
+            if !trimmed.contains('=') {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|t| !crate::hls::is_live_ad_marker(t));
     let url = extract_kv("StreamUrl='");
     (title, url)
+}
+
+/// Extracts `(title, track_artist, album)` from an embedded ID3v2 byte container (filtering ad markers).
+pub fn extract_basic_id3v2_tags(raw_id3: &[u8]) -> (Option<String>, Option<String>, Option<String>) {
+    if raw_id3.len() < 10 || !raw_id3.starts_with(b"ID3") {
+        return (None, None, None);
+    }
+    let mut meta = RustAudioMetadata::default();
+    let mut consumed = HashSet::new();
+    parse_raw_id3v2_slice(raw_id3, &mut meta, &mut consumed);
+
+    let clean = |opt: Option<String>| -> Option<String> {
+        opt.and_then(|s| {
+            let t = s.trim_matches('\0').trim();
+            if crate::hls::is_live_ad_marker(t) {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        })
+    };
+
+    (clean(meta.title), clean(meta.track_artist), clean(meta.album))
 }

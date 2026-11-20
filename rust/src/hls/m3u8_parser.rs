@@ -114,23 +114,27 @@ pub fn resolve_hls_uri(base_url: &str, seg_uri: &str) -> String {
     {
         return trimmed.to_string();
     }
-    let base_no_query = base_url.split('?').next().unwrap_or(base_url);
+    let base_no_query = base_url.split(['?', '#']).next().unwrap_or(base_url);
     if trimmed.starts_with("//") {
         if let Some(scheme_idx) = base_no_query.find("://") {
             return format!("{}:{}", &base_no_query[..scheme_idx], trimmed);
         }
         return format!("https:{}", trimmed);
     }
-    if trimmed.starts_with('/') {
+    let root_rel = trimmed
+        .strip_prefix("://")
+        .filter(|s| s.starts_with('/'))
+        .or_else(|| trimmed.starts_with('/').then_some(trimmed));
+    if let Some(root_path) = root_rel {
         if let Some(scheme_idx) = base_no_query.find("://") {
             let after_scheme = &base_no_query[scheme_idx + 3..];
             if let Some(slash_idx) = after_scheme.find('/') {
                 let origin = &base_no_query[..scheme_idx + 3 + slash_idx];
-                return format!("{}{}", origin, trimmed);
+                return format!("{}{}", origin, root_path);
             }
-            return format!("{}{}", base_no_query, trimmed);
+            return format!("{}{}", base_no_query, root_path);
         }
-        return trimmed.to_string();
+        return root_path.to_string();
     }
     if let Some(last_slash) = base_no_query.rfind('/') {
         format!("{}/{}", &base_no_query[..last_slash], trimmed)
@@ -162,6 +166,68 @@ pub enum ParsedHlsPlaylist {
     },
 }
 
+const EXTINF_SENTINEL_PREFIX: &str = "__MINIAUDIO_EXTINF_";
+const EXTINF_SENTINEL_SUFFIX: &str = "__";
+
+fn split_extinf_comma_payload(line_no_eol: &str) -> Option<(&str, &str, &str)> {
+    let ws_len = line_no_eol.len() - line_no_eol.trim_start().len();
+    let (indent, trimmed) = line_no_eol.split_at(ws_len);
+    let after_tag = trimmed.strip_prefix("#EXTINF:")?;
+    let comma_idx = after_tag.find(',')?;
+    let duration_part = &after_tag[..comma_idx];
+    let payload = &after_tag[comma_idx + 1..];
+    payload.contains(',').then_some((indent, duration_part, payload))
+}
+
+fn preprocess_m3u8_extinf_commas(content: &[u8]) -> Option<(Vec<u8>, Vec<String>)> {
+    let text = std::str::from_utf8(content).ok()?;
+    if !text.lines().any(|l| split_extinf_comma_payload(l).is_some()) {
+        return None;
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut restored_titles = Vec::new();
+    for line in text.split_inclusive('\n') {
+        let (line_no_eol, eol) = if let Some(s) = line.strip_suffix("\r\n") {
+            (s, "\r\n")
+        } else if let Some(s) = line.strip_suffix('\n') {
+            (s, "\n")
+        } else {
+            (line, "")
+        };
+        if let Some((indent, duration_part, payload)) = split_extinf_comma_payload(line_no_eol) {
+            let idx = restored_titles.len();
+            restored_titles.push(payload.to_string());
+            out.push_str(indent);
+            out.push_str("#EXTINF:");
+            out.push_str(duration_part);
+            out.push(',');
+            out.push_str(EXTINF_SENTINEL_PREFIX);
+            out.push_str(&idx.to_string());
+            out.push_str(EXTINF_SENTINEL_SUFFIX);
+            out.push_str(eol);
+        } else {
+            out.push_str(line);
+        }
+    }
+    Some((out.into_bytes(), restored_titles))
+}
+
+fn restore_extinf_title(title: Option<String>, restored_titles: &[String]) -> Option<String> {
+    let s = title?;
+    if let Some(idx_str) = s
+        .strip_prefix(EXTINF_SENTINEL_PREFIX)
+        .and_then(|rest| rest.strip_suffix(EXTINF_SENTINEL_SUFFIX))
+    {
+        if let Ok(idx) = idx_str.parse::<usize>() {
+            if let Some(orig) = restored_titles.get(idx) {
+                return Some(orig.clone());
+            }
+        }
+    }
+    Some(s)
+}
+
 /// High-level parser for HLS M3U8 master and media manifests.
 pub struct M3u8Parser;
 
@@ -174,12 +240,17 @@ impl M3u8Parser {
 
     /// Parses an M3U8 playlist from raw UTF-8 bytes into a `ParsedHlsPlaylist`.
     pub fn parse(content: &[u8]) -> Result<ParsedHlsPlaylist, String> {
-        let playlist = m3u8_rs::parse_playlist_res(content)
+        let preprocessed = preprocess_m3u8_extinf_commas(content);
+        let (parse_bytes, restored_titles): (&[u8], &[String]) = match preprocessed {
+            Some((ref buf, ref titles)) => (buf.as_slice(), titles.as_slice()),
+            None => (content, &[]),
+        };
+        let playlist = m3u8_rs::parse_playlist_res(parse_bytes)
             .map_err(|e| format!("Failed to parse M3U8: {:?}", e))?;
 
         match playlist {
             Playlist::MasterPlaylist(master) => Ok(Self::process_master(master)),
-            Playlist::MediaPlaylist(media) => Ok(Self::process_media(media)),
+            Playlist::MediaPlaylist(media) => Ok(Self::process_media(media, restored_titles)),
         }
     }
 
@@ -199,7 +270,7 @@ impl M3u8Parser {
         ParsedHlsPlaylist::Master { variants }
     }
 
-    fn process_media(media: MediaPlaylist) -> ParsedHlsPlaylist {
+    fn process_media(media: MediaPlaylist, restored_titles: &[String]) -> ParsedHlsPlaylist {
         let is_live = !media.end_list;
         let target_duration = media.target_duration as f32;
         let base_seq = media.media_sequence;
@@ -209,8 +280,9 @@ impl M3u8Parser {
         let mut last_byte_range: Option<(String, u64)> = None;
         let mut segments = Vec::with_capacity(media.segments.len());
 
-        for (idx, seg) in media.segments.into_iter().enumerate() {
+        for (idx, mut seg) in media.segments.into_iter().enumerate() {
             let seq = base_seq.saturating_add(idx as u64);
+            seg.title = restore_extinf_title(seg.title, restored_titles);
             if let Some(ref key) = seg.key {
                 current_key = EncryptionKeyInfo::from_m3u8_key(key);
             }
@@ -258,6 +330,8 @@ pub struct HlsSegmentTarget {
     pub sequence_number: u64,
     /// Nominal `#EXTINF` segment duration in milliseconds.
     pub duration_ms: u64,
+    /// Optional raw `#EXTINF` title/attribute string.
+    pub title: Option<String>,
 }
 
 type SegmentKey = (String, Option<(u64, u64)>);
@@ -341,6 +415,7 @@ impl HlsPlaylistTracker {
                 byte_range: s.byte_range,
                 sequence_number: s.sequence_number,
                 duration_ms: (s.duration_seconds.max(0.0) * 1000.0).round() as u64,
+                title: s.title.clone(),
             })
             .collect()
     }
@@ -412,4 +487,226 @@ impl HlsPlaylistTracker {
         }
         self.recent_keys.push_back(key);
     }
+}
+
+/// Structured track metadata extracted from an HLS `#EXTINF` attribute payload or plain title.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HlsExtinfMetadata {
+    /// Track or program title, if present and non-ad-marker.
+    pub title: Option<String>,
+    /// Track artist, if present and non-ad-marker.
+    pub artist: Option<String>,
+}
+
+/// Returns `true` when `value` is empty or a transient live-stream ad-insertion marker token.
+#[inline]
+pub fn is_live_ad_marker(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty()
+        || trimmed
+            .get(..9)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("ADWSRTAG_"))
+}
+
+fn clean_live_meta_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if is_live_ad_marker(trimmed) {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_extinf_kv_pairs(input: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b',' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+
+        let key_start = i;
+        while i < bytes.len() && bytes[i] != b'=' && bytes[i] != b',' {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b'=' {
+            // Not a well-formed key=value attribute sequence; bail to plain-text fallback.
+            return Vec::new();
+        }
+        let key = input[key_start..i].trim();
+        if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            return Vec::new();
+        }
+        i += 1; // skip '='
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            pairs.push((key.to_ascii_lowercase(), String::new()));
+            break;
+        }
+
+        let val = if bytes[i] == b'"' || bytes[i] == b'\'' {
+            let quote = bytes[i] as char;
+            i += 1;
+            let mut buf = String::new();
+            let mut closed = false;
+            let mut iter = input[i..].char_indices();
+            while let Some((off, ch)) = iter.next() {
+                if ch == '\\' {
+                    if let Some((_, next_ch)) = iter.next() {
+                        buf.push(next_ch);
+                    }
+                } else if ch == quote {
+                    i += off + ch.len_utf8();
+                    closed = true;
+                    break;
+                } else {
+                    buf.push(ch);
+                }
+            }
+            if !closed {
+                return Vec::new();
+            }
+            buf
+        } else {
+            let val_start = i;
+            while i < bytes.len() && bytes[i] != b',' {
+                i += 1;
+            }
+            input[val_start..i].trim().to_string()
+        };
+        pairs.push((key.to_ascii_lowercase(), val));
+    }
+
+    pairs
+}
+
+/// Parses an HLS `#EXTINF` title string (attribute list or plain `"Artist - Title"`) into track metadata.
+pub fn parse_hls_extinf_metadata(raw_title: &str) -> Option<HlsExtinfMetadata> {
+    let trimmed = raw_title.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let kv = parse_extinf_kv_pairs(trimmed);
+    let has_meta_key = kv.iter().any(|(k, _)| k == "title" || k == "artist");
+    if has_meta_key {
+        let mut title = None;
+        let mut artist = None;
+        for (k, v) in kv {
+            if k == "title" && title.is_none() {
+                title = clean_live_meta_value(&v);
+            } else if k == "artist" && artist.is_none() {
+                artist = clean_live_meta_value(&v);
+            }
+        }
+        return (title.is_some() || artist.is_some()).then_some(HlsExtinfMetadata { title, artist });
+    }
+
+    if is_live_ad_marker(trimmed) {
+        return None;
+    }
+    if let Some((artist_part, title_part)) = trimmed.split_once(" - ") {
+        let a = artist_part.trim();
+        let t = title_part.trim();
+        if !a.is_empty() && !t.is_empty() {
+            return Some(HlsExtinfMetadata {
+                title: Some(t.to_string()),
+                artist: Some(a.to_string()),
+            });
+        }
+    }
+
+    Some(HlsExtinfMetadata {
+        title: Some(trimmed.to_string()),
+        artist: None,
+    })
+}
+
+fn parse_mdstrm_icecast_id(raw_url: &str) -> Option<(Option<&str>, &str)> {
+    let clean = raw_url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(raw_url)
+        .trim()
+        .trim_end_matches('/');
+    let rest = clean
+        .strip_prefix("https://")
+        .or_else(|| clean.strip_prefix("http://"))
+        .or_else(|| clean.strip_prefix("icy://"))?;
+    let (host, path) = rest.split_once('/')?;
+    if host.is_empty() {
+        return None;
+    }
+
+    let host_no_port = host.split(':').next().unwrap_or(host);
+    let is_valid_id = |id: &str| -> bool {
+        !id.is_empty()
+            && !id.contains('/')
+            && !id.contains('.')
+            && id.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+
+    if host_no_port.eq_ignore_ascii_case("cdn.mdstrm.com")
+        || host_no_port
+            .to_ascii_lowercase()
+            .ends_with(".cdn.mdstrm.com")
+    {
+        if let Some(id) = path.strip_prefix("live-audio-aw/") {
+            if is_valid_id(id) {
+                return Some((Some(host), id));
+            }
+        }
+    } else if host_no_port.eq_ignore_ascii_case("mdstrm.com")
+        || host_no_port.eq_ignore_ascii_case("www.mdstrm.com")
+    {
+        if let Some(id) = path
+            .strip_prefix("audio/")
+            .and_then(|s| s.strip_suffix("/icecast.audio"))
+        {
+            if is_valid_id(id) {
+                return Some((None, id));
+            }
+        }
+    }
+
+    None
+}
+
+/// Derives CORS-accessible companion HLS playlist URLs for direct Mediastream Icecast endpoints.
+pub fn derive_companion_hls_metadata_urls(original_url: &str, final_url: Option<&str>) -> Vec<String> {
+    let mut stream_id: Option<&str> = None;
+    let mut edge_host: Option<&str> = None;
+
+    for candidate in final_url.into_iter().chain(std::iter::once(original_url)) {
+        if let Some((host, id)) = parse_mdstrm_icecast_id(candidate) {
+            if stream_id.is_none() {
+                stream_id = Some(id);
+            }
+            if edge_host.is_none() {
+                edge_host = host;
+            }
+        }
+    }
+
+    let Some(id) = stream_id else {
+        return Vec::new();
+    };
+
+    let mut urls = Vec::with_capacity(2);
+    urls.push(format!("https://mdstrm.com/live-stream-playlist/{}.m3u8", id));
+    if let Some(host) = edge_host {
+        let candidate = format!("https://{}/live-audio-aw/{}/playlist.m3u8", host, id);
+        if !urls.contains(&candidate) {
+            urls.push(candidate);
+        }
+    }
+    urls
 }
