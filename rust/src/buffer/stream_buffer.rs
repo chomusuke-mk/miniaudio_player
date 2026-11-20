@@ -1450,6 +1450,14 @@ impl StreamBuffer {
                     return Vec::new();
                 }
                 let mut out = Vec::with_capacity(total_cap);
+                const W64_RIFF_GUID: [u8; 16] = [
+                    0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04,
+                    0xc1, 0x00, 0x00,
+                ];
+                const W64_DATA_GUID: [u8; 16] = [
+                    0x64, 0x61, 0x74, 0x61, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04,
+                    0xc1, 0x00, 0x00,
+                ];
                 for (&offset, chunk) in chunks.iter() {
                     if offset == 0 {
                         out.extend_from_slice(chunk);
@@ -1460,6 +1468,23 @@ impl StreamBuffer {
                             && &out[head_len - 8..head_len - 4] == b"data"
                         {
                             out[head_len - 4..head_len].copy_from_slice(&0u32.to_le_bytes());
+                        } else if head_len >= 12
+                            && out.starts_with(b"RIFX")
+                            && &out[8..12] == b"WAVE"
+                            && &out[head_len - 8..head_len - 4] == b"data"
+                        {
+                            out[head_len - 4..head_len].copy_from_slice(&0u32.to_be_bytes());
+                        } else if head_len >= 64
+                            && out[0..16] == W64_RIFF_GUID
+                            && out[head_len - 24..head_len - 8] == W64_DATA_GUID
+                        {
+                            out[head_len - 8..head_len].copy_from_slice(&24u64.to_le_bytes());
+                        } else if head_len >= 20
+                            && out.starts_with(b"FORM")
+                            && (&out[8..12] == b"AIFF" || &out[8..12] == b"AIFC")
+                            && &out[head_len - 8..head_len - 4] == b"SSND"
+                        {
+                            out[head_len - 4..head_len].copy_from_slice(&0u32.to_be_bytes());
                         } else if head_len >= 16 && &out[4..8] == b"ftyp" {
                             if &out[head_len - 4..head_len] == b"mdat" {
                                 out[head_len - 8..head_len - 4]
@@ -1472,6 +1497,13 @@ impl StreamBuffer {
                     } else {
                         out.extend_from_slice(chunk);
                     }
+                }
+                if out.len() >= 12
+                    && out.starts_with(b"FORM")
+                    && (&out[8..12] == b"AIFF" || &out[8..12] == b"AIFC")
+                {
+                    let form_sz = (out.len().saturating_sub(8) as u32).to_be_bytes();
+                    out[4..8].copy_from_slice(&form_sz);
                 }
                 out
             }

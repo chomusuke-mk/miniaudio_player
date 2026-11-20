@@ -161,6 +161,34 @@ impl StreamClassifier {
             }
         } else {
             slices.push(ClassifiedSlice::AudioPayload(initial_data));
+            if boundary.container == ContainerFormat::Aiff && initial_data.len() >= 12 {
+                // Expose the FORM metadata header + SSND header in the Metadata buffer so
+                // `MetadataStreamReader` can seek across `SSND` straight into trailing `ID3 ` chunks.
+                let mut p: usize = 12;
+                let mut head_end: Option<usize> = None;
+                while p + 8 <= initial_data.len() {
+                    if &initial_data[p..p + 4] == b"SSND" {
+                        head_end = Some((p + 8).min(initial_data.len()));
+                        break;
+                    }
+                    let sz = be32(&initial_data[p + 4..p + 8]) as usize;
+                    let Some(next_p) = 8usize
+                        .checked_add(sz)
+                        .and_then(|n| n.checked_add(sz & 1))
+                        .and_then(|n| p.checked_add(n))
+                    else {
+                        break;
+                    };
+                    p = next_p;
+                }
+                let meta_len = head_end.unwrap_or_else(|| initial_data.len().min(65536));
+                if meta_len > 0 {
+                    slices.push(ClassifiedSlice::MetadataChunk {
+                        offset: 0,
+                        data: &initial_data[..meta_len],
+                    });
+                }
+            }
         }
 
         if let Some((tail_bytes, tail_offset)) = tail_data {
@@ -1336,7 +1364,16 @@ impl StreamClassifier {
                 if p + 16 > d.len() && (total <= 0 || (p + 16) as i64 <= total) {
                     return Self::need_more(out, (p + 16) as i64, total, d.len());
                 }
-                return found_at_start(out);
+                let ssnd_end = 8usize
+                    .checked_add(size)
+                    .and_then(|n| n.checked_add(size & 1))
+                    .and_then(|n| p.checked_add(n));
+                let effective_end = match ssnd_end {
+                    Some(end) if end > 0 && (total <= 0 || (end as i64) <= total) => end as i64,
+                    _ => total,
+                };
+                out.set_direct_container(ContainerFormat::Aiff, 0, effective_end);
+                return BoundaryStatus::Found;
             }
 
             let Some(next_p) = 8usize

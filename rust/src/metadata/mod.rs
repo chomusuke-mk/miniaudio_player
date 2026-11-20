@@ -63,6 +63,71 @@ impl SymphoniaExtractedMeta {
             }
         }
 
+        // Ingest image file attachments (e.g. Matroska / WebM `Attachments` EBML element)
+        for attachment in format.attachments() {
+            if let symphonia::core::formats::Attachment::File(att) = attachment {
+                if att.data.is_empty() {
+                    continue;
+                }
+                let media_lower = att
+                    .media_type
+                    .as_deref()
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .unwrap_or_default();
+                let mime_type = att
+                    .media_type
+                    .as_deref()
+                    .and_then(parse_mime_str)
+                    .or_else(|| sniff_image_mime(&att.data));
+                if mime_type.is_none() && !media_lower.starts_with("image/") {
+                    continue;
+                }
+                let label = format!(
+                    "{} {}",
+                    att.name,
+                    att.description.as_deref().unwrap_or("")
+                )
+                .to_ascii_lowercase();
+                let picture_type = if label.contains("back") {
+                    RustPictureType::CoverBack
+                } else if label.contains("icon") {
+                    RustPictureType::Icon
+                } else if label.contains("leaflet") {
+                    RustPictureType::Leaflet
+                } else if label.contains("artist") {
+                    RustPictureType::Artist
+                } else {
+                    RustPictureType::CoverFront
+                };
+                let description = att
+                    .description
+                    .as_deref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        let n = att.name.trim();
+                        if n.is_empty() {
+                            None
+                        } else {
+                            Some(n.to_string())
+                        }
+                    });
+                let bytes = att.data.to_vec();
+                let already_present = out.visuals.iter().any(|v| {
+                    v.bytes.len() == bytes.len() && v.bytes.get(..16) == bytes.get(..16)
+                });
+                if !already_present {
+                    out.visuals.push(RustAudioPicture {
+                        picture_type,
+                        mime_type,
+                        description,
+                        bytes,
+                    });
+                }
+            }
+        }
+
         out
     }
 
@@ -268,6 +333,10 @@ impl UniversalMetadataExtractor {
             }
         }
 
+        if out.chapters.len() > 1 {
+            out.chapters.sort_by_key(|c| c.start_ms);
+        }
+
         out
     }
 }
@@ -336,100 +405,146 @@ fn try_parse_with_lofty<R: Read + Seek>(
     true
 }
 
+#[inline]
+fn tag_str(tag: &Tag, key: ItemKey) -> Option<&str> {
+    tag.get(key)
+        .and_then(|item| item.value().text().or_else(|| item.value().locator()))
+}
+
 fn ingest_lofty_tag(
     tag: &Tag,
     out: &mut RustAudioMetadata,
     consumed_custom_keys: &mut HashSet<String>,
 ) {
+    for known in [
+        "REPLAYGAIN_TRACK_GAIN",
+        "REPLAYGAIN_TRACK_PEAK",
+        "REPLAYGAIN_ALBUM_GAIN",
+        "REPLAYGAIN_ALBUM_PEAK",
+        "BPM",
+        "TRACKNUMBER",
+        "TRACKTOTAL",
+        "DISCNUMBER",
+        "DISCTOTAL",
+        "YEAR",
+        "DATE",
+        "IENG",
+        "RTNG",
+        "ENCODERSETTINGS",
+    ] {
+        consumed_custom_keys.insert(known.to_string());
+    }
+
     if out.title.is_none() {
-        out.title = tag.get_string(ItemKey::TrackTitle).map(|s| s.to_string());
+        out.title = tag_str(tag, ItemKey::TrackTitle).map(|s| s.to_string());
     }
     if out.track_artist.is_none() {
-        out.track_artist = tag.get_string(ItemKey::TrackArtist).map(|s| s.to_string());
+        out.track_artist = tag_str(tag, ItemKey::TrackArtist).map(|s| s.to_string());
     }
     if out.album.is_none() {
-        out.album = tag.get_string(ItemKey::AlbumTitle).map(|s| s.to_string());
+        out.album = tag_str(tag, ItemKey::AlbumTitle).map(|s| s.to_string());
     }
     if out.album_artist.is_none() {
-        out.album_artist = tag.get_string(ItemKey::AlbumArtist).map(|s| s.to_string());
+        out.album_artist = tag_str(tag, ItemKey::AlbumArtist).map(|s| s.to_string());
     }
     if out.year.is_none() {
-        out.year = tag
-            .get_string(ItemKey::Year)
+        out.year = tag_str(tag, ItemKey::Year)
             .and_then(|s| s.trim().parse::<u32>().ok())
             .or_else(|| {
-                tag.get_string(ItemKey::RecordingDate)
+                tag_str(tag, ItemKey::RecordingDate)
                     .and_then(|s| s.trim().get(0..4))
                     .and_then(|s| s.parse::<u32>().ok())
             });
     }
     if out.genre.is_none() {
-        out.genre = tag.get_string(ItemKey::Genre).map(|s| s.to_string());
+        out.genre = tag_str(tag, ItemKey::Genre).map(|s| s.to_string());
     }
     if out.track_number.is_none() {
-        out.track_number = tag
-            .get_string(ItemKey::TrackNumber)
-            .and_then(parse_leading_u32);
-    }
-    if out.track_total.is_none() {
-        out.track_total = tag
-            .get_string(ItemKey::TrackTotal)
+        out.track_number = tag_str(tag, ItemKey::TrackNumber)
             .and_then(parse_leading_u32)
             .or_else(|| {
-                tag.get_string(ItemKey::TrackNumber)
+                get_lofty_fallback(tag, &["TRACKNUMBER"], consumed_custom_keys)
+                    .as_deref()
+                    .and_then(parse_leading_u32)
+            });
+    }
+    if out.track_total.is_none() {
+        out.track_total = tag_str(tag, ItemKey::TrackTotal)
+            .and_then(parse_leading_u32)
+            .or_else(|| {
+                tag_str(tag, ItemKey::TrackNumber).and_then(parse_slash_total_u32)
+            })
+            .or_else(|| {
+                get_lofty_fallback(tag, &["TRACKTOTAL"], consumed_custom_keys)
+                    .as_deref()
+                    .and_then(parse_leading_u32)
+            })
+            .or_else(|| {
+                get_lofty_fallback(tag, &["TRACKNUMBER"], consumed_custom_keys)
+                    .as_deref()
                     .and_then(parse_slash_total_u32)
             });
     }
     if out.disc_number.is_none() {
-        out.disc_number = tag
-            .get_string(ItemKey::DiscNumber)
-            .and_then(parse_leading_u32);
-    }
-    if out.disc_total.is_none() {
-        out.disc_total = tag
-            .get_string(ItemKey::DiscTotal)
+        out.disc_number = tag_str(tag, ItemKey::DiscNumber)
             .and_then(parse_leading_u32)
             .or_else(|| {
-                tag.get_string(ItemKey::DiscNumber)
+                get_lofty_fallback(tag, &["DISCNUMBER"], consumed_custom_keys)
+                    .as_deref()
+                    .and_then(parse_leading_u32)
+            });
+    }
+    if out.disc_total.is_none() {
+        out.disc_total = tag_str(tag, ItemKey::DiscTotal)
+            .and_then(parse_leading_u32)
+            .or_else(|| {
+                tag_str(tag, ItemKey::DiscNumber).and_then(parse_slash_total_u32)
+            })
+            .or_else(|| {
+                get_lofty_fallback(tag, &["DISCTOTAL"], consumed_custom_keys)
+                    .as_deref()
+                    .and_then(parse_leading_u32)
+            })
+            .or_else(|| {
+                get_lofty_fallback(tag, &["DISCNUMBER"], consumed_custom_keys)
+                    .as_deref()
                     .and_then(parse_slash_total_u32)
             });
     }
     if out.lyrics.is_none() {
-        out.lyrics = tag
-            .get_string(ItemKey::Lyrics)
-            .or_else(|| tag.get_string(ItemKey::UnsyncLyrics))
+        out.lyrics = tag_str(tag, ItemKey::Lyrics)
+            .or_else(|| tag_str(tag, ItemKey::UnsyncLyrics))
             .map(|s| s.to_string());
     }
     if out.comment.is_none() {
-        out.comment = tag.get_string(ItemKey::Comment).map(|s| s.to_string());
+        out.comment = tag_str(tag, ItemKey::Comment).map(|s| s.to_string());
     }
     if out.bpm.is_none() {
-        out.bpm = tag
-            .get_string(ItemKey::Bpm)
-            .or_else(|| tag.get_string(ItemKey::IntegerBpm))
-            .and_then(|s| s.trim().parse::<f32>().ok());
+        out.bpm = tag_str(tag, ItemKey::Bpm)
+            .or_else(|| tag_str(tag, ItemKey::IntegerBpm))
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .or_else(|| {
+                get_lofty_fallback(tag, &["BPM"], consumed_custom_keys)
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+            });
     }
     if out.replay_gain_track_gain.is_none() {
-        out.replay_gain_track_gain = tag
-            .get_string(ItemKey::ReplayGainTrackGain)
+        out.replay_gain_track_gain = tag_str(tag, ItemKey::ReplayGainTrackGain)
             .map(|s| s.to_string())
             .or_else(|| get_lofty_fallback(tag, &["REPLAYGAIN_TRACK_GAIN"], consumed_custom_keys));
     }
     if out.replay_gain_track_peak.is_none() {
-        out.replay_gain_track_peak = tag
-            .get_string(ItemKey::ReplayGainTrackPeak)
+        out.replay_gain_track_peak = tag_str(tag, ItemKey::ReplayGainTrackPeak)
             .map(|s| s.to_string())
             .or_else(|| get_lofty_fallback(tag, &["REPLAYGAIN_TRACK_PEAK"], consumed_custom_keys));
     }
     if out.replay_gain_album_gain.is_none() {
-        out.replay_gain_album_gain = tag
-            .get_string(ItemKey::ReplayGainAlbumGain)
+        out.replay_gain_album_gain = tag_str(tag, ItemKey::ReplayGainAlbumGain)
             .map(|s| s.to_string())
             .or_else(|| get_lofty_fallback(tag, &["REPLAYGAIN_ALBUM_GAIN"], consumed_custom_keys));
     }
     if out.replay_gain_album_peak.is_none() {
-        out.replay_gain_album_peak = tag
-            .get_string(ItemKey::ReplayGainAlbumPeak)
+        out.replay_gain_album_peak = tag_str(tag, ItemKey::ReplayGainAlbumPeak)
             .map(|s| s.to_string())
             .or_else(|| get_lofty_fallback(tag, &["REPLAYGAIN_ALBUM_PEAK"], consumed_custom_keys));
     }
@@ -444,13 +559,70 @@ fn ingest_lofty_tag(
             let mime_type = pic
                 .mime_type()
                 .map(map_lofty_mime_type)
+                .filter(|m| !matches!(m, RustMimeType::Unknown))
                 .or_else(|| sniff_image_mime(&bytes));
+            let picture_type = if tag.tag_type() == TagType::Mp4Ilst
+                && pic.pic_type() == LoftyPictureType::Other
+            {
+                RustPictureType::CoverFront
+            } else {
+                map_lofty_picture_type(pic.pic_type())
+            };
             out.pictures.push(RustAudioPicture {
-                picture_type: map_lofty_picture_type(pic.pic_type()),
+                picture_type,
                 mime_type,
                 description: pic.description().map(|s| s.to_string()).filter(|s| !s.is_empty()),
                 bytes,
             });
+        }
+
+        // APEv2 binary `Cover Art (*)` items are retained inside the companion `ApeTag` rather than `tag.pictures()`.
+        if tag.tag_type() == TagType::Ape && tag.has_format_specific_items() {
+            let ape = lofty::ape::ApeTag::from(tag.clone());
+            for item in &ape {
+                if let ItemValue::Binary(raw_bytes) = item.value() {
+                    let key_lower = item.key().to_ascii_lowercase();
+                    if key_lower.starts_with("cover art") {
+                        if let Ok(pic) = lofty::picture::Picture::from_ape_bytes(item.key(), raw_bytes) {
+                            let bytes = pic.data().to_vec();
+                            if bytes.is_empty() {
+                                continue;
+                            }
+                            let mapped_pt = map_lofty_picture_type(pic.pic_type());
+                            let picture_type = if matches!(mapped_pt, RustPictureType::Other) {
+                                if key_lower.contains("back") {
+                                    RustPictureType::CoverBack
+                                } else if key_lower.contains("icon") {
+                                    RustPictureType::Icon
+                                } else {
+                                    RustPictureType::CoverFront
+                                }
+                            } else {
+                                mapped_pt
+                            };
+                            let mime_type = pic
+                                .mime_type()
+                                .map(map_lofty_mime_type)
+                                .filter(|m| !matches!(m, RustMimeType::Unknown))
+                                .or_else(|| sniff_image_mime(&bytes));
+                            let description = pic
+                                .description()
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty());
+                            if !out.pictures.iter().any(|p| {
+                                p.bytes.len() == bytes.len() && p.bytes.get(..16) == bytes.get(..16)
+                            }) {
+                                out.pictures.push(RustAudioPicture {
+                                    picture_type,
+                                    mime_type,
+                                    description,
+                                    bytes,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -511,7 +683,7 @@ fn get_lofty_field(
     for &fb in fallbacks {
         consumed.insert(fb.to_uppercase());
     }
-    if let Some(val) = tag.get_string(key) {
+    if let Some(val) = tag_str(tag, key) {
         if !val.is_empty() {
             return Some(val.to_string());
         }
@@ -529,7 +701,7 @@ fn get_lofty_fallback(
         if let Some(ik) = ItemKey::from_key(tag.tag_type(), fb)
             .or_else(|| ItemKey::from_key(tag.tag_type(), &fb.to_uppercase()))
         {
-            if let Some(val) = tag.get_string(ik) {
+            if let Some(val) = tag_str(tag, ik) {
                 if !val.is_empty() {
                     return Some(val.to_string());
                 }
@@ -636,10 +808,10 @@ fn extract_raw_lofty_items(tag: &Tag, out: &mut RustAudioMetadata) -> Vec<(Strin
                     lofty::id3::v2::Frame::UserText(txxx) => {
                         let desc = txxx.description.trim();
                         let val = txxx.content.trim();
-                        let key_check = format!("TXXX:{}", desc.to_uppercase());
                         if !desc.is_empty()
                             && !val.is_empty()
-                            && ItemKey::from_key(TagType::Id3v2, &key_check).is_none()
+                            && ItemKey::from_key(TagType::Id3v2, desc).is_none()
+                            && ItemKey::from_key(TagType::Id3v2, &desc.to_uppercase()).is_none()
                         {
                             pairs.push((desc.to_string(), val.to_string()));
                         }
@@ -647,10 +819,10 @@ fn extract_raw_lofty_items(tag: &Tag, out: &mut RustAudioMetadata) -> Vec<(Strin
                     lofty::id3::v2::Frame::UserUrl(wxxx) => {
                         let desc = wxxx.description.trim();
                         let val = wxxx.content.trim();
-                        let key_check = format!("WXXX:{}", desc.to_uppercase());
                         if !desc.is_empty()
                             && !val.is_empty()
-                            && ItemKey::from_key(TagType::Id3v2, &key_check).is_none()
+                            && ItemKey::from_key(TagType::Id3v2, desc).is_none()
+                            && ItemKey::from_key(TagType::Id3v2, &desc.to_uppercase()).is_none()
                         {
                             pairs.push((desc.to_string(), val.to_string()));
                         }
@@ -869,7 +1041,13 @@ fn ingest_extended_from_lofty(
         consumed
     );
     set_ext!(ext.director, tag, ItemKey::Director, &["DIRECTOR"], consumed);
-    set_ext!(ext.engineer, tag, ItemKey::Engineer, &["ENGINEER"], consumed);
+    set_ext!(
+        ext.engineer,
+        tag,
+        ItemKey::Engineer,
+        &["ENGINEER", "IENG"],
+        consumed
+    );
     set_ext!(
         ext.lyricist,
         tag,
@@ -931,6 +1109,11 @@ fn ingest_extended_from_lofty(
     );
 
     // Dates
+    if ext.recording_date.is_none() && tag.tag_type() == TagType::Ape {
+        if let Some(date_val) = lookup_unmapped_in_tag(tag, "DATE") {
+            ext.recording_date = Some(date_val);
+        }
+    }
     set_ext!(
         ext.recording_date,
         tag,
@@ -1028,7 +1211,7 @@ fn ingest_extended_from_lofty(
         ext.license,
         tag,
         ItemKey::License,
-        &["LICENSE", "TOWN"],
+        &["LICENSE"],
         consumed
     );
 
@@ -1040,6 +1223,14 @@ fn ingest_extended_from_lofty(
         &["TDES"],
         consumed
     );
+    if ext.podcast_description.is_none() && tag.tag_type() == TagType::Mp4Ilst {
+        if let Some(desc) = tag_str(tag, ItemKey::Description) {
+            let trimmed = desc.trim();
+            if !trimmed.is_empty() {
+                ext.podcast_description = Some(trimmed.to_string());
+            }
+        }
+    }
     set_ext!(
         ext.podcast_series_category,
         tag,
@@ -1136,6 +1327,11 @@ fn ingest_extended_from_lofty(
         &["ENCODER", "TSSE"],
         consumed
     );
+    if ext.encoder_settings.is_none() && tag.tag_type() == TagType::Id3v2 {
+        if let Some(settings) = lookup_unmapped_in_tag(tag, "ENCODERSETTINGS") {
+            ext.encoder_settings = Some(settings);
+        }
+    }
     set_ext!(
         ext.encoder_settings,
         tag,
@@ -1198,6 +1394,208 @@ fn try_parse_special_containers_seekable<R: Read + Seek>(
     // 4. Apple Core Audio Format ("caff")
     if &header[0..4] == b"caff" {
         parse_caf_chunks(reader, out, consumed);
+        return;
+    }
+
+    // 5. MP4 / M4A ("ftyp"): parse Nero `chpl` chapters when standard tags lack chapters
+    if &header[4..8] == b"ftyp" && out.chapters.is_empty() {
+        parse_mp4_chpl_chapters(reader, out);
+        return;
+    }
+
+    // 6. AIFF / AIFC fallback if lofty could not open the stream directly
+    if &header[0..4] == b"FORM"
+        && (&header[8..12] == b"AIFF" || &header[8..12] == b"AIFC")
+        && out.tag_formats.is_empty()
+    {
+        parse_aiff_chunks(reader, out, consumed);
+    }
+}
+
+fn read_bmff_box_header<R: Read + Seek>(reader: &mut R, pos: u64) -> Option<(u64, u64, [u8; 4])> {
+    if reader.seek(SeekFrom::Start(pos)).is_err() {
+        return None;
+    }
+    let mut hdr = [0u8; 8];
+    if reader.read_exact(&mut hdr).is_err() {
+        return None;
+    }
+    let sz32 = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as u64;
+    let fourcc = [hdr[4], hdr[5], hdr[6], hdr[7]];
+    if sz32 == 1 {
+        let mut ext = [0u8; 8];
+        if reader.read_exact(&mut ext).is_err() {
+            return None;
+        }
+        let sz64 = u64::from_be_bytes(ext);
+        if sz64 < 16 {
+            return None;
+        }
+        let next = pos.checked_add(sz64)?;
+        Some((pos + 16, next, fourcc))
+    } else if sz32 >= 8 {
+        let next = pos.checked_add(sz32)?;
+        Some((pos + 8, next, fourcc))
+    } else {
+        None
+    }
+}
+
+fn find_bmff_child_box<R: Read + Seek>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+    target: [u8; 4],
+) -> Option<(u64, u64)> {
+    let mut pos = start;
+    let mut count = 0u32;
+    while count < 128 && (end == u64::MAX || pos + 8 <= end) {
+        count += 1;
+        let (payload_start, next_pos, fourcc) = read_bmff_box_header(reader, pos)?;
+        if fourcc == target {
+            return Some((payload_start, next_pos));
+        }
+        if next_pos <= pos {
+            break;
+        }
+        pos = next_pos;
+    }
+    None
+}
+
+fn parse_mp4_chpl_chapters<R: Read + Seek>(reader: &mut R, out: &mut RustAudioMetadata) {
+    let Some((moov_start, moov_end)) = find_bmff_child_box(reader, 0, u64::MAX, *b"moov") else {
+        return;
+    };
+    let Some((udta_start, udta_end)) = find_bmff_child_box(reader, moov_start, moov_end, *b"udta") else {
+        return;
+    };
+    let Some((chpl_start, chpl_end)) = find_bmff_child_box(reader, udta_start, udta_end, *b"chpl") else {
+        return;
+    };
+    let payload_len = chpl_end.saturating_sub(chpl_start);
+    if !(9..=1024 * 1024).contains(&payload_len) {
+        return;
+    }
+    if reader.seek(SeekFrom::Start(chpl_start)).is_err() {
+        return;
+    }
+    let mut payload = vec![0u8; payload_len as usize];
+    if reader.read_exact(&mut payload).is_err() {
+        return;
+    }
+    let version = payload[0];
+    let (count, mut p) = if version == 1 {
+        (payload[8] as usize, 9usize)
+    } else if payload[4..7] == [0, 0, 0] && payload[7] > 0 {
+        (payload[7] as usize, 8usize)
+    } else {
+        (payload[4] as usize, 5usize)
+    };
+    let mut parsed = Vec::with_capacity(count);
+    for i in 0..count {
+        if p + 9 > payload.len() {
+            break;
+        }
+        let start_100ns = u64::from_be_bytes(payload[p..p + 8].try_into().unwrap_or([0; 8]));
+        let start_ms = start_100ns / 10_000;
+        let tlen = payload[p + 8] as usize;
+        p += 9;
+        if p + tlen > payload.len() {
+            break;
+        }
+        let raw_title = String::from_utf8_lossy(&payload[p..p + tlen])
+            .trim()
+            .to_string();
+        p += tlen;
+        let title = if raw_title.is_empty() {
+            format!("Chapter {}", i + 1)
+        } else {
+            raw_title
+        };
+        parsed.push(RustAudioChapter {
+            title,
+            start_ms,
+            end_ms: start_ms,
+        });
+    }
+    for i in 0..parsed.len().saturating_sub(1) {
+        parsed[i].end_ms = parsed[i + 1].start_ms.max(parsed[i].start_ms);
+    }
+    if !parsed.is_empty() {
+        out.chapters = parsed;
+    }
+}
+
+fn parse_aiff_chunks<R: Read + Seek>(
+    reader: &mut R,
+    out: &mut RustAudioMetadata,
+    consumed: &mut HashSet<String>,
+) {
+    let mut pos = 12u64;
+    let mut id3_chunks: Vec<Vec<u8>> = Vec::new();
+    let mut name: Option<String> = None;
+    let mut author: Option<String> = None;
+    let mut copyright: Option<String> = None;
+    let mut anno: Option<String> = None;
+
+    for _ in 0..64 {
+        if reader.seek(SeekFrom::Start(pos)).is_err() {
+            break;
+        }
+        let mut hdr = [0u8; 8];
+        if reader.read_exact(&mut hdr).is_err() {
+            break;
+        }
+        let id = &hdr[0..4];
+        let chunk_size = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
+        if id != b"SSND" && chunk_size > 0 && chunk_size <= 16 * 1024 * 1024 {
+            let mut buf = vec![0u8; chunk_size as usize];
+            if reader.read_exact(&mut buf).is_ok() {
+                if (id == b"ID3 " || id == b"id3 ") && buf.starts_with(b"ID3") {
+                    id3_chunks.push(buf);
+                } else {
+                    let s = String::from_utf8_lossy(&buf)
+                        .trim_end_matches('\0')
+                        .trim()
+                        .to_string();
+                    if !s.is_empty() {
+                        match id {
+                            b"NAME" if name.is_none() => name = Some(s),
+                            b"AUTH" if author.is_none() => author = Some(s),
+                            b"(c) " if copyright.is_none() => copyright = Some(s),
+                            b"ANNO" if anno.is_none() => anno = Some(s),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        let padded = (chunk_size + 1) & !1;
+        match pos.checked_add(8 + padded) {
+            Some(next) if next > pos => pos = next,
+            _ => break,
+        }
+    }
+
+    for id3_buf in id3_chunks {
+        parse_raw_id3v2_slice(&id3_buf, out, consumed);
+    }
+    let has_text = name.is_some() || author.is_some() || copyright.is_some() || anno.is_some();
+    if out.title.is_none() {
+        out.title = name;
+    }
+    if out.track_artist.is_none() {
+        out.track_artist = author;
+    }
+    if out.extended.copyright_message.is_none() {
+        out.extended.copyright_message = copyright;
+    }
+    if out.comment.is_none() {
+        out.comment = anno;
+    }
+    if has_text && !out.tag_formats.iter().any(|f| f == "AiffText") {
+        out.tag_formats.push("AiffText".to_string());
     }
 }
 
@@ -1282,13 +1680,31 @@ fn ingest_caf_info_chunk(
         let k_lower = key.to_ascii_lowercase();
         consumed.insert(k_lower.to_uppercase());
         match k_lower.as_str() {
-            "title" if out.title.is_none() => out.title = Some(val),
-            "artist" if out.track_artist.is_none() => out.track_artist = Some(val),
-            "album" if out.album.is_none() => out.album = Some(val),
-            "album artist" | "albumartist" if out.album_artist.is_none() => {
-                out.album_artist = Some(val);
+            "title" => {
+                if out.title.is_none() {
+                    out.title = Some(val);
+                }
             }
-            "genre" if out.genre.is_none() => out.genre = Some(val),
+            "artist" => {
+                if out.track_artist.is_none() {
+                    out.track_artist = Some(val);
+                }
+            }
+            "album" => {
+                if out.album.is_none() {
+                    out.album = Some(val);
+                }
+            }
+            "album artist" | "albumartist" => {
+                if out.album_artist.is_none() {
+                    out.album_artist = Some(val);
+                }
+            }
+            "genre" => {
+                if out.genre.is_none() {
+                    out.genre = Some(val);
+                }
+            }
             "year" | "recorded date" => {
                 if out.year.is_none() {
                     out.year = val.get(0..4).and_then(|s| s.parse::<u32>().ok());
@@ -1297,30 +1713,62 @@ fn ingest_caf_info_chunk(
                     out.extended.recording_date = Some(val);
                 }
             }
-            "track number" | "track" if out.track_number.is_none() => {
-                out.track_number = parse_leading_u32(&val);
+            "track number" | "track" => {
+                if out.track_number.is_none() {
+                    out.track_number = parse_leading_u32(&val);
+                }
+                if out.track_total.is_none() {
+                    out.track_total = parse_slash_total_u32(&val);
+                }
             }
-            "disc number" | "disc" if out.disc_number.is_none() => {
-                out.disc_number = parse_leading_u32(&val);
+            "disc number" | "disc" => {
+                if out.disc_number.is_none() {
+                    out.disc_number = parse_leading_u32(&val);
+                }
+                if out.disc_total.is_none() {
+                    out.disc_total = parse_slash_total_u32(&val);
+                }
             }
-            "composer" if out.extended.composer.is_none() => out.extended.composer = Some(val),
-            "comments" | "comment" if out.comment.is_none() => out.comment = Some(val),
-            "copyright" if out.extended.copyright_message.is_none() => {
-                out.extended.copyright_message = Some(val);
+            "composer" => {
+                if out.extended.composer.is_none() {
+                    out.extended.composer = Some(val);
+                }
             }
-            "encoded by" if out.extended.encoded_by.is_none() => {
-                out.extended.encoded_by = Some(val);
+            "comments" | "comment" => {
+                if out.comment.is_none() {
+                    out.comment = Some(val);
+                }
             }
-            "encoder" if out.extended.encoder_software.is_none() => {
-                out.extended.encoder_software = Some(val);
+            "copyright" => {
+                if out.extended.copyright_message.is_none() {
+                    out.extended.copyright_message = Some(val);
+                }
             }
-            "tempo" if out.bpm.is_none() => {
-                out.bpm = val.parse::<f32>().ok();
+            "encoded by" => {
+                if out.extended.encoded_by.is_none() {
+                    out.extended.encoded_by = Some(val);
+                }
             }
-            "key signature" if out.extended.initial_key.is_none() => {
-                out.extended.initial_key = Some(val);
+            "encoder" => {
+                if out.extended.encoder_software.is_none() {
+                    out.extended.encoder_software = Some(val);
+                }
             }
-            "lyrics" if out.lyrics.is_none() => out.lyrics = Some(val),
+            "tempo" => {
+                if out.bpm.is_none() {
+                    out.bpm = val.parse::<f32>().ok();
+                }
+            }
+            "key signature" => {
+                if out.extended.initial_key.is_none() {
+                    out.extended.initial_key = Some(val);
+                }
+            }
+            "lyrics" => {
+                if out.lyrics.is_none() {
+                    out.lyrics = Some(val);
+                }
+            }
             _ => {
                 if !out
                     .custom_tags
@@ -1404,6 +1852,9 @@ fn parse_riff_family_chunks<R: Read + Seek>(
 ) {
     let mut pos = 12u64;
     let mut ds64_data_size = 0u64;
+    let mut id3_chunks: Vec<Vec<u8>> = Vec::new();
+    let mut info_chunks: Vec<Vec<u8>> = Vec::new();
+    let mut bext_chunks: Vec<Vec<u8>> = Vec::new();
 
     loop {
         if reader.seek(SeekFrom::Start(pos)).is_err() {
@@ -1428,20 +1879,20 @@ fn parse_riff_family_chunks<R: Read + Seek>(
             }
         } else if id == b"data" && chunk_size == 0xFFFFFFFF && ds64_data_size > 0 {
             chunk_size = ds64_data_size;
-        } else if (id == b"id3 " || id == b"ID3 ") && chunk_size > 10 && chunk_size <= 16 * 1024 * 1024 {
+        } else if (id == b"id3 " || id == b"ID3 ") && (11..=16 * 1024 * 1024).contains(&chunk_size) {
             let mut id3_buf = vec![0u8; chunk_size as usize];
             if reader.read_exact(&mut id3_buf).is_ok() {
-                parse_raw_id3v2_slice(&id3_buf, out, consumed);
+                id3_chunks.push(id3_buf);
             }
-        } else if id == b"LIST" && chunk_size >= 4 && chunk_size <= 4 * 1024 * 1024 {
+        } else if id == b"LIST" && (4..=4 * 1024 * 1024).contains(&chunk_size) {
             let mut list_buf = vec![0u8; chunk_size as usize];
             if reader.read_exact(&mut list_buf).is_ok() && list_buf.starts_with(b"INFO") {
-                parse_riff_info_subchunks(&list_buf[4..], is_big_endian, out);
+                info_chunks.push(list_buf[4..].to_vec());
             }
-        } else if id == b"bext" && chunk_size >= 348 && chunk_size <= 1024 * 1024 {
+        } else if id == b"bext" && (348..=1024 * 1024).contains(&chunk_size) {
             let mut bext_buf = vec![0u8; chunk_size as usize];
             if reader.read_exact(&mut bext_buf).is_ok() {
-                parse_bwf_bext_chunk(&bext_buf, out);
+                bext_chunks.push(bext_buf);
             }
         }
 
@@ -1451,6 +1902,17 @@ fn parse_riff_family_chunks<R: Read + Seek>(
             _ => break,
         }
     }
+
+    // Strict metadata priority: ID3v2 > LIST(INFO) > BWF bext
+    for id3_buf in id3_chunks {
+        parse_raw_id3v2_slice(&id3_buf, out, consumed);
+    }
+    for info_buf in info_chunks {
+        parse_riff_info_subchunks(&info_buf, is_big_endian, out, consumed);
+    }
+    for bext_buf in bext_chunks {
+        parse_bwf_bext_chunk(&bext_buf, out);
+    }
 }
 
 fn parse_w64_chunks<R: Read + Seek>(
@@ -1459,6 +1921,9 @@ fn parse_w64_chunks<R: Read + Seek>(
     consumed: &mut HashSet<String>,
 ) {
     let mut pos = 40u64;
+    let mut id3_chunks: Vec<Vec<u8>> = Vec::new();
+    let mut info_chunks: Vec<Vec<u8>> = Vec::new();
+
     loop {
         if reader.seek(SeekFrom::Start(pos)).is_err() {
             break;
@@ -1479,11 +1944,10 @@ fn parse_w64_chunks<R: Read + Seek>(
         {
             let mut id3_buf = vec![0u8; payload_size as usize];
             if reader.read_exact(&mut id3_buf).is_ok() {
-                parse_raw_id3v2_slice(&id3_buf, out, consumed);
+                id3_chunks.push(id3_buf);
             }
         } else if (prefix == b"list" || prefix == b"LIST")
-            && payload_size >= 4
-            && payload_size <= 4 * 1024 * 1024
+            && (4..=4 * 1024 * 1024).contains(&payload_size)
         {
             let mut list_buf = vec![0u8; payload_size as usize];
             if reader.read_exact(&mut list_buf).is_ok() {
@@ -1495,7 +1959,7 @@ fn parse_w64_chunks<R: Read + Seek>(
                     &[]
                 };
                 if !slice.is_empty() {
-                    parse_riff_info_subchunks(slice, false, out);
+                    info_chunks.push(slice.to_vec());
                 }
             }
         }
@@ -1505,9 +1969,22 @@ fn parse_w64_chunks<R: Read + Seek>(
             _ => break,
         }
     }
+
+    // Strict metadata priority: ID3v2 > list(INFO)
+    for id3_buf in id3_chunks {
+        parse_raw_id3v2_slice(&id3_buf, out, consumed);
+    }
+    for info_buf in info_chunks {
+        parse_riff_info_subchunks(&info_buf, false, out, consumed);
+    }
 }
 
-fn parse_riff_info_subchunks(data: &[u8], is_big_endian: bool, out: &mut RustAudioMetadata) {
+fn parse_riff_info_subchunks(
+    data: &[u8],
+    is_big_endian: bool,
+    out: &mut RustAudioMetadata,
+    consumed: &mut HashSet<String>,
+) {
     let mut p = 0usize;
     let mut found_any = false;
     while p + 8 <= data.len() {
@@ -1543,8 +2020,13 @@ fn parse_riff_info_subchunks(data: &[u8], is_big_endian: bool, out: &mut RustAud
                         out.extended.recording_date = Some(val);
                     }
                 }
-                b"ITRK" | b"IPRT" if out.track_number.is_none() => {
-                    out.track_number = parse_leading_u32(&val);
+                b"ITRK" | b"IPRT" => {
+                    if out.track_number.is_none() {
+                        out.track_number = parse_leading_u32(&val);
+                    }
+                    if out.track_total.is_none() {
+                        out.track_total = parse_slash_total_u32(&val);
+                    }
                 }
                 b"ICOP" if out.extended.copyright_message.is_none() => {
                     out.extended.copyright_message = Some(val);
@@ -1552,12 +2034,13 @@ fn parse_riff_info_subchunks(data: &[u8], is_big_endian: bool, out: &mut RustAud
                 b"ISFT" if out.extended.encoder_software.is_none() => {
                     out.extended.encoder_software = Some(val);
                 }
-                b"IENG" if out.extended.engineer.is_none() => {
-                    out.extended.engineer = Some(val);
+                b"IENG" => {
+                    consumed.insert("IENG".to_string());
+                    if out.extended.engineer.is_none() {
+                        out.extended.engineer = Some(val);
+                    }
                 }
-                b"ISRC" if out.extended.isrc.is_none() => {
-                    out.extended.isrc = Some(val);
-                }
+                b"ISRC" if out.extended.isrc.is_none() => out.extended.isrc = Some(val),
                 _ => {}
             }
         }
@@ -1645,14 +2128,26 @@ fn extract_id3v2_header_and_chapters_from_reader<R: Read + Seek>(
     }
 }
 
+#[inline]
+fn is_valid_id3v2_header(w: &[u8]) -> bool {
+    w.len() >= 10
+        && &w[0..3] == b"ID3"
+        && matches!(w[3], 2..=4)
+        && w[4] == 0
+        && (w[6] & 0x80) == 0
+        && (w[7] & 0x80) == 0
+        && (w[8] & 0x80) == 0
+        && (w[9] & 0x80) == 0
+}
+
 fn extract_id3v2_header_and_chapters_from_slice(data: &[u8], out: &mut RustAudioMetadata) {
     if data.len() < 10 {
         return;
     }
-    let id3_pos = if data.starts_with(b"ID3") {
+    let id3_pos = if is_valid_id3v2_header(data) {
         Some(0)
     } else {
-        data.windows(3).position(|w| w == b"ID3")
+        data.windows(10).position(is_valid_id3v2_header)
     };
     let Some(pos) = id3_pos else {
         return;
@@ -1982,6 +2477,24 @@ fn parse_vorbis_timestamp(ts: &str) -> Option<u64> {
 // Symphonia Metadata Bridge (Matroska / WebM / MKA / CAF / Fallback)
 // =========================================================================
 
+#[inline]
+fn strip_symphonia_key(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    let after_scope = if let Some(pos) = trimmed.rfind('@') {
+        &trimmed[pos + 1..]
+    } else {
+        trimmed
+    };
+    let lower = after_scope.to_ascii_lowercase();
+    if lower.starts_with("----:com.apple.itunes:") {
+        &after_scope["----:com.apple.iTunes:".len()..]
+    } else if lower.starts_with("com.apple.itunes:") {
+        &after_scope["com.apple.iTunes:".len()..]
+    } else {
+        after_scope
+    }
+}
+
 fn merge_symphonia_metadata(
     out: &mut RustAudioMetadata,
     sym: &SymphoniaExtractedMeta,
@@ -2025,6 +2538,14 @@ fn merge_symphonia_metadata(
                     out.title = Some(s.trim().to_string());
                 }
             }
+            Some(ST::ChapterTitle(s)) => {
+                if matches!(container_format, "Matroska" | "WebM")
+                    && out.title.is_none()
+                    && !s.trim().is_empty()
+                {
+                    out.title = Some(s.trim().to_string());
+                }
+            }
             Some(ST::Artist(s)) => {
                 if out.track_artist.is_none() && !s.trim().is_empty() {
                     out.track_artist = Some(s.trim().to_string());
@@ -2065,7 +2586,12 @@ fn merge_symphonia_metadata(
                     if out.year.is_none() {
                         out.year = st.get(0..4).and_then(|y| y.parse::<u32>().ok());
                     }
-                    if out.extended.release_date.is_none() {
+                    // MP4 `©day` represents recording date in iTunes tags (already stored by `lofty`);
+                    // avoid duplicating `©day` into `release_date` when `recording_date` is set.
+                    let is_itunes_day = tag.raw.key.trim() == "\u{a9}day";
+                    if out.extended.release_date.is_none()
+                        && !(is_itunes_day && out.extended.recording_date.is_some())
+                    {
                         out.extended.release_date = Some(st.to_string());
                     }
                 }
@@ -2155,8 +2681,18 @@ fn merge_symphonia_metadata(
                 }
             }
             Some(ST::MusicBrainzTrackId(s)) => {
-                if out.extended.music_brainz_track_id.is_none() && !s.trim().is_empty() {
-                    out.extended.music_brainz_track_id = Some(s.trim().to_string());
+                let st = s.trim();
+                if !st.is_empty() {
+                    let base = strip_symphonia_key(&tag.raw.key).trim();
+                    if base.eq_ignore_ascii_case("MusicBrainz Track Id")
+                        || base.eq_ignore_ascii_case("MUSICBRAINZ_TRACKID")
+                    {
+                        if out.extended.music_brainz_recording_id.is_none() {
+                            out.extended.music_brainz_recording_id = Some(st.to_string());
+                        }
+                    } else if out.extended.music_brainz_track_id.is_none() {
+                        out.extended.music_brainz_track_id = Some(st.to_string());
+                    }
                 }
             }
             Some(ST::MusicBrainzAlbumId(s)) => {
@@ -2260,8 +2796,16 @@ fn merge_symphonia_metadata(
                 }
             }
             Some(ST::Label(s)) => {
-                if out.extended.label.is_none() && !s.trim().is_empty() {
-                    out.extended.label = Some(s.trim().to_string());
+                let st = s.trim();
+                if !st.is_empty() {
+                    let base = strip_symphonia_key(&tag.raw.key).trim();
+                    if base.eq_ignore_ascii_case("PUBLISHER") {
+                        if out.extended.publisher.is_none() {
+                            out.extended.publisher = Some(st.to_string());
+                        }
+                    } else if out.extended.label.is_none() {
+                        out.extended.label = Some(st.to_string());
+                    }
                 }
             }
             Some(ST::Remixer(s)) => {
@@ -2270,8 +2814,16 @@ fn merge_symphonia_metadata(
                 }
             }
             Some(ST::Writer(s)) => {
-                if out.extended.writer.is_none() && !s.trim().is_empty() {
-                    out.extended.writer = Some(s.trim().to_string());
+                let st = s.trim();
+                if !st.is_empty() {
+                    // MP4 `©wrt` is Composer in iTunes/Mutagen tags (already stored by `lofty`);
+                    // avoid duplicating `©wrt` into `writer` when `composer` is set.
+                    let is_itunes_wrt = tag.raw.key.trim() == "\u{a9}wrt";
+                    if out.extended.writer.is_none()
+                        && !(is_itunes_wrt && out.extended.composer.is_some())
+                    {
+                        out.extended.writer = Some(st.to_string());
+                    }
                 }
             }
             Some(ST::Composer(s)) => {
@@ -2421,18 +2973,208 @@ fn merge_symphonia_metadata(
             }
             _ => {
                 let raw_k = tag.raw.key.trim();
-                if !raw_k.is_empty()
-                    && !val.is_empty()
-                    && !consumed_custom_keys.contains(&raw_k.to_uppercase())
-                    && !out
-                        .custom_tags
-                        .iter()
-                        .any(|f| f.key.eq_ignore_ascii_case(raw_k))
+                let base_k = strip_symphonia_key(raw_k).trim();
+                if base_k.is_empty() || val.is_empty() {
+                    continue;
+                }
+                let base_upper = base_k.to_ascii_uppercase();
+                // Ignore container muxer / bookkeeping / stream-statistics keys
+                if matches!(
+                    base_upper.as_str(),
+                    "DURATION"
+                        | "HANDLER_NAME"
+                        | "VENDOR_ID"
+                        | "TXXX"
+                        | "BPS"
+                        | "NUMBER_OF_FRAMES"
+                        | "NUMBER_OF_BYTES"
+                        | "SOURCE_ID"
+                        | "MAJOR_BRAND"
+                        | "MINOR_VERSION"
+                        | "COMPATIBLE_BRANDS"
+                        | "CREATION_TIME"
+                ) || base_upper.starts_with("_STATISTICS_")
+                    || base_upper.starts_with("BPS-")
+                    || base_upper.starts_with("DURATION-")
+                    || base_upper.starts_with("NUMBER_OF_")
                 {
-                    out.custom_tags.push(RustCustomTagField {
-                        key: raw_k.to_string(),
-                        value: val.to_string(),
-                    });
+                    continue;
+                }
+
+                match base_upper.as_str() {
+                    "TITLE" => {
+                        if out.title.is_none() {
+                            out.title = Some(val.to_string());
+                        }
+                    }
+                    "ALBUM" => {
+                        if out.album.is_none() {
+                            out.album = Some(val.to_string());
+                        }
+                    }
+                    "ARTIST" => {
+                        if out.track_artist.is_none() {
+                            out.track_artist = Some(val.to_string());
+                        }
+                    }
+                    "ALBUM_ARTIST" | "ALBUMARTIST" => {
+                        if out.album_artist.is_none() {
+                            out.album_artist = Some(val.to_string());
+                        }
+                    }
+                    "PART_NUMBER" | "TRACK" | "TRACKNUMBER" => {
+                        if out.track_number.is_none() {
+                            out.track_number = parse_leading_u32(val);
+                        }
+                        if out.track_total.is_none() {
+                            out.track_total = parse_slash_total_u32(val);
+                        }
+                    }
+                    "TOTAL_PARTS" | "TRACKTOTAL" => {
+                        if out.track_total.is_none() {
+                            out.track_total = parse_leading_u32(val);
+                        }
+                    }
+                    "DISC" | "DISCNUMBER" => {
+                        if out.disc_number.is_none() {
+                            out.disc_number = parse_leading_u32(val);
+                        }
+                        if out.disc_total.is_none() {
+                            out.disc_total = parse_slash_total_u32(val);
+                        }
+                    }
+                    "DISCTOTAL" => {
+                        if out.disc_total.is_none() {
+                            out.disc_total = parse_leading_u32(val);
+                        }
+                    }
+                    "GENRE" => {
+                        if out.genre.is_none() {
+                            out.genre = Some(val.to_string());
+                        }
+                    }
+                    "COMPOSER" => {
+                        if out.extended.composer.is_none() {
+                            out.extended.composer = Some(val.to_string());
+                        }
+                    }
+                    "COPYRIGHT" => {
+                        if out.extended.copyright_message.is_none() {
+                            out.extended.copyright_message = Some(val.to_string());
+                        }
+                    }
+                    "ISRC" => {
+                        if out.extended.isrc.is_none() {
+                            out.extended.isrc = Some(val.to_string());
+                        }
+                    }
+                    "MOOD" => {
+                        if out.extended.mood.is_none() {
+                            out.extended.mood = Some(val.to_string());
+                        }
+                    }
+                    "REPLAYGAIN_TRACK_GAIN" => {
+                        if out.replay_gain_track_gain.is_none() {
+                            out.replay_gain_track_gain = Some(val.to_string());
+                        }
+                    }
+                    "REPLAYGAIN_TRACK_PEAK" => {
+                        if out.replay_gain_track_peak.is_none() {
+                            out.replay_gain_track_peak = Some(val.to_string());
+                        }
+                    }
+                    "REPLAYGAIN_ALBUM_GAIN" => {
+                        if out.replay_gain_album_gain.is_none() {
+                            out.replay_gain_album_gain = Some(val.to_string());
+                        }
+                    }
+                    "REPLAYGAIN_ALBUM_PEAK" => {
+                        if out.replay_gain_album_peak.is_none() {
+                            out.replay_gain_album_peak = Some(val.to_string());
+                        }
+                    }
+                    "MUSICBRAINZ_TRACKID" => {
+                        if out.extended.music_brainz_recording_id.is_none() {
+                            out.extended.music_brainz_recording_id = Some(val.to_string());
+                        }
+                    }
+                    "PUBLISHER" => {
+                        if out.extended.publisher.is_none() {
+                            out.extended.publisher = Some(val.to_string());
+                        }
+                    }
+                    "LABEL" => {
+                        if out.extended.label.is_none() {
+                            out.extended.label = Some(val.to_string());
+                        }
+                    }
+                    "BPM" => {
+                        if out.bpm.is_none() {
+                            out.bpm = val.parse::<f32>().ok();
+                        }
+                    }
+                    "DATE_RECORDED" | "DATE" => {
+                        if out.year.is_none() {
+                            out.year = val.get(0..4).and_then(|y| y.parse::<u32>().ok());
+                        }
+                        if out.extended.recording_date.is_none() {
+                            out.extended.recording_date = Some(val.to_string());
+                        }
+                    }
+                    "INITIAL_KEY" | "INITIALKEY" => {
+                        if out.extended.initial_key.is_none() {
+                            out.extended.initial_key = Some(val.to_string());
+                        }
+                    }
+                    "RTNG" => {
+                        if out.extended.parental_advisory.is_none() {
+                            out.extended.parental_advisory = Some(val.to_string());
+                        }
+                    }
+                    "IENG" => {
+                        if out.extended.engineer.is_none() {
+                            out.extended.engineer = Some(val.to_string());
+                        }
+                    }
+                    "TDRL" => {
+                        if out.extended.release_date.is_none() {
+                            out.extended.release_date = Some(val.to_string());
+                        }
+                    }
+                    "WPUB" => {
+                        if out.extended.publisher_url.is_none() {
+                            out.extended.publisher_url = Some(val.to_string());
+                        }
+                    }
+                    "ENCODER" => {
+                        if out.extended.encoder_software.is_none() {
+                            out.extended.encoder_software = Some(val.to_string());
+                        }
+                    }
+                    "COMMENT" | "DESCRIPTION" => {
+                        if out.comment.is_none() {
+                            out.comment = Some(val.to_string());
+                        }
+                    }
+                    "LYRICS" => {
+                        if out.lyrics.is_none() {
+                            out.lyrics = Some(val.to_string());
+                        }
+                    }
+                    _ => {
+                        if !consumed_custom_keys.contains(&base_upper)
+                            && !consumed_custom_keys.contains(&raw_k.to_ascii_uppercase())
+                            && !out
+                                .custom_tags
+                                .iter()
+                                .any(|f| f.key.eq_ignore_ascii_case(base_k))
+                        {
+                            out.custom_tags.push(RustCustomTagField {
+                                key: base_k.to_string(),
+                                value: val.to_string(),
+                            });
+                        }
+                    }
                 }
             }
         }
