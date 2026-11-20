@@ -27,8 +27,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - path: assets/music/
-      platforms: [windows, macos, linux]
+#    - path: assets/music/
+#      platforms: [windows, macos, linux]
     - path: assets/music/01_Apex_Momentum.mp3
       platforms: [android, ios, web]
     - path: assets/music/02_Bailando_con_tu_recuerdo.opus
