@@ -601,6 +601,55 @@ class MiniaudioPlayer<T> {
   /// Stream IDs belonging to internally managed resolvers (e.g. WebSockets).
   final Set<int> _managedProviderIds = {};
 
+  int _queueEventSeq = 0;
+  final List<({int targetSeq, Completer<void> completer})> _queueEventWaiters =
+      [];
+
+  Future<void> _waitForQueueEventAfter(int seqBefore) async {
+    if (_isDisposed || _queueEventSeq > seqBefore) return;
+    final completer = Completer<void>();
+    final entry = (targetSeq: seqBefore + 1, completer: completer);
+    _queueEventWaiters.add(entry);
+    try {
+      await completer.future.timeout(const Duration(seconds: 2));
+    } catch (_) {
+      _queueEventWaiters.remove(entry);
+    }
+  }
+
+  void _notifyQueueEventReceived() {
+    _queueEventSeq++;
+    if (_queueEventWaiters.isEmpty) return;
+    _queueEventWaiters.removeWhere((w) {
+      if (_queueEventSeq >= w.targetSeq) {
+        if (!w.completer.isCompleted) {
+          w.completer.complete();
+        }
+        return true;
+      }
+      return false;
+    });
+  }
+
+  void _pruneSourceRegistryToCurrentQueue() {
+    final activeIds = <int>{};
+    final activeProviderStreamIds = <int>{..._managedProviderIds};
+    for (final src in state.queue) {
+      final id = src.id;
+      if (id != null) {
+        activeIds.add(id);
+        activeProviderStreamIds.add(id);
+      }
+      final provider = src.customProvider;
+      if (provider != null && provider.streamId != 0) {
+        activeProviderStreamIds.add(provider.streamId);
+      }
+    }
+    _sourceRegistry.removeWhere((id, _) => !activeIds.contains(id));
+    _customProviders
+        .removeWhere((id, _) => !activeProviderStreamIds.contains(id));
+  }
+
   final Map<_PushTapKey, _PushTapEntry> _pushTaps = {};
   final Map<int, AudioTapBuffer> _openPullTaps = {};
   int _nextTapClientKey = 1;
@@ -1097,6 +1146,7 @@ class MiniaudioPlayer<T> {
         stream._currentIndexController.add(idx);
         stream._queueController.add(state.queue);
         stream._currentItemController.add(state.currentItem);
+        _notifyQueueEventReceived();
       case rust_types.RustPlayerEvent_DartReadRequest(:final field0):
         _onDartReadRequest(field0);
       case rust_types.RustPlayerEvent_DartResolveRequest(:final field0):
@@ -1408,6 +1458,12 @@ class MiniaudioPlayer<T> {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    for (final waiter in _queueEventWaiters) {
+      if (!waiter.completer.isCompleted) {
+        waiter.completer.complete();
+      }
+    }
+    _queueEventWaiters.clear();
     MapLogger.info('Disposing MiniaudioPlayer instance');
     state._metadata = null;
     state._audioInfo = null;

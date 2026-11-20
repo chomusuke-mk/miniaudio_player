@@ -136,41 +136,41 @@ class PlayerAction<T> {
     int? position,
     bool? shuffled,
     Duration? seek,
-  }) {
+  }) async {
     final currentEpoch = ++_activePlayEpoch;
-    return _serializeQueue(() async {
-      if (currentEpoch != _activePlayEpoch) {
-        MapLogger.info(
-          'play(id: $id, position: $position) skipped (superseded by newer request epoch $currentEpoch < $_activePlayEpoch)',
-        );
-        return;
-      }
-      _player._ensureNotDisposed();
-      if (position != null && position < 0) {
-        throw RangeError.value(
-          position,
-          'position',
-          'Queue position must be non-negative',
-        );
-      }
-      final seekMs = seek != null
-          ? (seek < Duration.zero ? 0 : seek.inMilliseconds)
-          : null;
+    final pendingMutations = _queueTail;
+    await pendingMutations;
+    if (currentEpoch != _activePlayEpoch) {
       MapLogger.info(
-        'play(id: $id, position: $position, shuffled: $shuffled, seekMs: $seekMs) requested',
+        'play(id: $id, position: $position) skipped (superseded by newer request epoch $currentEpoch < $_activePlayEpoch)',
       );
-      try {
-        await _rust.play(
-          id: id != null ? PlatformInt64Util.from(id) : null,
-          position: position != null ? BigInt.from(position) : null,
-          shuffled: shuffled,
-          seekMs: seekMs != null ? PlatformInt64Util.from(seekMs) : null,
-        );
-      } catch (e) {
-        if (e is MiniaudioPlayerException) rethrow;
-        throw MiniaudioPlayerException.fromRustError(e);
-      }
-    });
+      return;
+    }
+    _player._ensureNotDisposed();
+    if (position != null && position < 0) {
+      throw RangeError.value(
+        position,
+        'position',
+        'Queue position must be non-negative',
+      );
+    }
+    final seekMs = seek != null
+        ? (seek < Duration.zero ? 0 : seek.inMilliseconds)
+        : null;
+    MapLogger.info(
+      'play(id: $id, position: $position, shuffled: $shuffled, seekMs: $seekMs) requested',
+    );
+    try {
+      await _rust.play(
+        id: id != null ? PlatformInt64Util.from(id) : null,
+        position: position != null ? BigInt.from(position) : null,
+        shuffled: shuffled,
+        seekMs: seekMs != null ? PlatformInt64Util.from(seekMs) : null,
+      );
+    } catch (e) {
+      if (e is MiniaudioPlayerException) rethrow;
+      throw MiniaudioPlayerException.fromRustError(e);
+    }
   }
 
   /// Pauses audio playback at current position (Immediate RT lane).
@@ -233,23 +233,20 @@ class PlayerAction<T> {
       await _player._closeManagedProviders();
       _player._customProviders.clear();
 
-      final normalized = <AudioSource<T>>[];
       final rustSources = <rust_types.RustAudioSource>[];
       for (var i = 0; i < sources.length; i++) {
-        final (retained, rustSource) = _prepareSource(sources[i]);
-        normalized.add(retained);
+        final (_, rustSource) = _prepareSource(sources[i]);
         rustSources.add(rustSource);
       }
 
-      _player.state._queue = List.unmodifiable(normalized);
-      _player.state._currentIndex = null;
-
+      final seqBefore = _player._queueEventSeq;
       try {
         await _rust.setQueue(queue: rustSources);
       } catch (e) {
         if (e is MiniaudioPlayerException) rethrow;
         throw MiniaudioPlayerException.fromRustError(e);
       }
+      await _player._waitForQueueEventAfter(seqBefore);
     });
   }
 
@@ -260,18 +257,14 @@ class PlayerAction<T> {
 
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
-      final normalized = <AudioSource<T>>[];
       final rustSources = <rust_types.RustAudioSource>[];
       for (final s in sources) {
-        final (retained, rustSource) = _prepareSource(s);
-        normalized.add(retained);
+        final (_, rustSource) = _prepareSource(s);
         rustSources.add(rustSource);
       }
-      _player.state._queue = List.unmodifiable([
-        ..._player.state.queue,
-        ...normalized,
-      ]);
+      final seqBefore = _player._queueEventSeq;
       await _rust.append(sources: rustSources);
+      await _player._waitForQueueEventAfter(seqBefore);
     });
   }
 
@@ -280,16 +273,10 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
-      final (retained, rustSource) = _prepareSource(source);
-      final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
-      final curIdx = _player.state.currentIndex;
-      final insertIdx =
-          (curIdx != null && curIdx >= 0 && curIdx < currentQueue.length)
-              ? curIdx + 1
-              : currentQueue.length;
-      currentQueue.insert(insertIdx, retained);
-      _player.state._queue = List.unmodifiable(currentQueue);
+      final (_, rustSource) = _prepareSource(source);
+      final seqBefore = _player._queueEventSeq;
       await _rust.insertNext(source: rustSource);
+      await _player._waitForQueueEventAfter(seqBefore);
     });
   }
 
@@ -298,23 +285,15 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
-      final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
-      if (index >= 0 && index < currentQueue.length) {
-        final removed = currentQueue.removeAt(index);
-        if (removed.id != null) {
-          _player._sourceRegistry.remove(removed.id);
-          _player._customProviders.remove(removed.id);
+      if (index < 0) return;
+      final seqBefore = _player._queueEventSeq;
+      final removed = await _rust.removeAt(index: BigInt.from(index));
+      if (removed) {
+        await _player._waitForQueueEventAfter(seqBefore);
+        _player._pruneSourceRegistryToCurrentQueue();
+        if (_player.state.queue.isEmpty) {
+          await _player._closeManagedProviders();
         }
-        _player.state._queue = List.unmodifiable(currentQueue);
-        final curIdx = _player.state._currentIndex;
-        if (curIdx != null) {
-          if (index < curIdx) {
-            _player.state._currentIndex = curIdx - 1;
-          } else if (index == curIdx || curIdx >= currentQueue.length) {
-            _player.state._currentIndex = null;
-          }
-        }
-        await _rust.removeAt(index: BigInt.from(index));
       }
     });
   }
@@ -324,26 +303,14 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
-      final currentQueue = List<AudioSource<T>>.of(_player.state.queue);
-      if (oldIndex >= 0 &&
-          oldIndex < currentQueue.length &&
-          newIndex >= 0 &&
-          newIndex < currentQueue.length) {
-        final item = currentQueue.removeAt(oldIndex);
-        currentQueue.insert(newIndex, item);
-        _player.state._queue = List.unmodifiable(currentQueue);
-        final curIdx = _player.state._currentIndex;
-        if (curIdx != null) {
-          if (curIdx == oldIndex) {
-            _player.state._currentIndex = newIndex;
-          } else if (oldIndex < curIdx && curIdx <= newIndex) {
-            _player.state._currentIndex = curIdx - 1;
-          } else if (newIndex <= curIdx && curIdx < oldIndex) {
-            _player.state._currentIndex = curIdx + 1;
-          }
-        }
-        final ids = currentQueue.map((s) => s.id ?? 0).toList();
-        await _rust.reorderByIds(ids: Int64List.fromList(ids));
+      if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex) return;
+      final seqBefore = _player._queueEventSeq;
+      final moved = await _rust.reorder(
+        oldIndex: BigInt.from(oldIndex),
+        newIndex: BigInt.from(newIndex),
+      );
+      if (moved) {
+        await _player._waitForQueueEventAfter(seqBefore);
       }
     });
   }
@@ -353,20 +320,11 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
-      final activeItem = _player.state.currentItem;
-      final reordered = <AudioSource<T>>[];
-      for (final id in ids) {
-        final s = _player._sourceRegistry[id];
-        if (s != null) reordered.add(s);
+      final seqBefore = _player._queueEventSeq;
+      final changed = await _rust.reorderByIds(ids: Int64List.fromList(ids));
+      if (changed) {
+        await _player._waitForQueueEventAfter(seqBefore);
       }
-      if (reordered.length == _player.state.queue.length) {
-        _player.state._queue = List.unmodifiable(reordered);
-        if (activeItem != null) {
-          final newIdx = reordered.indexOf(activeItem);
-          _player.state._currentIndex = newIdx >= 0 ? newIdx : null;
-        }
-      }
-      await _rust.reorderByIds(ids: Int64List.fromList(ids));
     });
   }
 
@@ -375,44 +333,38 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
-      final curIdx = _player.state.currentIndex;
-      if (keepCurrent &&
-          _player.state.queue.isNotEmpty &&
-          curIdx != null &&
-          curIdx >= 0 &&
-          curIdx < _player.state.queue.length) {
-        final cur = _player.state.queue[curIdx];
-        _player.state._queue = List.unmodifiable([cur]);
-        _player.state._currentIndex = 0;
-        final curId = cur.id;
-        _player._sourceRegistry.removeWhere((id, _) => id != curId);
-        _player._customProviders.removeWhere((id, _) => id != curId);
-      } else {
-        _player.state._queue = const [];
-        _player.state._currentIndex = null;
+      final seqBefore = _player._queueEventSeq;
+      await _rust.clearQueue(keepCurrent: keepCurrent);
+      await _player._waitForQueueEventAfter(seqBefore);
+      if (!keepCurrent || _player.state.queue.isEmpty) {
         _player._sourceRegistry.clear();
         await _player._closeManagedProviders();
         _player._customProviders.clear();
+      } else {
+        _player._pruneSourceRegistryToCurrentQueue();
       }
-      await _rust.clearQueue(keepCurrent: keepCurrent);
     });
   }
 
   /// Advances to the next track in the playlist queue.
-  Future<void> next({Duration? crossfadeDuration}) => _serializeQueue(() async {
-        _player._ensureNotDisposed();
-        await _rust.next(
-          crossfadeDurationMs: crossfadeDuration != null
-              ? BigInt.from(crossfadeDuration.inMilliseconds)
-              : null,
-        );
-      });
+  Future<void> next({Duration? crossfadeDuration}) async {
+    final pendingMutations = _queueTail;
+    await pendingMutations;
+    _player._ensureNotDisposed();
+    await _rust.next(
+      crossfadeDurationMs: crossfadeDuration != null
+          ? BigInt.from(crossfadeDuration.inMilliseconds)
+          : null,
+    );
+  }
 
   /// Skips back to the previous track, or start of current track if > 3s played.
-  Future<void> previous() => _serializeQueue(() async {
-        _player._ensureNotDisposed();
-        await _rust.previous();
-      });
+  Future<void> previous() async {
+    final pendingMutations = _queueTail;
+    await pendingMutations;
+    _player._ensureNotDisposed();
+    await _rust.previous();
+  }
 
   /// Configures playlist repeat mode ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
   Future<void> setLoopMode(LoopMode mode) {

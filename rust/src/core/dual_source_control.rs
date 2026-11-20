@@ -328,6 +328,10 @@ impl DualSource {
 
         self.current_index.store(-1, Ordering::Release);
         self.planned_index.store(-1, Ordering::Release);
+        self.pending_open_active.store(false, Ordering::Release);
+        self.pending_open_seek_ms.store(0, Ordering::Release);
+        self.pending_auto_advance_prev_index
+            .store(-1, Ordering::Release);
         self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
         self.playback_state
             .store(PlaybackState::Stopped.as_i32(), Ordering::Release);
@@ -386,6 +390,10 @@ impl DualSource {
             if cur >= 0 {
                 let item_opt = read_unpoisoned(&self.queue).get(cur as usize).cloned();
                 if let Some(item) = item_opt {
+                    self.pending_open_seek_ms.store(0, Ordering::Release);
+                    self.pending_auto_advance_prev_index
+                        .store(-1, Ordering::Release);
+                    self.pending_open_active.store(true, Ordering::Release);
                     let spec = PlannedOpenSpec {
                         item,
                         template: self.capture_dsp_template(),
@@ -402,6 +410,32 @@ impl DualSource {
         (removed, None)
     }
 
+    /// Optimistically marks `target_idx` active in the queue before background I/O completes.
+    fn mark_pending_manual_open(
+        &mut self,
+        target_idx: usize,
+        seek_ms: Option<i64>,
+        manual_crossfade_ms: Option<u64>,
+    ) {
+        self.current_index
+            .store(target_idx as i64, Ordering::Release);
+        self.planned_index
+            .store(target_idx as i64, Ordering::Release);
+        self.pending_open_seek_ms
+            .store(seek_ms.unwrap_or(0).max(0), Ordering::Release);
+        self.pending_auto_advance_prev_index
+            .store(-1, Ordering::Release);
+        self.pending_open_active.store(true, Ordering::Release);
+        let eff_xfade = manual_crossfade_ms
+            .unwrap_or_else(|| self.manual_crossfade_duration_ms.load(Ordering::Relaxed));
+        if eff_xfade == 0 {
+            if self.crossfade.is_active() {
+                self.abort_active_crossfade();
+            }
+            self.active_deck_mut().stop();
+        }
+    }
+
     /// Plans `play()` without executing any blocking I/O on the calling thread.
     pub fn plan_play(
         &mut self,
@@ -409,6 +443,7 @@ impl DualSource {
         position: Option<usize>,
         shuffled: Option<bool>,
         seek_ms: Option<i64>,
+        has_inflight_active_open: bool,
     ) -> PlanOutcome {
         let cur = self.current_index.load(Ordering::Relaxed);
         let planned = self.planned_index.load(Ordering::Relaxed);
@@ -474,8 +509,8 @@ impl DualSource {
             };
 
             let start_item = read_unpoisoned(&self.queue)[start_idx].clone();
-            self.planned_index.store(start_idx as i64, Ordering::Release);
             self.invalidate_standby();
+            self.mark_pending_manual_open(start_idx, seek_ms, Some(0));
 
             return PlanOutcome::NeedOpen(PlannedOpenSpec {
                 item: start_item,
@@ -495,20 +530,26 @@ impl DualSource {
                 self.sync_planned_index_to_current();
             }
             let cur_playback = PlaybackState::from_i32(self.playback_state.load(Ordering::Relaxed));
-            if cur_playback == PlaybackState::Stopped {
-                let effective_idx = if cur >= 0 { cur } else { logical_cur };
-                if effective_idx >= 0 {
-                    let q_item = read_unpoisoned(&self.queue)
-                        .get(effective_idx as usize)
-                        .cloned();
-                    if let Some(item) = q_item {
+            let effective_idx = if cur >= 0 { cur } else { logical_cur };
+            if effective_idx >= 0 {
+                let q_item = read_unpoisoned(&self.queue)
+                    .get(effective_idx as usize)
+                    .cloned();
+                if let Some(item) = q_item {
+                    let deck_matches = self.active_deck_ref().queue_item_id == Some(item.id);
+                    if cur_playback == PlaybackState::Stopped || !deck_matches {
+                        self.mark_pending_manual_open(
+                            effective_idx as usize,
+                            Some(seek_ms.unwrap_or(0)),
+                            Some(0),
+                        );
                         return PlanOutcome::NeedOpen(PlannedOpenSpec {
                             item,
                             template: self.capture_dsp_template(),
                             custom_factory: self.custom_source_factory.clone(),
                             dart_resolver: self.dart_resolver.clone(),
                             seek_ms: Some(seek_ms.unwrap_or(0)),
-                            manual_crossfade_ms: None,
+                            manual_crossfade_ms: Some(0),
                             force_play: true,
                         });
                     }
@@ -574,7 +615,23 @@ impl DualSource {
             )));
         };
 
-        self.planned_index.store(target_idx as i64, Ordering::Release);
+        if !has_inflight_active_open
+            && !self.crossfade.is_active()
+            && self.standby_is_ready_for(&target_item)
+        {
+            let _displaced = self.commit_transition_internal(
+                None,
+                &target_item,
+                seek_ms,
+                TransitionCommitMode::Manual {
+                    manual_crossfade_ms: None,
+                    force_play: true,
+                },
+            );
+            return PlanOutcome::CommittedStandby;
+        }
+
+        self.mark_pending_manual_open(target_idx, seek_ms, None);
         PlanOutcome::NeedOpen(PlannedOpenSpec {
             item: target_item,
             template: self.capture_dsp_template(),
@@ -661,6 +718,7 @@ impl DualSource {
             return PlanOutcome::CommittedStandby;
         }
 
+        self.mark_pending_manual_open(target_idx, None, manual_crossfade_ms);
         PlanOutcome::NeedOpen(PlannedOpenSpec {
             item,
             template: self.capture_dsp_template(),
@@ -678,7 +736,11 @@ impl DualSource {
         let pos_ms = cur_deck.position_ms.load(Ordering::Relaxed);
         let is_live = cur_deck.is_live_stream();
 
-        if !has_inflight_active_open && !is_live && pos_ms > 3000 {
+        if !has_inflight_active_open
+            && !self.pending_open_active.load(Ordering::Acquire)
+            && !is_live
+            && pos_ms > 3000
+        {
             self.abort_active_crossfade();
             self.active_deck_mut().seek(0);
             self.sync_planned_index_to_current();
@@ -714,6 +776,7 @@ impl DualSource {
             return PlanOutcome::CommittedStandby;
         }
 
+        self.mark_pending_manual_open(target_idx, None, None);
         PlanOutcome::NeedOpen(PlannedOpenSpec {
             item,
             template: self.capture_dsp_template(),
@@ -796,6 +859,10 @@ impl DualSource {
 
         self.crossfade_target_id.store(-1, Ordering::Release);
         self.crossfade_completed_flag.store(false, Ordering::Release);
+        self.pending_open_active.store(false, Ordering::Release);
+        self.pending_open_seek_ms.store(0, Ordering::Release);
+        self.pending_auto_advance_prev_index
+            .store(-1, Ordering::Release);
 
         let active_deck = self.active_deck.load(Ordering::Relaxed);
         let to_deck = if active_deck == 0 { 1 } else { 0 };
@@ -829,6 +896,7 @@ impl DualSource {
         } else {
             &mut self.deck_b
         };
+        to_slot.track_exhausted.store(false, Ordering::Release);
         if let Some(ms) = seek_ms {
             if ms > 0 {
                 to_slot.seek(ms);

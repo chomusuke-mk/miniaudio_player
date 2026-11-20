@@ -6639,6 +6639,13 @@ pub struct DualSource {
     pub standby_ready_source: Arc<RwLock<Option<String>>>,
     /// Logically committed queue cursor used for FIFO rapid-skip serialization.
     pub planned_index: Arc<AtomicI64>,
+    /// True while a background open has already optimistically updated `current_index`.
+    pub pending_open_active: Arc<AtomicBool>,
+    /// Initial seek target (ms) associated with the active pending open.
+    pub pending_open_seek_ms: Arc<AtomicI64>,
+    /// Previous track index saved on EOF auto-advance so `seek()` back inside the outgoing
+    /// track restores the outgoing queue cursor cleanly.
+    pub pending_auto_advance_prev_index: Arc<AtomicI64>,
     /// Default ReplayGain fallback/forced values `(gain_db, peak)`.
     pub default_replay_gain: (f32, f32),
     /// Global ReplayGain operating mode (`0 = Disabled`, `1 = Track`, `2 = Forced`).
@@ -6685,6 +6692,9 @@ impl DualSource {
             standby_ready_id: Arc::new(AtomicI64::new(-1)),
             standby_ready_source: Arc::new(RwLock::new(None)),
             planned_index: Arc::new(AtomicI64::new(-1)),
+            pending_open_active: Arc::new(AtomicBool::new(false)),
+            pending_open_seek_ms: Arc::new(AtomicI64::new(0)),
+            pending_auto_advance_prev_index: Arc::new(AtomicI64::new(-1)),
             default_replay_gain: (0.0, 1.0),
             replay_gain_mode: 1,
         })
@@ -7072,7 +7082,19 @@ impl DualSource {
         if cur >= 0 {
             if (index as i64) < cur {
                 self.current_index.store(cur - 1, Ordering::Release);
+                let planned = self.planned_index.load(Ordering::Relaxed);
+                if planned > index as i64 {
+                    self.planned_index.store(planned - 1, Ordering::Release);
+                }
+                let prev_auto = self.pending_auto_advance_prev_index.load(Ordering::Relaxed);
+                if prev_auto > index as i64 {
+                    self.pending_auto_advance_prev_index
+                        .store(prev_auto - 1, Ordering::Release);
+                }
             } else if (index as i64) == cur {
+                self.pending_open_active.store(false, Ordering::Release);
+                self.pending_open_seek_ms.store(0, Ordering::Release);
+                self.pending_auto_advance_prev_index.store(-1, Ordering::Release);
                 if q.is_empty() {
                     self.current_index.store(-1, Ordering::Release);
                     drop(q);
@@ -7116,19 +7138,36 @@ impl DualSource {
         let item = q.remove(from);
         q.insert(to, item);
         let cur = self.current_index.load(Ordering::Relaxed);
-        if cur >= 0 {
-            let cur_u = cur as usize;
-            if cur_u == from {
-                self.current_index.store(to as i64, Ordering::Release);
-            } else if from < cur_u && to >= cur_u {
-                self.current_index.store(cur - 1, Ordering::Release);
-            } else if from > cur_u && to <= cur_u {
-                self.current_index.store(cur + 1, Ordering::Release);
-            }
-        }
+        self.current_index
+            .store(Self::remap_index_for_reorder(cur, from, to), Ordering::Release);
+        let planned = self.planned_index.load(Ordering::Relaxed);
+        self.planned_index
+            .store(Self::remap_index_for_reorder(planned, from, to), Ordering::Release);
+        let prev_auto = self.pending_auto_advance_prev_index.load(Ordering::Relaxed);
+        self.pending_auto_advance_prev_index.store(
+            Self::remap_index_for_reorder(prev_auto, from, to),
+            Ordering::Release,
+        );
         drop(q);
         self.verify_or_abort_crossfade();
         true
+    }
+
+    #[inline]
+    fn remap_index_for_reorder(idx: i64, from: usize, to: usize) -> i64 {
+        if idx < 0 {
+            return idx;
+        }
+        let u = idx as usize;
+        if u == from {
+            to as i64
+        } else if from < u && to >= u {
+            idx - 1
+        } else if from > u && to <= u {
+            idx + 1
+        } else {
+            idx
+        }
     }
 
     pub fn reorder_by_ids(&mut self, ids: &[i64]) -> bool {
@@ -7137,11 +7176,18 @@ impl DualSource {
             return false;
         }
         let cur = self.current_index.load(Ordering::Relaxed);
-        let current_id = if cur >= 0 && (cur as usize) < q.len() {
-            Some(q[cur as usize].id)
-        } else {
-            None
+        let planned = self.planned_index.load(Ordering::Relaxed);
+        let prev_auto = self.pending_auto_advance_prev_index.load(Ordering::Relaxed);
+        let id_at = |idx: i64| -> Option<i64> {
+            if idx >= 0 && (idx as usize) < q.len() {
+                Some(q[idx as usize].id)
+            } else {
+                None
+            }
         };
+        let current_id = id_at(cur);
+        let planned_id = id_at(planned);
+        let prev_auto_id = id_at(prev_auto);
 
         let mut reordered = Vec::with_capacity(q.len());
         for &id in ids {
@@ -7153,11 +7199,16 @@ impl DualSource {
         }
         *q = reordered;
 
-        if let Some(cur_id) = current_id {
-            if let Some(new_idx) = q.iter().position(|item| item.id == cur_id) {
-                self.current_index.store(new_idx as i64, Ordering::Release);
+        let remap_id = |target_id: Option<i64>, slot: &AtomicI64| {
+            if let Some(tid) = target_id {
+                if let Some(new_idx) = q.iter().position(|item| item.id == tid) {
+                    slot.store(new_idx as i64, Ordering::Release);
+                }
             }
-        }
+        };
+        remap_id(current_id, &self.current_index);
+        remap_id(planned_id, &self.planned_index);
+        remap_id(prev_auto_id, &self.pending_auto_advance_prev_index);
         drop(q);
         self.verify_or_abort_crossfade();
         true
@@ -7181,7 +7232,11 @@ impl DualSource {
         } else {
             q.clear();
             drop(q);
+            self.pending_open_active.store(false, Ordering::Release);
+            self.pending_open_seek_ms.store(0, Ordering::Release);
+            self.pending_auto_advance_prev_index.store(-1, Ordering::Release);
             self.current_index.store(-1, Ordering::Release);
+            self.planned_index.store(-1, Ordering::Release);
             self.abort_active_crossfade();
             self.deck_a.stop();
             self.deck_b.stop();
@@ -7274,6 +7329,9 @@ impl DualSource {
     }
 
     pub fn pause(&mut self) {
+        self.pending_open_active.store(false, Ordering::Release);
+        self.pending_open_seek_ms.store(0, Ordering::Release);
+        self.pending_auto_advance_prev_index.store(-1, Ordering::Release);
         self.active_deck_mut().pause();
         if self.crossfade.is_active() || self.crossfade_target_id.load(Ordering::Acquire) >= 0 {
             self.standby_deck_mut().pause();
@@ -7282,6 +7340,9 @@ impl DualSource {
     }
 
     pub fn stop(&mut self) {
+        self.pending_open_active.store(false, Ordering::Release);
+        self.pending_open_seek_ms.store(0, Ordering::Release);
+        self.pending_auto_advance_prev_index.store(-1, Ordering::Release);
         self.abort_active_crossfade();
         self.deck_a.stop();
         self.deck_a.clear_queue_item_assignment();
@@ -7291,6 +7352,17 @@ impl DualSource {
     }
 
     pub fn seek(&mut self, position_ms: i64) -> i32 {
+        let prev_auto_idx = self.pending_auto_advance_prev_index.swap(-1, Ordering::AcqRel);
+        if prev_auto_idx >= 0 {
+            self.current_index.store(prev_auto_idx, Ordering::Release);
+            self.sync_planned_index_to_current();
+            self.pending_open_active.store(false, Ordering::Release);
+            self.pending_open_seek_ms.store(0, Ordering::Release);
+        }
+        self.active_deck_mut()
+            .track_exhausted
+            .store(false, Ordering::Release);
+
         let trans = self.crossfade.transition();
         let dur = self.active_deck_ref().duration_ms.load(Ordering::Relaxed);
         let auto_ms = self.auto_crossfade_duration_ms.load(Ordering::Relaxed);

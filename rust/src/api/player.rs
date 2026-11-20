@@ -381,19 +381,24 @@ fn emit_track_transition_core(
     snap: TrackTransitionSnapshot,
     emit_shuffle: bool,
 ) {
+    let mut events = Vec::with_capacity(13);
     if snap.queue_changed {
-        if let Some(cb) = emit_queue {
+        if let Some(queue_ids) = snap.queue_ids {
+            events.push(RustPlayerEvent::Queue {
+                queue: queue_ids,
+                current_index: snap.cur_idx as i32,
+            });
+        } else if let Some(cb) = emit_queue {
             cb();
         }
     }
-    let mut events = Vec::with_capacity(11);
     if let Some((gain_db, peak)) = snap.replay_gain {
         events.push(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db,
             peak,
         }));
     }
-    if emit_shuffle {
+    if emit_shuffle || snap.emit_shuffle {
         events.push(RustPlayerEvent::IsShuffled(snap.is_shuffled));
     }
     events.push(RustPlayerEvent::CurrentIndex(snap.cur_idx as i32));
@@ -408,6 +413,7 @@ fn emit_track_transition_core(
         events.push(RustPlayerEvent::AudioInfo(snap.initial_info));
     }
     if let Some((start_ms, end_ms, is_buffering)) = snap.buffered_range {
+        events.push(RustPlayerEvent::IsBuffering(is_buffering));
         events.push(RustPlayerEvent::Buffer(RustBuffer {
             start_ms,
             end_ms,
@@ -977,11 +983,13 @@ impl RustMiniaudioPlayer {
             true
         };
 
+        let monitor_snapshots = engine.snapshots().clone();
         let monitor_thread = thread::Builder::new()
             .name("map-telemetry-monitor".to_string())
             .spawn(move || {
+                let mut wake_seq = 0u64;
                 loop {
-                    thread::sleep(Duration::from_millis(16));
+                    monitor_snapshots.wait_for_telemetry_tick(Duration::from_millis(16), &mut wake_seq);
                     if !tick_telemetry() {
                         break;
                     }
@@ -1055,17 +1063,6 @@ impl RustMiniaudioPlayer {
         self.reporter.emit_batch(batch);
     }
 
-    fn emit_track_transition(&self, snap: TrackTransitionSnapshot, emit_shuffle: bool) {
-        let meta_on = self.metadata_enabled.load(Ordering::Relaxed);
-        emit_track_transition_core(
-            &self.reporter,
-            meta_on,
-            Some(&|| self.emit_queue()),
-            snap,
-            emit_shuffle,
-        );
-    }
-
     // =========================================================================
     // Transport & Playback Methods
     // =========================================================================
@@ -1080,12 +1077,9 @@ impl RustMiniaudioPlayer {
         seek_ms: Option<i64>,
     ) -> Result<(), String> {
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        if let Some(snap) =
-            self.coordinator
-                .play(id, position, shuffled, seek_ms, include_meta)?
-        {
-            self.emit_track_transition(snap, true);
-        }
+        let _ = self
+            .coordinator
+            .play(id, position, shuffled, seek_ms, include_meta)?;
         Ok(())
     }
 
@@ -1222,13 +1216,17 @@ impl RustMiniaudioPlayer {
     /// Removes an audio source at the specified index from the playlist queue.
     pub fn remove_at(&self, index: usize) -> bool {
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        let Ok((res, idx, snap)) = self.coordinator.remove_at(index, include_meta) else {
+        let Ok((res, idx, transition_emitted)) = self.coordinator.remove_at(index, include_meta)
+        else {
             return false;
         };
-        if res {
-            if let Some(snap) = snap {
-                self.emit_queue();
-                self.emit_track_transition(snap, false);
+        if res && !transition_emitted {
+            if idx < 0 {
+                self.emit_queue_and_index([
+                    RustPlayerEvent::CurrentIndex(-1),
+                    RustPlayerEvent::PlaybackState(0),
+                    RustPlayerEvent::IsPlaying(false),
+                ]);
             } else {
                 self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
             }
@@ -1263,25 +1261,29 @@ impl RustMiniaudioPlayer {
     /// Clears pending tracks from the queue, optionally preserving the currently active track.
     pub fn clear_queue(&self, keep_current: bool) {
         if let Ok(idx) = self.coordinator.clear_queue(keep_current) {
-            self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
+            if idx < 0 {
+                self.emit_queue_and_index([
+                    RustPlayerEvent::CurrentIndex(-1),
+                    RustPlayerEvent::PlaybackState(0),
+                    RustPlayerEvent::IsPlaying(false),
+                ]);
+            } else {
+                self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
+            }
         }
     }
 
     /// Skips to the next track in the queue, optionally overriding crossfade duration.
     pub fn next(&self, crossfade_duration_ms: Option<u64>) -> Result<(), String> {
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        if let Some(snap) = self.coordinator.next(crossfade_duration_ms, include_meta)? {
-            self.emit_track_transition(snap, false);
-        }
+        let _ = self.coordinator.next(crossfade_duration_ms, include_meta)?;
         Ok(())
     }
 
     /// Rewinds or skips to the previous track in the queue.
     pub fn previous(&self) -> Result<(), String> {
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        if let Some(snap) = self.coordinator.previous(include_meta)? {
-            self.emit_track_transition(snap, false);
-        }
+        let _ = self.coordinator.previous(include_meta)?;
         Ok(())
     }
 
@@ -2164,6 +2166,7 @@ impl RustMiniaudioPlayer {
             return;
         }
         self.monitor_running.store(false, Ordering::Release);
+        self.engine.snapshots().notify_telemetry_waiters();
         self.notify_device_watcher();
         self.custom_registry.abort_all();
         self.resolve_registry.cancel_all();

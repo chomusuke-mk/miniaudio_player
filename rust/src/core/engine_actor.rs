@@ -57,6 +57,9 @@ pub struct EngineUiSnapshots {
     audio_info: RwLock<RustAudioInfo>,
     parsed_metadata: RwLock<Option<RustAudioMetadata>>,
     visualizer_seqlock: CachePaddedSeqlock<VisualizerData>,
+    telemetry_seq: AtomicU64,
+    telemetry_lock: Mutex<()>,
+    telemetry_cvar: Condvar,
 }
 
 impl EngineUiSnapshots {
@@ -111,7 +114,34 @@ impl EngineUiSnapshots {
             audio_info: RwLock::new(active_deck.get_audio_info()),
             parsed_metadata: RwLock::new(active_deck.get_parsed_metadata()),
             visualizer_seqlock: CachePaddedSeqlock::new(VisualizerData::default()),
+            telemetry_seq: AtomicU64::new(0),
+            telemetry_lock: Mutex::new(()),
+            telemetry_cvar: Condvar::new(),
         }
+    }
+
+    /// Wakes any telemetry monitor waiting for snapshot edge transitions.
+    pub fn notify_telemetry_waiters(&self) {
+        let _guard = lock_unpoisoned(&self.telemetry_lock);
+        self.telemetry_seq.fetch_add(1, Ordering::AcqRel);
+        self.telemetry_cvar.notify_all();
+    }
+
+    /// Sleeps until snapshots publish a transition edge or `timeout` elapses.
+    pub fn wait_for_telemetry_tick(&self, timeout: Duration, last_seq: &mut u64) {
+        let cur = self.telemetry_seq.load(Ordering::Acquire);
+        if cur != *last_seq {
+            *last_seq = cur;
+            return;
+        }
+        let guard = lock_unpoisoned(&self.telemetry_lock);
+        let cur_locked = self.telemetry_seq.load(Ordering::Acquire);
+        if cur_locked != *last_seq {
+            *last_seq = cur_locked;
+            return;
+        }
+        let (_g, _) = wait_timeout_unpoisoned(&self.telemetry_cvar, guard, timeout);
+        *last_seq = self.telemetry_seq.load(Ordering::Acquire);
     }
 
     #[inline]
@@ -313,6 +343,8 @@ pub enum RtControlHint {
 #[derive(Clone)]
 pub struct TrackTransitionSnapshot {
     pub queue_changed: bool,
+    pub queue_ids: Option<Vec<i64>>,
+    pub emit_shuffle: bool,
     pub cur_idx: i64,
     pub is_shuffled: bool,
     pub playback_state: i32,
@@ -332,6 +364,11 @@ pub fn capture_track_snapshot(
     include_metadata: bool,
     include_buffered_range: bool,
 ) -> TrackTransitionSnapshot {
+    let queue_ids = if queue_changed {
+        Some(snapshot_queue_ids(ply).0)
+    } else {
+        None
+    };
     let cur_idx = ply.music_manager.current_index();
     let is_shuffled = ply.music_manager.is_shuffled();
     let active_deck = ply.music_manager.active_deck_ref();
@@ -367,6 +404,8 @@ pub fn capture_track_snapshot(
 
     TrackTransitionSnapshot {
         queue_changed,
+        queue_ids,
+        emit_shuffle: false,
         cur_idx,
         is_shuffled,
         playback_state,
@@ -376,6 +415,54 @@ pub fn capture_track_snapshot(
         initial_info,
         initial_meta,
         buffered_range,
+        replay_gain,
+    }
+}
+
+/// Captures an immediate provisional queue-selection snapshot while the target track opens in I/O.
+pub fn capture_provisional_track_snapshot(
+    ply: &mut MiniaudioPlayer,
+    queue_changed: bool,
+    emit_shuffle: bool,
+) -> TrackTransitionSnapshot {
+    let queue_ids = if queue_changed {
+        Some(snapshot_queue_ids(ply).0)
+    } else {
+        None
+    };
+    let cur_idx = ply.music_manager.current_index();
+    let is_shuffled = ply.music_manager.is_shuffled();
+    let playback_state = ply
+        .music_manager
+        .inner
+        .playback_state
+        .load(Ordering::Relaxed);
+    let is_playing = playback_state == PlaybackState::Playing.as_i32();
+    let is_xfading = ply.music_manager.inner.crossfade.is_active();
+    let initial_pos = ply
+        .music_manager
+        .inner
+        .pending_open_seek_ms
+        .load(Ordering::Relaxed);
+    let replay_gain = if cur_idx >= 0 {
+        Some(ply.recalculate_and_apply_replay_gain())
+    } else {
+        None
+    };
+
+    TrackTransitionSnapshot {
+        queue_changed,
+        queue_ids,
+        emit_shuffle,
+        cur_idx,
+        is_shuffled,
+        playback_state,
+        is_playing,
+        is_xfading,
+        initial_pos,
+        initial_info: RustAudioInfo::default(),
+        initial_meta: None,
+        buffered_range: Some((0, 0, true)),
         replay_gain,
     }
 }
@@ -402,15 +489,17 @@ enum RtActorMsg {
 }
 
 struct SnapshotPublishCache {
-    last_audio_info_key: (i32, usize, u64, u64, i64, u32, u32),
-    last_meta_key: (i32, usize, u64, u32, u64),
+    last_audio_info_key: (bool, i32, usize, u64, u64, i64, u32, u32),
+    last_meta_key: (bool, i32, usize, u64, u32, u64),
+    last_wake_key: (i64, i32, bool),
 }
 
 impl Default for SnapshotPublishCache {
     fn default() -> Self {
         Self {
-            last_audio_info_key: (-1, usize::MAX, u64::MAX, u64::MAX, -1, 0, 0),
-            last_meta_key: (-1, usize::MAX, u64::MAX, u32::MAX, u64::MAX),
+            last_audio_info_key: (false, -1, usize::MAX, u64::MAX, u64::MAX, -1, 0, 0),
+            last_meta_key: (false, -1, usize::MAX, u64::MAX, u32::MAX, u64::MAX),
+            last_wake_key: (-1, 0, false),
         }
     }
 }
@@ -428,16 +517,23 @@ fn publish_snapshots(
     let flush_gen = active_deck.flush_generation.load(Ordering::Acquire);
     let meta_ver = active_deck.get_meta_bytes_version();
     let dur_ms = active_deck.duration_ms.load(Ordering::Relaxed);
+    let pending_open = ply
+        .music_manager
+        .inner
+        .pending_open_active
+        .load(Ordering::Acquire);
+    let playback_state_val = ply
+        .music_manager
+        .inner
+        .playback_state
+        .load(Ordering::Relaxed);
+    let cur_idx_val = ply.music_manager.current_index();
+
     snap.active_deck_id.store(deck_id, Ordering::Release);
     snap.active_open_gen.store(open_gen, Ordering::Release);
 
-    snap.playback_state.store(
-        ply.music_manager
-            .inner
-            .playback_state
-            .load(Ordering::Relaxed),
-        Ordering::Release,
-    );
+    snap.playback_state
+        .store(playback_state_val, Ordering::Release);
     snap.is_xfading
         .store(ply.music_manager.is_crossfading(), Ordering::Release);
     snap.is_recording
@@ -450,28 +546,41 @@ fn publish_snapshots(
         .store(ply.input_manager.is_ducking_active(), Ordering::Release);
     snap.mic_rms_bits
         .store(ply.input_manager.last_rms_db().to_bits(), Ordering::Release);
-    snap.position_ms.store(
-        active_deck.position_ms.load(Ordering::Relaxed),
-        Ordering::Release,
-    );
-    snap.is_buffering.store(
-        active_deck.is_buffering.load(Ordering::Relaxed),
-        Ordering::Release,
-    );
 
-    let mut br = crate::bridge::ffi::MiniaudioBufferedRange::default();
-    if active_deck.get_buffered_range(&mut br) == 0 {
-        snap.buffered_start_ms.store(br.start_ms, Ordering::Release);
-        snap.buffered_end_ms.store(br.end_ms, Ordering::Release);
-        snap.is_buffering
-            .store(br.is_buffering != 0, Ordering::Release);
+    let is_buffering_val = if pending_open {
+        let seek_ms = ply
+            .music_manager
+            .inner
+            .pending_open_seek_ms
+            .load(Ordering::Relaxed);
+        snap.position_ms.store(seek_ms, Ordering::Release);
+        snap.buffered_start_ms.store(0, Ordering::Release);
+        snap.buffered_end_ms.store(0, Ordering::Release);
+        snap.is_buffering.store(true, Ordering::Release);
         snap.has_buffered_range.store(true, Ordering::Release);
+        true
     } else {
-        snap.has_buffered_range.store(false, Ordering::Release);
-    }
+        snap.position_ms.store(
+            active_deck.position_ms.load(Ordering::Relaxed),
+            Ordering::Release,
+        );
+        let mut br = crate::bridge::ffi::MiniaudioBufferedRange::default();
+        if active_deck.get_buffered_range(&mut br) == 0 {
+            snap.buffered_start_ms.store(br.start_ms, Ordering::Release);
+            snap.buffered_end_ms.store(br.end_ms, Ordering::Release);
+            let buf = br.is_buffering != 0;
+            snap.is_buffering.store(buf, Ordering::Release);
+            snap.has_buffered_range.store(true, Ordering::Release);
+            buf
+        } else {
+            let buf = active_deck.is_buffering.load(Ordering::Relaxed);
+            snap.is_buffering.store(buf, Ordering::Release);
+            snap.has_buffered_range.store(false, Ordering::Release);
+            buf
+        }
+    };
 
-    snap.current_index
-        .store(ply.music_manager.current_index() as i64, Ordering::Release);
+    snap.current_index.store(cur_idx_val, Ordering::Release);
     snap.active_deck.store(active_deck_idx, Ordering::Release);
     snap.meta_version.store(meta_ver, Ordering::Release);
     snap.flush_generation.store(flush_gen, Ordering::Release);
@@ -505,18 +614,48 @@ fn publish_snapshots(
 
     let sr = active_deck.sample_rate.load(Ordering::Relaxed);
     let ch = active_deck.channels.load(Ordering::Relaxed);
-    let audio_info_key = (active_deck_idx, deck_id, open_gen, flush_gen, dur_ms, sr, ch);
+    let audio_info_key = (
+        pending_open,
+        active_deck_idx,
+        deck_id,
+        open_gen,
+        flush_gen,
+        dur_ms,
+        sr,
+        ch,
+    );
     if audio_info_key != cache.last_audio_info_key {
         cache.last_audio_info_key = audio_info_key;
-        *write_unpoisoned(&snap.audio_info) = active_deck.get_audio_info();
+        *write_unpoisoned(&snap.audio_info) = if pending_open {
+            RustAudioInfo::default()
+        } else {
+            active_deck.get_audio_info()
+        };
     }
 
-    let meta_key = (active_deck_idx, deck_id, open_gen, meta_ver, flush_gen);
+    let meta_key = (
+        pending_open,
+        active_deck_idx,
+        deck_id,
+        open_gen,
+        meta_ver,
+        flush_gen,
+    );
     if meta_key != cache.last_meta_key {
         cache.last_meta_key = meta_key;
-        *write_unpoisoned(&snap.parsed_metadata) = active_deck.get_parsed_metadata();
+        *write_unpoisoned(&snap.parsed_metadata) = if pending_open {
+            None
+        } else {
+            active_deck.get_parsed_metadata()
+        };
     }
     snap.pub_seq.fetch_add(1, Ordering::Release);
+
+    let wake_key = (cur_idx_val, playback_state_val, is_buffering_val);
+    if wake_key != cache.last_wake_key {
+        cache.last_wake_key = wake_key;
+        snap.notify_telemetry_waiters();
+    }
 }
 
 #[derive(Default)]
@@ -568,6 +707,23 @@ fn tick_music_lifecycle(
     }
     if !xfade_done && !is_xfade_active && target_id >= 0 {
         xfade_done = true;
+    }
+    if !xfade_done && xfade_trans == QueueTransition::AutoCrossfade {
+        let from_deck_idx = ply
+            .music_manager
+            .inner
+            .crossfade
+            .from_deck
+            .load(Ordering::Relaxed);
+        let from_deck = if from_deck_idx == 0 {
+            &ply.music_manager.inner.deck_a
+        } else {
+            &ply.music_manager.inner.deck_b
+        };
+        if from_deck.track_exhausted.load(Ordering::Acquire) {
+            ply.music_manager.inner.crossfade.abort();
+            xfade_done = true;
+        }
     }
 
     if xfade_done {
@@ -638,6 +794,11 @@ fn tick_music_lifecycle(
         .load(Ordering::Relaxed);
 
     let can_trigger = !is_xfading
+        && !ply
+            .music_manager
+            .inner
+            .pending_open_active
+            .load(Ordering::Acquire)
         && active_deck.seek_request_ms.load(Ordering::Acquire) < 0
         && current_idx >= 0
         && cur_playback == PlaybackState::Playing;
@@ -660,9 +821,9 @@ fn tick_music_lifecycle(
 
         let should_auto_xfade =
             has_next_track && auto_ms > 0 && dur > (auto_ms as i64) && (pos + (auto_ms as i64) >= dur);
-        let is_eof = !should_auto_xfade
-            && (active_deck.track_exhausted.swap(false, Ordering::AcqRel)
-                || (dur > 0 && pos >= dur && pos > 0));
+        let reached_eof = active_deck.track_exhausted.load(Ordering::Acquire)
+            || (dur > 0 && pos >= dur && pos > 0);
+        let is_eof = !should_auto_xfade && reached_eof;
 
         let standby_id = ply
             .music_manager
@@ -672,8 +833,8 @@ fn tick_music_lifecycle(
         if has_next_track
             && standby_id < 0
             && !should_auto_xfade
-            && !is_eof
-            && (dur <= 0 || pos + (auto_ms as i64) + 4000 >= dur)
+            && !reached_eof
+            && (dur <= 0 || pos + (auto_ms as i64) + 15_000 >= dur)
         {
             let prewarm_key = (cur_deck_id, cur_open_gen, current_idx);
             if hint_state.last_prewarm_hint_key != Some(prewarm_key) {
@@ -682,7 +843,7 @@ fn tick_music_lifecycle(
             }
         }
 
-        if should_auto_xfade || is_eof {
+        if should_auto_xfade || reached_eof {
             let next_idx_opt = if loop_m == 1 && is_eof && !should_auto_xfade {
                 Some(current_idx as usize)
             } else if has_next_track {
@@ -702,7 +863,7 @@ fn tick_music_lifecycle(
                     .cloned();
                 if let Some(item) = item_opt {
                     if ply.music_manager.inner.standby_is_ready_for(&item) {
-                        let mode = if should_auto_xfade {
+                        let mode = if should_auto_xfade && !reached_eof {
                             let eff_ms = if dur > pos {
                                 ((dur - pos) as u64).clamp(50, auto_ms)
                             } else {
@@ -718,7 +879,7 @@ fn tick_music_lifecycle(
                             None,
                             mode,
                         );
-                        if should_auto_xfade {
+                        if should_auto_xfade && !reached_eof {
                             notices.push(RtEngineNotice::IsCrossfading(true));
                         } else {
                             let (g, p) = ply.recalculate_and_apply_replay_gain();
@@ -731,6 +892,28 @@ fn tick_music_lifecycle(
                         hint_state.last_prewarm_hint_key = None;
                         let _ = hint_tx.try_send(RtControlHint::PrewarmNeeded);
                     } else {
+                        if reached_eof {
+                            ply.music_manager
+                                .inner
+                                .pending_auto_advance_prev_index
+                                .store(current_idx, Ordering::Release);
+                            ply.music_manager
+                                .inner
+                                .current_index
+                                .store(next_idx as i64, Ordering::Release);
+                            ply.music_manager
+                                .inner
+                                .planned_index
+                                .store(next_idx as i64, Ordering::Release);
+                            ply.music_manager
+                                .inner
+                                .pending_open_seek_ms
+                                .store(0, Ordering::Release);
+                            ply.music_manager
+                                .inner
+                                .pending_open_active
+                                .store(true, Ordering::Release);
+                        }
                         let adv_key = (cur_deck_id, cur_open_gen, cur_seek_epoch, next_idx, item.id);
                         if hint_state.last_auto_advance_key != Some(adv_key) {
                             hint_state.last_auto_advance_key = Some(adv_key);
@@ -740,7 +923,7 @@ fn tick_music_lifecycle(
                                 expected_seek_epoch: cur_seek_epoch,
                                 next_idx,
                                 item,
-                                should_auto_xfade,
+                                should_auto_xfade: should_auto_xfade && !reached_eof,
                                 auto_ms,
                             });
                         }
@@ -1038,8 +1221,12 @@ impl EngineActorHandle {
                                 publish_snapshots(&player, &snap_clone, &mut pub_cache);
                                 // Dispatch edge notices only after snapshot publication so monitors reading
                                 // `EngineUiSnapshots` on wake never observe stale track index/metadata.
+                                let had_notices = !pending_notices.is_empty();
                                 for notice in pending_notices.drain(..) {
                                     let _ = notify_tx.try_send(notice);
+                                }
+                                if had_notices {
+                                    snap_clone.notify_telemetry_waiters();
                                 }
                                 next_tick += period_duration;
                                 let after = Instant::now();

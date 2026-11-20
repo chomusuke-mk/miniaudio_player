@@ -7,13 +7,13 @@ use crate::sync::thread::{self, JoinHandle};
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::buffer::{CustomSourceRegistry, DartResolveRegistry};
-use crate::core::dual_source::{AudioSourceCore, CustomSourceFactory, StreamingDeck};
+use crate::core::dual_source::{AudioSourceCore, CustomSourceFactory, StreamingDeck, STATE_PLAYING};
 use crate::core::dual_source_control::{
     PlanOutcome, PlannedOpenSpec, TransitionCommitMode,
 };
 use crate::core::engine_actor::{
-    capture_track_snapshot, snapshot_queue_ids, EngineActorHandle, RtControlHint,
-    TrackTransitionSnapshot,
+    capture_provisional_track_snapshot, capture_track_snapshot, snapshot_queue_ids,
+    EngineActorHandle, RtControlHint, TrackTransitionSnapshot,
 };
 use crate::core::io_pool::{
     ActiveOpenJob, ActiveOpenKind, IoCompletion, IoOpenOutcome, IoWorkerPool, OpenWaiter,
@@ -39,7 +39,7 @@ enum PlannedDispatch {
     },
     NeedOpen {
         spec: PlannedOpenSpec,
-        queue_changed: bool,
+        provisional_snap: TrackTransitionSnapshot,
         include_replay_gain: bool,
     },
 }
@@ -281,23 +281,34 @@ impl ControlCoordinator {
         &self,
         index: usize,
         include_meta: bool,
-    ) -> Result<(bool, i64, Option<TrackTransitionSnapshot>), String> {
+    ) -> Result<(bool, i64, bool), String> {
         self.inner.bump_prewarm_epoch();
         self.inner.cancel_prewarms();
 
         let waiter_opt = {
             let _guard = lock_unpoisoned(&self.inner.dispatch_lock);
-            let (removed, cur_idx, spec_opt) = self.inner.engine.exec(move |ply| {
-                let (rem, spec) = ply.music_manager.inner.remove_item_at_plan(index);
-                (rem.is_some(), ply.music_manager.current_index() as i64, spec)
-            })?;
+            let (removed, cur_idx, spec_opt, provisional_opt) =
+                self.inner.engine.exec(move |ply| {
+                    let (rem, spec) = ply.music_manager.inner.remove_item_at_plan(index);
+                    let prov = if spec.is_some() {
+                        Some(capture_provisional_track_snapshot(ply, true, false))
+                    } else {
+                        None
+                    };
+                    (
+                        rem.is_some(),
+                        ply.music_manager.current_index() as i64,
+                        spec,
+                        prov,
+                    )
+                })?;
 
             if !removed {
-                return Ok((false, cur_idx, None));
+                return Ok((false, cur_idx, false));
             }
             let Some(spec) = spec_opt else {
                 self.schedule_prewarm();
-                return Ok((true, cur_idx, None));
+                return Ok((true, cur_idx, false));
             };
 
             let epoch = self.inner.bump_epochs();
@@ -310,17 +321,18 @@ impl ControlCoordinator {
                 true,
                 Some(waiter.clone()),
             );
+            if let Some(provisional_snap) = provisional_opt {
+                (self.inner.on_async_commit)(provisional_snap);
+            }
             Some(waiter)
         };
 
         if let Some(w) = waiter_opt {
-            if let Some(Ok(snap_opt)) = w.wait() {
-                let cur = self.inner.engine.snapshots().current_index();
-                self.schedule_prewarm();
-                return Ok((true, cur, snap_opt));
-            }
+            let _ = w.wait();
+            self.schedule_prewarm();
+            return Ok((true, self.inner.engine.snapshots().current_index(), true));
         }
-        Ok((true, self.inner.engine.snapshots().current_index(), None))
+        Ok((true, self.inner.engine.snapshots().current_index(), false))
     }
 
     pub fn reorder(&self, old_index: usize, new_index: usize) -> Result<bool, String> {
@@ -436,11 +448,12 @@ impl ControlCoordinator {
                         self.inner.bump_prewarm_epoch();
                         self.schedule_prewarm();
                     }
+                    (self.inner.on_async_commit)(snap.clone());
                     return Ok(Some(snap));
                 }
                 PlannedDispatch::NeedOpen {
                     spec,
-                    queue_changed,
+                    provisional_snap,
                     include_replay_gain,
                 } => {
                     let epoch = self.inner.bump_epochs();
@@ -448,11 +461,12 @@ impl ControlCoordinator {
                     self.inner.submit_open_spec(
                         epoch,
                         spec,
-                        queue_changed,
+                        false,
                         include_meta,
                         include_replay_gain,
                         Some(w.clone()),
                     );
+                    (self.inner.on_async_commit)(provisional_snap);
                     w
                 }
             }
@@ -473,17 +487,18 @@ impl ControlCoordinator {
         seek_ms: Option<i64>,
         include_meta: bool,
     ) -> Result<Option<TrackTransitionSnapshot>, String> {
-        self.execute_planned_transition(include_meta, move |ply, _has_inflight| {
+        self.execute_planned_transition(include_meta, move |ply, has_inflight| {
             let prev_ids = snapshot_queue_ids(ply).0;
             let plan = ply
                 .music_manager
                 .inner
-                .plan_play(id, position, shuffled, seek_ms);
+                .plan_play(id, position, shuffled, seek_ms, has_inflight);
             let new_ids = snapshot_queue_ids(ply).0;
             let q_changed = prev_ids != new_ids;
             match plan {
                 PlanOutcome::Immediate(Ok(())) => {
-                    let snap = capture_track_snapshot(ply, q_changed, include_meta, true);
+                    let mut snap = capture_track_snapshot(ply, q_changed, include_meta, true);
+                    snap.emit_shuffle = true;
                     Ok(PlannedDispatch::Immediate {
                         snap,
                         needs_prewarm: false,
@@ -492,17 +507,21 @@ impl ControlCoordinator {
                 PlanOutcome::Immediate(Err(e)) => Err(e),
                 PlanOutcome::CommittedStandby => {
                     let _ = ply.recalculate_and_apply_replay_gain();
-                    let snap = capture_track_snapshot(ply, q_changed, include_meta, true);
+                    let mut snap = capture_track_snapshot(ply, q_changed, include_meta, true);
+                    snap.emit_shuffle = true;
                     Ok(PlannedDispatch::Immediate {
                         snap,
                         needs_prewarm: true,
                     })
                 }
-                PlanOutcome::NeedOpen(spec) => Ok(PlannedDispatch::NeedOpen {
-                    spec,
-                    queue_changed: q_changed,
-                    include_replay_gain: true,
-                }),
+                PlanOutcome::NeedOpen(spec) => {
+                    let provisional_snap = capture_provisional_track_snapshot(ply, q_changed, true);
+                    Ok(PlannedDispatch::NeedOpen {
+                        spec,
+                        provisional_snap,
+                        include_replay_gain: true,
+                    })
+                }
             }
         })
     }
@@ -534,11 +553,14 @@ impl ControlCoordinator {
                         needs_prewarm: true,
                     })
                 }
-                PlanOutcome::NeedOpen(spec) => Ok(PlannedDispatch::NeedOpen {
-                    spec,
-                    queue_changed: false,
-                    include_replay_gain: false,
-                }),
+                PlanOutcome::NeedOpen(spec) => {
+                    let provisional_snap = capture_provisional_track_snapshot(ply, false, false);
+                    Ok(PlannedDispatch::NeedOpen {
+                        spec,
+                        provisional_snap,
+                        include_replay_gain: false,
+                    })
+                }
             }
         })
     }
@@ -563,11 +585,14 @@ impl ControlCoordinator {
                         needs_prewarm: true,
                     })
                 }
-                PlanOutcome::NeedOpen(spec) => Ok(PlannedDispatch::NeedOpen {
-                    spec,
-                    queue_changed: false,
-                    include_replay_gain: false,
-                }),
+                PlanOutcome::NeedOpen(spec) => {
+                    let provisional_snap = capture_provisional_track_snapshot(ply, false, false);
+                    Ok(PlannedDispatch::NeedOpen {
+                        spec,
+                        provisional_snap,
+                        include_replay_gain: false,
+                    })
+                }
             }
         })
     }
@@ -584,7 +609,7 @@ impl ControlCoordinator {
         if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
             pool.cancel_auto_advance();
         }
-        self.inner.engine.exec(move |ply| {
+        let res = self.inner.engine.exec(move |ply| {
             ply.music_manager.seek(position_ms)?;
             let cur_idx = ply.music_manager.current_index();
             let state = ply
@@ -594,8 +619,12 @@ impl ControlCoordinator {
                 .load(Ordering::Relaxed);
             let is_playing = state == PlaybackState::Playing.as_i32();
             let is_xfading = ply.music_manager.inner.crossfade.is_active();
-            Ok((cur_idx, state, is_playing, is_xfading))
-        })?
+            Ok::<_, String>((cur_idx, state, is_playing, is_xfading))
+        })??;
+        if res.2 {
+            self.schedule_prewarm();
+        }
+        Ok(res)
     }
 
     /// Cancels any pending opens immediately without waiting and pauses the active deck.
@@ -921,7 +950,62 @@ impl CoordInner {
                 }
 
                 match outcome {
-                    IoOpenOutcome::Aborted => resolve_ok_none(),
+                    IoOpenOutcome::Aborted => {
+                        let coord = self.clone();
+                        let expected_epoch = job.epoch;
+                        let auto_epoch_opt = match job.kind {
+                            ActiveOpenKind::AutoAdvance { auto_epoch, .. } => Some(auto_epoch),
+                            ActiveOpenKind::Manual { .. } => None,
+                        };
+                        {
+                            let _guard = lock_unpoisoned(&self.dispatch_lock);
+                            if expected_epoch == self.transport_epoch.load(Ordering::Acquire)
+                                && !self.disposed.load(Ordering::Acquire)
+                            {
+                                let _ = self.engine.exec(move |ply| {
+                                    if expected_epoch
+                                        != coord.transport_epoch.load(Ordering::Acquire)
+                                    {
+                                        return;
+                                    }
+                                    if let Some(exp_auto) = auto_epoch_opt {
+                                        if exp_auto
+                                            != coord.auto_advance_epoch.load(Ordering::Acquire)
+                                        {
+                                            // Seek/user preempt already cleaned up pending state synchronously.
+                                            return;
+                                        }
+                                        let prev_auto = ply
+                                            .music_manager
+                                            .inner
+                                            .pending_auto_advance_prev_index
+                                            .swap(-1, Ordering::AcqRel);
+                                        if prev_auto >= 0 {
+                                            ply.music_manager
+                                                .inner
+                                                .current_index
+                                                .store(prev_auto, Ordering::Release);
+                                            ply.music_manager.inner.sync_planned_index_to_current();
+                                        }
+                                    } else {
+                                        ply.music_manager
+                                            .inner
+                                            .pending_auto_advance_prev_index
+                                            .store(-1, Ordering::Release);
+                                    }
+                                    ply.music_manager
+                                        .inner
+                                        .pending_open_active
+                                        .store(false, Ordering::Release);
+                                    ply.music_manager
+                                        .inner
+                                        .pending_open_seek_ms
+                                        .store(0, Ordering::Release);
+                                });
+                            }
+                        }
+                        resolve_ok_none();
+                    }
                     IoOpenOutcome::Failed(code, detail_msg) => {
                         let auto_params = match job.kind {
                             ActiveOpenKind::AutoAdvance {
@@ -940,36 +1024,124 @@ impl CoordInner {
                         };
                         let coord = self.clone();
                         let expected_epoch = job.epoch;
-                        let _ = self.engine.exec(move |ply| {
-                            if let Some((exp_deck, exp_gen, exp_seek, exp_auto)) = auto_params {
-                                let active = ply.music_manager.active_deck_ref();
-                                let cur_playback = PlaybackState::from_i32(
-                                    ply.music_manager
-                                        .inner
-                                        .playback_state
-                                        .load(Ordering::Relaxed),
-                                );
-                                if expected_epoch == coord.transport_epoch.load(Ordering::Acquire)
-                                    && exp_auto == coord.auto_advance_epoch.load(Ordering::Acquire)
-                                    && cur_playback == PlaybackState::Playing
-                                    && active.deck_id == exp_deck
-                                    && active.open_generation.load(Ordering::Acquire) == exp_gen
-                                    && active.seek_epoch.load(Ordering::Acquire) == exp_seek
-                                {
-                                    ply.music_manager.inner.sync_planned_index_to_current();
-                                    ply.music_manager
-                                        .inner
-                                        .playback_state
-                                        .store(PlaybackState::Stopped.as_i32(), Ordering::Release);
-                                    ply.music_manager.active_deck_mut().finish_at_end();
+                        let include_meta = job.include_meta;
+                        {
+                            let _guard = lock_unpoisoned(&self.dispatch_lock);
+                            if expected_epoch == self.transport_epoch.load(Ordering::Acquire)
+                                && !self.disposed.load(Ordering::Acquire)
+                            {
+                                let reconcile_snap = self
+                                    .engine
+                                    .exec(move |ply| {
+                                        if expected_epoch
+                                            != coord.transport_epoch.load(Ordering::Acquire)
+                                        {
+                                            return None;
+                                        }
+                                        ply.music_manager
+                                            .inner
+                                            .pending_open_active
+                                            .store(false, Ordering::Release);
+                                        ply.music_manager
+                                            .inner
+                                            .pending_open_seek_ms
+                                            .store(0, Ordering::Release);
+                                        let prev_auto = ply
+                                            .music_manager
+                                            .inner
+                                            .pending_auto_advance_prev_index
+                                            .swap(-1, Ordering::AcqRel);
+                                        if let Some((exp_deck, exp_gen, exp_seek, exp_auto)) =
+                                            auto_params
+                                        {
+                                            let active = ply.music_manager.active_deck_ref();
+                                            let cur_playback = PlaybackState::from_i32(
+                                                ply.music_manager
+                                                    .inner
+                                                    .playback_state
+                                                    .load(Ordering::Relaxed),
+                                            );
+                                            if exp_auto
+                                                == coord.auto_advance_epoch.load(Ordering::Acquire)
+                                                && cur_playback == PlaybackState::Playing
+                                                && active.deck_id == exp_deck
+                                                && active.open_generation.load(Ordering::Acquire)
+                                                    == exp_gen
+                                                && active.seek_epoch.load(Ordering::Acquire)
+                                                    == exp_seek
+                                            {
+                                                if prev_auto >= 0 {
+                                                    ply.music_manager
+                                                        .inner
+                                                        .current_index
+                                                        .store(prev_auto, Ordering::Release);
+                                                }
+                                                ply.music_manager
+                                                    .inner
+                                                    .sync_planned_index_to_current();
+                                                ply.music_manager.inner.playback_state.store(
+                                                    PlaybackState::Stopped.as_i32(),
+                                                    Ordering::Release,
+                                                );
+                                                ply.music_manager
+                                                    .active_deck_mut()
+                                                    .finish_at_end();
+                                                return Some(capture_track_snapshot(
+                                                    ply,
+                                                    false,
+                                                    include_meta,
+                                                    false,
+                                                ));
+                                            }
+                                            None
+                                        } else {
+                                            let item_id_opt = {
+                                                let active = ply.music_manager.active_deck_ref();
+                                                if active.state.load(Ordering::Acquire)
+                                                    == STATE_PLAYING
+                                                {
+                                                    active.queue_item_id
+                                                } else {
+                                                    None
+                                                }
+                                            };
+                                            if let Some(item_id) = item_id_opt {
+                                                let pos_opt =
+                                                    read_unpoisoned(&ply.music_manager.inner.queue)
+                                                        .iter()
+                                                        .position(|it| it.id == item_id);
+                                                if let Some(pos) = pos_opt {
+                                                    ply.music_manager
+                                                        .inner
+                                                        .current_index
+                                                        .store(pos as i64, Ordering::Release);
+                                                    ply.music_manager
+                                                        .inner
+                                                        .sync_planned_index_to_current();
+                                                    return Some(capture_track_snapshot(
+                                                        ply,
+                                                        false,
+                                                        include_meta,
+                                                        true,
+                                                    ));
+                                                }
+                                            }
+                                            None
+                                        }
+                                    })
+                                    .ok()
+                                    .flatten();
+                                if let Some(snap) = reconcile_snap {
+                                    (self.on_async_commit)(snap);
                                 }
-                            }
-                        });
-                        if let Some((exp_deck, exp_gen, exp_seek, exp_auto)) = auto_params {
-                            if exp_auto == self.auto_advance_epoch.load(Ordering::Acquire) {
-                                let mut inflight = lock_unpoisoned(&self.auto_advance_inflight);
-                                if *inflight == Some((exp_deck, exp_gen, exp_seek)) {
-                                    *inflight = None;
+                                if let Some((exp_deck, exp_gen, exp_seek, exp_auto)) = auto_params {
+                                    if exp_auto == self.auto_advance_epoch.load(Ordering::Acquire) {
+                                        let mut inflight =
+                                            lock_unpoisoned(&self.auto_advance_inflight);
+                                        if *inflight == Some((exp_deck, exp_gen, exp_seek)) {
+                                            *inflight = None;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -988,96 +1160,131 @@ impl CoordInner {
                         let include_meta = job.include_meta;
                         let include_rg = job.include_replay_gain;
 
-                        let exec_res = self.engine.exec(move |ply| {
-                            if expected_epoch != coord.transport_epoch.load(Ordering::Acquire) {
-                                return Err(deck);
-                            }
-                            let exists = read_unpoisoned(&ply.music_manager.inner.queue)
-                                .iter()
-                                .any(|it| it.id == item.id);
-                            if !exists {
-                                return Err(deck);
-                            }
+                        enum CommitResult {
+                            Committed(Option<Box<StreamingDeck>>, TrackTransitionSnapshot),
+                            Unused(Box<StreamingDeck>),
+                            EngineErr,
+                        }
 
-                            let mode = match kind {
-                                ActiveOpenKind::Manual {
-                                    manual_crossfade_ms,
-                                    force_play,
-                                } => TransitionCommitMode::Manual {
-                                    manual_crossfade_ms,
-                                    force_play,
-                                },
-                                ActiveOpenKind::AutoAdvance {
-                                    should_auto_xfade,
-                                    auto_ms,
-                                    expected_deck_id,
-                                    expected_open_gen,
-                                    expected_seek_epoch,
-                                    auto_epoch,
-                                } => {
-                                    let cur_playback = PlaybackState::from_i32(
-                                        ply.music_manager
-                                            .inner
-                                            .playback_state
-                                            .load(Ordering::Relaxed),
-                                    );
-                                    let active = ply.music_manager.active_deck_ref();
-                                    if auto_epoch != coord.auto_advance_epoch.load(Ordering::Acquire)
-                                        || cur_playback != PlaybackState::Playing
-                                        || ply.music_manager.inner.crossfade.is_active()
-                                        || active.deck_id != expected_deck_id
-                                        || active.open_generation.load(Ordering::Acquire)
-                                            != expected_open_gen
-                                        || active.seek_epoch.load(Ordering::Acquire)
-                                            != expected_seek_epoch
-                                        || !is_auto_advance_due(active, should_auto_xfade, auto_ms)
+                        let outcome_res = {
+                            let _guard = lock_unpoisoned(&self.dispatch_lock);
+                            if expected_epoch != self.transport_epoch.load(Ordering::Acquire)
+                                || self.disposed.load(Ordering::Acquire)
+                            {
+                                CommitResult::Unused(deck)
+                            } else {
+                                let exec_res = self.engine.exec(move |ply| {
+                                    if expected_epoch
+                                        != coord.transport_epoch.load(Ordering::Acquire)
                                     {
                                         return Err(deck);
                                     }
-                                    let dur = active.duration_ms.load(Ordering::Relaxed);
-                                    let pos = active.position_ms.load(Ordering::Relaxed);
-                                    let exhausted = active.track_exhausted.load(Ordering::Acquire);
-                                    if should_auto_xfade
-                                        && !exhausted
-                                        && dur > pos + 50
-                                    {
-                                        let eff_ms = ((dur - pos) as u64).clamp(50, auto_ms);
-                                        TransitionCommitMode::AutoCrossfade { eff_ms }
-                                    } else {
-                                        TransitionCommitMode::AutoAdvanceGapless
+                                    let exists = read_unpoisoned(&ply.music_manager.inner.queue)
+                                        .iter()
+                                        .any(|it| it.id == item.id);
+                                    if !exists {
+                                        return Err(deck);
                                     }
+
+                                    let mode = match kind {
+                                        ActiveOpenKind::Manual {
+                                            manual_crossfade_ms,
+                                            force_play,
+                                        } => TransitionCommitMode::Manual {
+                                            manual_crossfade_ms,
+                                            force_play,
+                                        },
+                                        ActiveOpenKind::AutoAdvance {
+                                            should_auto_xfade,
+                                            auto_ms,
+                                            expected_deck_id,
+                                            expected_open_gen,
+                                            expected_seek_epoch,
+                                            auto_epoch,
+                                        } => {
+                                            let cur_playback = PlaybackState::from_i32(
+                                                ply.music_manager
+                                                    .inner
+                                                    .playback_state
+                                                    .load(Ordering::Relaxed),
+                                            );
+                                            let active = ply.music_manager.active_deck_ref();
+                                            if auto_epoch
+                                                != coord.auto_advance_epoch.load(Ordering::Acquire)
+                                                || cur_playback != PlaybackState::Playing
+                                                || ply.music_manager.inner.crossfade.is_active()
+                                                || active.deck_id != expected_deck_id
+                                                || active.open_generation.load(Ordering::Acquire)
+                                                    != expected_open_gen
+                                                || active.seek_epoch.load(Ordering::Acquire)
+                                                    != expected_seek_epoch
+                                                || !is_auto_advance_due(
+                                                    active,
+                                                    should_auto_xfade,
+                                                    auto_ms,
+                                                )
+                                            {
+                                                return Err(deck);
+                                            }
+                                            let dur = active.duration_ms.load(Ordering::Relaxed);
+                                            let pos = active.position_ms.load(Ordering::Relaxed);
+                                            let exhausted =
+                                                active.track_exhausted.load(Ordering::Acquire);
+                                            if should_auto_xfade
+                                                && !exhausted
+                                                && dur > pos + 50
+                                            {
+                                                let eff_ms = ((dur - pos) as u64).clamp(50, auto_ms);
+                                                TransitionCommitMode::AutoCrossfade { eff_ms }
+                                            } else {
+                                                TransitionCommitMode::AutoAdvanceGapless
+                                            }
+                                        }
+                                    };
+
+                                    let displaced = ply.music_manager.inner.commit_transition_internal(
+                                        Some(deck),
+                                        &item,
+                                        seek_ms,
+                                        mode,
+                                    );
+                                    let _ = ply.recalculate_and_apply_replay_gain();
+                                    let snap = capture_track_snapshot(
+                                        ply,
+                                        queue_changed,
+                                        include_meta,
+                                        include_rg,
+                                    );
+                                    Ok((displaced, snap))
+                                });
+
+                                match exec_res {
+                                    Ok(Ok((displaced_opt, snap))) => {
+                                        (self.on_async_commit)(snap.clone());
+                                        CommitResult::Committed(displaced_opt, snap)
+                                    }
+                                    Ok(Err(unused_deck)) => CommitResult::Unused(unused_deck),
+                                    Err(_) => CommitResult::EngineErr,
                                 }
-                            };
+                            }
+                        };
 
-                            let displaced = ply.music_manager.inner.commit_transition_internal(
-                                Some(deck),
-                                &item,
-                                seek_ms,
-                                mode,
-                            );
-                            let _ = ply.recalculate_and_apply_replay_gain();
-                            let snap =
-                                capture_track_snapshot(ply, queue_changed, include_meta, include_rg);
-                            Ok((displaced, snap))
-                        });
-
-                        match exec_res {
-                            Ok(Ok((displaced_opt, snap))) => {
+                        match outcome_res {
+                            CommitResult::Committed(displaced_opt, snap) => {
                                 if let Some(displaced) = displaced_opt {
                                     reaper.reap_value(displaced);
                                 }
                                 if let Some(ref w) = waiter {
                                     w.resolve(Ok(Some(snap)));
                                 } else {
-                                    (self.on_async_commit)(snap);
                                     self.schedule_prewarm(false);
                                 }
                             }
-                            Ok(Err(unused_deck)) => {
+                            CommitResult::Unused(unused_deck) => {
                                 reaper.reap_value(unused_deck);
                                 resolve_ok_none();
                             }
-                            Err(_) => {
+                            CommitResult::EngineErr => {
                                 resolve_ok_none();
                             }
                         }

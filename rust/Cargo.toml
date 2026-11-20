@@ -53,6 +53,10 @@ path = "../test/rust/massive_concurrency_stress_test.rs"
 name = "seek_buffer_matrix_test"
 path = "../test/rust/seek_buffer_matrix_test.rs"
 
+[[test]]
+name = "track_switch_performance_test"
+path = "../test/rust/track_switch_performance_test.rs"
+
 [dependencies]
 # 100% Rust Audio Decoding and Demuxing
 symphonia = { version = "0.6.1", default-features = false, features = ["opt-simd", "all-codecs", "all-formats", "all-meta"] }

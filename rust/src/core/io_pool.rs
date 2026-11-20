@@ -1,5 +1,6 @@
 //! Bounded interruptible I/O worker pool with local fast-lane isolation and epoch coalescing.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -144,18 +145,26 @@ pub enum IoCompletion {
 
 pub type CompletionCallback = Arc<dyn Fn(IoCompletion) + Send + Sync>;
 
+struct QueuedPrewarm {
+    uid: u64,
+    job: PrewarmJob,
+}
+
 type InflightActiveEntry = (u64, bool, CancelToken, Option<OpenWaiter>);
+type InflightPrewarmEntry = (u64, i64, String, CancelToken);
 
 struct PoolMailbox {
     shutdown: bool,
+    next_prewarm_uid: u64,
     local_active: Option<ActiveOpenJob>,
     net_active: Option<ActiveOpenJob>,
-    local_prewarm: Option<PrewarmJob>,
-    net_prewarm: Option<PrewarmJob>,
+    local_prewarm: Option<QueuedPrewarm>,
+    net_prewarm: Option<QueuedPrewarm>,
     inflight_local_active: Vec<InflightActiveEntry>,
     inflight_net_active: Vec<InflightActiveEntry>,
-    inflight_local_prewarm: Vec<(u64, CancelToken)>,
-    inflight_net_prewarm: Vec<(u64, CancelToken)>,
+    inflight_local_prewarm: Vec<InflightPrewarmEntry>,
+    inflight_net_prewarm: Vec<InflightPrewarmEntry>,
+    promoted_prewarms: HashMap<u64, (ActiveOpenJob, CancelToken)>,
     net_coalesce_until: Option<Instant>,
     net_burst_cap: Option<Instant>,
 }
@@ -200,7 +209,7 @@ fn take_active_matching(
 
 enum NextPoolWork {
     Active(ActiveOpenJob),
-    Prewarm(PrewarmJob),
+    Prewarm { uid: u64, job: PrewarmJob },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -245,6 +254,7 @@ impl IoWorkerPool {
         let state = Arc::new((
             Mutex::new(PoolMailbox {
                 shutdown: false,
+                next_prewarm_uid: 1,
                 local_active: None,
                 net_active: None,
                 local_prewarm: None,
@@ -253,6 +263,7 @@ impl IoWorkerPool {
                 inflight_net_active: Vec::new(),
                 inflight_local_prewarm: Vec::new(),
                 inflight_net_prewarm: Vec::new(),
+                promoted_prewarms: HashMap::new(),
                 net_coalesce_until: None,
                 net_burst_cap: None,
             }),
@@ -348,6 +359,10 @@ impl IoWorkerPool {
                 .inflight_net_active
                 .iter()
                 .any(|(_, _, tok, _)| !tok.is_cancelled())
+            || guard
+                .promoted_prewarms
+                .values()
+                .any(|(j, _)| !j.cancel.is_cancelled())
     }
 
     /// Cancels all active and standby opens and records `epoch` as a stale-open floor.
@@ -397,17 +412,32 @@ impl IoWorkerPool {
                 &mut tokens_to_cancel,
                 &mut waiters_to_resolve,
             );
+            let promoted_keys: Vec<u64> = guard
+                .promoted_prewarms
+                .iter()
+                .filter(|(_, (job, _))| !auto_only || job.kind.is_auto_advance())
+                .map(|(k, _)| *k)
+                .collect();
+            for key in promoted_keys {
+                if let Some((old_job, prewarm_tok)) = guard.promoted_prewarms.remove(&key) {
+                    tokens_to_cancel.push(prewarm_tok);
+                    tokens_to_cancel.push(old_job.cancel);
+                    if let Some(w) = old_job.waiter {
+                        waiters_to_resolve.push(w);
+                    }
+                }
+            }
             if !auto_only {
                 if let Some(old) = guard.local_prewarm.take() {
-                    tokens_to_cancel.push(old.cancel);
+                    tokens_to_cancel.push(old.job.cancel);
                 }
                 if let Some(old) = guard.net_prewarm.take() {
-                    tokens_to_cancel.push(old.cancel);
+                    tokens_to_cancel.push(old.job.cancel);
                 }
-                for (_, tok) in &guard.inflight_local_prewarm {
+                for (_, _, _, tok) in &guard.inflight_local_prewarm {
                     tokens_to_cancel.push(tok.clone());
                 }
-                for (_, tok) in &guard.inflight_net_prewarm {
+                for (_, _, _, tok) in &guard.inflight_net_prewarm {
                     tokens_to_cancel.push(tok.clone());
                 }
                 guard.net_coalesce_until = None;
@@ -430,16 +460,20 @@ impl IoWorkerPool {
             let (lock, cv) = &*self.state;
             let mut guard = lock_unpoisoned(lock);
             if let Some(p) = guard.local_prewarm.take() {
-                tokens.push(p.cancel);
+                tokens.push(p.job.cancel);
             }
             if let Some(p) = guard.net_prewarm.take() {
-                tokens.push(p.cancel);
+                tokens.push(p.job.cancel);
             }
-            for (_, t) in &guard.inflight_local_prewarm {
-                tokens.push(t.clone());
+            for (uid, _, _, t) in &guard.inflight_local_prewarm {
+                if !guard.promoted_prewarms.contains_key(uid) {
+                    tokens.push(t.clone());
+                }
             }
-            for (_, t) in &guard.inflight_net_prewarm {
-                tokens.push(t.clone());
+            for (uid, _, _, t) in &guard.inflight_net_prewarm {
+                if !guard.promoted_prewarms.contains_key(uid) {
+                    tokens.push(t.clone());
+                }
             }
             cv.notify_all();
         }
@@ -493,10 +527,10 @@ impl IoWorkerPool {
             }
             // Drop queued/in-flight prewarms so they never race a user track change.
             if let Some(old_p) = guard.local_prewarm.take() {
-                tokens_to_cancel.push(old_p.cancel);
+                tokens_to_cancel.push(old_p.job.cancel);
             }
             if let Some(old_p) = guard.net_prewarm.take() {
-                tokens_to_cancel.push(old_p.cancel);
+                tokens_to_cancel.push(old_p.job.cancel);
             }
 
             collect_inflight_active(
@@ -511,29 +545,64 @@ impl IoWorkerPool {
                 &mut tokens_to_cancel,
                 &mut waiters_to_resolve,
             );
-            for (_, tok) in &guard.inflight_local_prewarm {
-                tokens_to_cancel.push(tok.clone());
-            }
-            for (_, tok) in &guard.inflight_net_prewarm {
-                tokens_to_cancel.push(tok.clone());
+
+            for (_, (old_job, prewarm_tok)) in guard.promoted_prewarms.drain() {
+                tokens_to_cancel.push(prewarm_tok);
+                tokens_to_cancel.push(old_job.cancel);
+                if let Some(w) = old_job.waiter {
+                    waiters_to_resolve.push(w);
+                }
+                self.active_opens_coalesced.fetch_add(1, Ordering::Relaxed);
             }
 
-            if is_local {
+            let matching_prewarm = guard
+                .inflight_local_prewarm
+                .iter()
+                .chain(guard.inflight_net_prewarm.iter())
+                .find(|(_, id, src, tok)| {
+                    *id == job.item.id && src == &job.item.source && !tok.is_cancelled()
+                })
+                .map(|(uid, _, _, tok)| (*uid, tok.clone()));
+
+            if let Some((matched_uid, matched_tok)) = matching_prewarm {
+                for (uid, _, _, tok) in &guard.inflight_local_prewarm {
+                    if *uid != matched_uid {
+                        tokens_to_cancel.push(tok.clone());
+                    }
+                }
+                for (uid, _, _, tok) in &guard.inflight_net_prewarm {
+                    if *uid != matched_uid {
+                        tokens_to_cancel.push(tok.clone());
+                    }
+                }
                 guard.net_coalesce_until = None;
                 guard.net_burst_cap = None;
-                guard.local_active = Some(job);
+                guard.promoted_prewarms.insert(matched_uid, (job, matched_tok));
             } else {
-                if guard.inflight_net_active.is_empty() {
+                for (_, _, _, tok) in &guard.inflight_local_prewarm {
+                    tokens_to_cancel.push(tok.clone());
+                }
+                for (_, _, _, tok) in &guard.inflight_net_prewarm {
+                    tokens_to_cancel.push(tok.clone());
+                }
+
+                if is_local {
                     guard.net_coalesce_until = None;
                     guard.net_burst_cap = None;
+                    guard.local_active = Some(job);
                 } else {
-                    let cap = *guard
-                        .net_burst_cap
-                        .get_or_insert_with(|| now + Duration::from_millis(Self::COALESCE_BURST_CAP_MS));
-                    let target = now + Duration::from_millis(Self::COALESCE_QUIET_MS);
-                    guard.net_coalesce_until = Some(target.min(cap));
+                    if guard.inflight_net_active.is_empty() {
+                        guard.net_coalesce_until = None;
+                        guard.net_burst_cap = None;
+                    } else {
+                        let cap = *guard
+                            .net_burst_cap
+                            .get_or_insert_with(|| now + Duration::from_millis(Self::COALESCE_BURST_CAP_MS));
+                        let target = now + Duration::from_millis(Self::COALESCE_QUIET_MS);
+                        guard.net_coalesce_until = Some(target.min(cap));
+                    }
+                    guard.net_active = Some(job);
                 }
-                guard.net_active = Some(job);
             }
 
             cv.notify_all();
@@ -561,27 +630,52 @@ impl IoWorkerPool {
                 || guard.net_active.is_some()
                 || !guard.inflight_local_active.is_empty()
                 || !guard.inflight_net_active.is_empty()
+                || !guard.promoted_prewarms.is_empty()
             {
                 return;
             }
 
+            let same_inflight = guard
+                .inflight_local_prewarm
+                .iter()
+                .chain(guard.inflight_net_prewarm.iter())
+                .any(|(_, id, src, tok)| {
+                    *id == job.item.id && src == &job.item.source && !tok.is_cancelled()
+                });
+            let same_queued = guard
+                .local_prewarm
+                .as_ref()
+                .into_iter()
+                .chain(guard.net_prewarm.as_ref().into_iter())
+                .any(|q| {
+                    q.job.item.id == job.item.id
+                        && q.job.item.source == job.item.source
+                        && !q.job.cancel.is_cancelled()
+                });
+            if same_inflight || same_queued {
+                return;
+            }
+
             if let Some(old) = guard.local_prewarm.take() {
-                tokens_to_cancel.push(old.cancel);
+                tokens_to_cancel.push(old.job.cancel);
             }
             if let Some(old) = guard.net_prewarm.take() {
-                tokens_to_cancel.push(old.cancel);
+                tokens_to_cancel.push(old.job.cancel);
             }
-            for (_, tok) in &guard.inflight_local_prewarm {
+            for (_, _, _, tok) in &guard.inflight_local_prewarm {
                 tokens_to_cancel.push(tok.clone());
             }
-            for (_, tok) in &guard.inflight_net_prewarm {
+            for (_, _, _, tok) in &guard.inflight_net_prewarm {
                 tokens_to_cancel.push(tok.clone());
             }
 
+            let uid = guard.next_prewarm_uid;
+            guard.next_prewarm_uid = uid.wrapping_add(1).max(1);
+            let queued = QueuedPrewarm { uid, job };
             if is_local {
-                guard.local_prewarm = Some(job);
+                guard.local_prewarm = Some(queued);
             } else {
-                guard.net_prewarm = Some(job);
+                guard.net_prewarm = Some(queued);
             }
             cv.notify_all();
         }
@@ -618,17 +712,24 @@ impl IoWorkerPool {
                             continue;
                         }
                     }
-                    if let Some(job) = guard.local_prewarm.take() {
-                        if !job.cancel.is_cancelled()
+                    if let Some(queued) = guard.local_prewarm.take() {
+                        if !queued.job.cancel.is_cancelled()
                             && guard.local_active.is_none()
                             && guard.net_active.is_none()
                             && guard.inflight_local_active.is_empty()
                             && guard.inflight_net_active.is_empty()
+                            && guard.promoted_prewarms.is_empty()
                         {
-                            guard
-                                .inflight_local_prewarm
-                                .push((job.epoch, job.cancel.clone()));
-                            return Some(NextPoolWork::Prewarm(job));
+                            guard.inflight_local_prewarm.push((
+                                queued.uid,
+                                queued.job.item.id,
+                                queued.job.item.source.clone(),
+                                queued.job.cancel.clone(),
+                            ));
+                            return Some(NextPoolWork::Prewarm {
+                                uid: queued.uid,
+                                job: queued.job,
+                            });
                         }
                     }
                     guard = cv.wait(guard).unwrap_or_else(|e| e.into_inner());
@@ -672,20 +773,27 @@ impl IoWorkerPool {
 
                     // Leave at least one network worker free whenever active network opens run.
                     let busy_net = guard.inflight_net_active.len() + guard.inflight_net_prewarm.len();
-                    if let Some(ref job) = guard.net_prewarm {
-                        if !job.cancel.is_cancelled()
+                    if let Some(ref queued) = guard.net_prewarm {
+                        if !queued.job.cancel.is_cancelled()
                             && guard.local_active.is_none()
                             && guard.inflight_local_active.is_empty()
                             && guard.inflight_net_active.is_empty()
+                            && guard.promoted_prewarms.is_empty()
                             && busy_net + 1 < Self::NET_WORKERS
                         {
-                            if let Some(job) = guard.net_prewarm.take() {
-                                guard
-                                    .inflight_net_prewarm
-                                    .push((job.epoch, job.cancel.clone()));
-                                return Some(NextPoolWork::Prewarm(job));
+                            if let Some(queued) = guard.net_prewarm.take() {
+                                guard.inflight_net_prewarm.push((
+                                    queued.uid,
+                                    queued.job.item.id,
+                                    queued.job.item.source.clone(),
+                                    queued.job.cancel.clone(),
+                                ));
+                                return Some(NextPoolWork::Prewarm {
+                                    uid: queued.uid,
+                                    job: queued.job,
+                                });
                             }
-                        } else if job.cancel.is_cancelled() {
+                        } else if queued.job.cancel.is_cancelled() {
                             guard.net_prewarm = None;
                             continue;
                         }
@@ -697,27 +805,36 @@ impl IoWorkerPool {
         }
     }
 
-    fn finish_inflight(&self, lane: WorkerLane, is_active: bool, epoch: u64) {
+    fn finish_inflight_active(&self, lane: WorkerLane, epoch: u64) {
         let (lock, cv) = &*self.state;
         let mut guard = lock_unpoisoned(lock);
-        if is_active {
-            let list = match lane {
-                WorkerLane::Local => &mut guard.inflight_local_active,
-                WorkerLane::Network => &mut guard.inflight_net_active,
-            };
-            if let Some(pos) = list.iter().position(|(ep, _, _, _)| *ep == epoch) {
-                list.swap_remove(pos);
-            }
-        } else {
-            let list = match lane {
-                WorkerLane::Local => &mut guard.inflight_local_prewarm,
-                WorkerLane::Network => &mut guard.inflight_net_prewarm,
-            };
-            if let Some(pos) = list.iter().position(|(ep, _)| *ep == epoch) {
-                list.swap_remove(pos);
-            }
+        let list = match lane {
+            WorkerLane::Local => &mut guard.inflight_local_active,
+            WorkerLane::Network => &mut guard.inflight_net_active,
+        };
+        if let Some(pos) = list.iter().position(|(ep, _, _, _)| *ep == epoch) {
+            list.swap_remove(pos);
         }
         cv.notify_all();
+    }
+
+    fn finish_inflight_prewarm_and_take_promoted(
+        &self,
+        lane: WorkerLane,
+        uid: u64,
+    ) -> Option<ActiveOpenJob> {
+        let (lock, cv) = &*self.state;
+        let mut guard = lock_unpoisoned(lock);
+        let list = match lane {
+            WorkerLane::Local => &mut guard.inflight_local_prewarm,
+            WorkerLane::Network => &mut guard.inflight_net_prewarm,
+        };
+        if let Some(pos) = list.iter().position(|(u, _, _, _)| *u == uid) {
+            list.swap_remove(pos);
+        }
+        let promoted = guard.promoted_prewarms.remove(&uid).map(|(job, _)| job);
+        cv.notify_all();
+        promoted
     }
 
     fn execute_work(&self, lane: WorkerLane, work: NextPoolWork) {
@@ -734,7 +851,7 @@ impl IoWorkerPool {
                     &self.shutdown_token,
                     true,
                 );
-                self.finish_inflight(lane, true, epoch);
+                self.finish_inflight_active(lane, epoch);
 
                 match outcome {
                     IoOpenOutcome::Opened(deck) if job.cancel.is_cancelled() || self.shutdown_token.is_cancelled() => {
@@ -751,8 +868,7 @@ impl IoWorkerPool {
                     }
                 }
             }
-            NextPoolWork::Prewarm(job) => {
-                let epoch = job.epoch;
+            NextPoolWork::Prewarm { uid, job } => {
                 let outcome = Self::run_open(
                     &job.item,
                     job.custom_factory.as_ref(),
@@ -762,7 +878,49 @@ impl IoWorkerPool {
                     &self.shutdown_token,
                     false,
                 );
-                self.finish_inflight(lane, false, epoch);
+                if let Some(active_job) =
+                    self.finish_inflight_prewarm_and_take_promoted(lane, uid)
+                {
+                    self.active_opens_executed.fetch_add(1, Ordering::Relaxed);
+                    match outcome {
+                        IoOpenOutcome::Opened(deck)
+                            if active_job.cancel.is_cancelled()
+                                || self.shutdown_token.is_cancelled() =>
+                        {
+                            self.reaper.reap_value(deck);
+                            if let Some(ref w) = active_job.waiter {
+                                w.resolve(Ok(None));
+                            }
+                        }
+                        IoOpenOutcome::Opened(deck) => {
+                            deck.wait_for_initial_pcm(
+                                4096,
+                                Duration::from_millis(180),
+                                Some(&active_job.cancel),
+                            );
+                            if active_job.cancel.is_cancelled()
+                                || self.shutdown_token.is_cancelled()
+                            {
+                                self.reaper.reap_value(deck);
+                                if let Some(ref w) = active_job.waiter {
+                                    w.resolve(Ok(None));
+                                }
+                            } else {
+                                (self.on_complete)(IoCompletion::Active {
+                                    job: active_job,
+                                    outcome: IoOpenOutcome::Opened(deck),
+                                });
+                            }
+                        }
+                        other => {
+                            (self.on_complete)(IoCompletion::Active {
+                                job: active_job,
+                                outcome: other,
+                            });
+                        }
+                    }
+                    return;
+                }
 
                 match outcome {
                     IoOpenOutcome::Opened(deck) if job.cancel.is_cancelled() || self.shutdown_token.is_cancelled() => {
