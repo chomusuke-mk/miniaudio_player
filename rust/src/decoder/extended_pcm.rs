@@ -27,56 +27,70 @@ impl PcmSampleNormalizer {
     ) -> Result<(), SymphoniaError> {
         match (bits_per_sample, is_float, is_big_endian) {
             (8, false, _) => {
-                for &b in buf {
-                    out_pcm.push((b as f32 - 128.0) / 128.0);
-                }
+                const INV_128: f32 = 1.0 / 128.0;
+                out_pcm.reserve(buf.len());
+                out_pcm.extend(buf.iter().map(|&b| (b as f32 - 128.0) * INV_128));
             }
             (16, false, false) => {
-                for chunk in buf.chunks_exact(2) {
-                    let s = i16::from_le_bytes([chunk[0], chunk[1]]);
-                    out_pcm.push(s as f32 / 32768.0);
-                }
+                const INV_32768: f32 = 1.0 / 32768.0;
+                out_pcm.reserve(buf.len() / 2);
+                out_pcm.extend(
+                    buf.chunks_exact(2)
+                        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 * INV_32768),
+                );
             }
             (16, false, true) => {
-                for chunk in buf.chunks_exact(2) {
-                    let s = i16::from_be_bytes([chunk[0], chunk[1]]);
-                    out_pcm.push(s as f32 / 32768.0);
-                }
+                const INV_32768: f32 = 1.0 / 32768.0;
+                out_pcm.reserve(buf.len() / 2);
+                out_pcm.extend(
+                    buf.chunks_exact(2)
+                        .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 * INV_32768),
+                );
             }
             (24, false, false) => {
-                for chunk in buf.chunks_exact(3) {
-                    let sign = if (chunk[2] & 0x80) != 0 { 0xFF } else { 0x00 };
-                    let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], sign]);
-                    out_pcm.push(s as f32 / 8388608.0);
-                }
+                const INV_8M: f32 = 1.0 / 8388608.0;
+                out_pcm.reserve(buf.len() / 3);
+                out_pcm.extend(buf.chunks_exact(3).map(|c| {
+                    let sign = if (c[2] & 0x80) != 0 { 0xFF } else { 0x00 };
+                    i32::from_le_bytes([c[0], c[1], c[2], sign]) as f32 * INV_8M
+                }));
             }
             (24, false, true) => {
-                for chunk in buf.chunks_exact(3) {
-                    let s = i32::from_be_bytes([chunk[0], chunk[1], chunk[2], 0]) >> 8;
-                    out_pcm.push(s as f32 / 8388608.0);
-                }
+                const INV_8M: f32 = 1.0 / 8388608.0;
+                out_pcm.reserve(buf.len() / 3);
+                out_pcm.extend(buf.chunks_exact(3).map(|c| {
+                    (i32::from_be_bytes([c[0], c[1], c[2], 0]) >> 8) as f32 * INV_8M
+                }));
             }
             (32, false, false) => {
-                for chunk in buf.chunks_exact(4) {
-                    let s = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    out_pcm.push(s as f32 / 2147483648.0);
-                }
+                const INV_2G: f32 = 1.0 / 2147483648.0;
+                out_pcm.reserve(buf.len() / 4);
+                out_pcm.extend(
+                    buf.chunks_exact(4)
+                        .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 * INV_2G),
+                );
             }
             (32, false, true) => {
-                for chunk in buf.chunks_exact(4) {
-                    let s = i32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    out_pcm.push(s as f32 / 2147483648.0);
-                }
+                const INV_2G: f32 = 1.0 / 2147483648.0;
+                out_pcm.reserve(buf.len() / 4);
+                out_pcm.extend(
+                    buf.chunks_exact(4)
+                        .map(|c| i32::from_be_bytes([c[0], c[1], c[2], c[3]]) as f32 * INV_2G),
+                );
             }
             (32, true, false) => {
-                for chunk in buf.chunks_exact(4) {
-                    out_pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-                }
+                out_pcm.reserve(buf.len() / 4);
+                out_pcm.extend(
+                    buf.chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+                );
             }
             (32, true, true) => {
-                for chunk in buf.chunks_exact(4) {
-                    out_pcm.push(f32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-                }
+                out_pcm.reserve(buf.len() / 4);
+                out_pcm.extend(
+                    buf.chunks_exact(4)
+                        .map(|c| f32::from_be_bytes([c[0], c[1], c[2], c[3]])),
+                );
             }
             _ => return Err(SymphoniaError::Unsupported("unsupported PCM bit depth")),
         }
@@ -456,6 +470,15 @@ impl ExtendedPcmReader {
 
     /// Decodes the next block of PCM audio frames into the output buffer.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
+        out_pcm.clear();
+        self.decode_next_frame_append(out_pcm)
+    }
+
+    /// Decodes the next block of PCM audio frames, appending directly to `out_pcm`.
+    pub fn decode_next_frame_append(
+        &mut self,
+        out_pcm: &mut Vec<f32>,
+    ) -> Result<bool, SymphoniaError> {
         if self.current_frame >= self.total_frames {
             return Ok(false);
         }
@@ -483,7 +506,6 @@ impl ExtendedPcmReader {
             }
         }
 
-        out_pcm.clear();
         out_pcm.reserve(frames_to_read * self.channels as usize);
         PcmSampleNormalizer::decode_bytes(
             buf_slice,

@@ -33,6 +33,12 @@ pub fn create_codec_registry() -> CodecRegistry {
     registry
 }
 
+/// Returns a process-wide cached `CodecRegistry` so repeated stream opens skip rebuilding codec lookup tables.
+pub fn shared_codec_registry() -> &'static CodecRegistry {
+    static REGISTRY: std::sync::OnceLock<CodecRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(create_codec_registry)
+}
+
 fn classify_symphonia_codec(
     codec: AudioCodecId,
     explicit_bps: Option<u32>,
@@ -194,7 +200,7 @@ impl SymphoniaTrackSession {
             .or_else(|| Self::extract_metadata_duration_ms(&mut *format_reader));
         let symphonia_meta = SymphoniaExtractedMeta::from_format_reader(&mut *format_reader);
 
-        let decoder = create_codec_registry()
+        let decoder = shared_codec_registry()
             .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())?;
 
         Ok(Self {
@@ -325,6 +331,11 @@ impl SymphoniaTrackSession {
     }
 
     fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
+        out_pcm.clear();
+        self.decode_next_frame_append(out_pcm)
+    }
+
+    fn decode_next_frame_append(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         self.last_io_unexpected_eof = false;
         loop {
             let packet = match self.format_reader.next_packet() {
@@ -353,11 +364,13 @@ impl SymphoniaTrackSession {
                     if ch > 0 {
                         self.channels = ch;
                     }
-                    out_pcm.clear();
-                    decoded.copy_to_vec_interleaved(out_pcm);
-                    if out_pcm.is_empty() {
+                    let samples = decoded.frames() * decoded.spec().channels().count();
+                    if samples == 0 {
                         continue;
                     }
+                    let base = out_pcm.len();
+                    out_pcm.resize(base + samples, 0.0);
+                    decoded.copy_to_slice_interleaved(&mut out_pcm[base..]);
                     return Ok(true);
                 }
                 Err(SymphoniaError::DecodeError(err)) => {
@@ -493,6 +506,7 @@ pub struct SymphoniaEngine {
     symphonia_meta: SymphoniaExtractedMeta,
     anchor_ms: u64,
     frames_from_anchor: u64,
+    append_scratch: Vec<f32>,
 }
 
 impl SymphoniaEngine {
@@ -537,6 +551,7 @@ impl SymphoniaEngine {
                     backend: EngineBackend::ExtendedPcm(pcm),
                     anchor_ms: 0,
                     frames_from_anchor: 0,
+                    append_scratch: Vec::new(),
                 });
             }
             ExtendedPcmProbe::NotMatched(src) => src,
@@ -557,6 +572,7 @@ impl SymphoniaEngine {
                     backend: EngineBackend::Dsf(dsf),
                     anchor_ms: 0,
                     frames_from_anchor: 0,
+                    append_scratch: Vec::new(),
                 });
             }
             DsfProbe::NotMatched(src) => src,
@@ -578,6 +594,7 @@ impl SymphoniaEngine {
                     backend: EngineBackend::Ape(ape),
                     anchor_ms: 0,
                     frames_from_anchor: 0,
+                    append_scratch: Vec::new(),
                 });
             }
             ApeProbe::NotMatched(src) => src,
@@ -599,6 +616,7 @@ impl SymphoniaEngine {
                     backend: EngineBackend::WavPack(wv),
                     anchor_ms: 0,
                     frames_from_anchor: 0,
+                    append_scratch: Vec::new(),
                 });
             }
             WavpackProbe::NotMatched(src) => src,
@@ -641,6 +659,7 @@ impl SymphoniaEngine {
             backend: EngineBackend::Symphonia(session),
             anchor_ms: 0,
             frames_from_anchor: 0,
+            append_scratch: Vec::new(),
         })
     }
 
@@ -752,6 +771,43 @@ impl SymphoniaEngine {
         if ok && !out_pcm.is_empty() {
             let ch = self.channels.max(1) as usize;
             self.frames_from_anchor += (out_pcm.len() / ch) as u64;
+        }
+        Ok(ok)
+    }
+
+    /// Decodes the next packet or block and appends interleaved normalized float PCM samples to `out_pcm`.
+    pub fn decode_next_frame_append(
+        &mut self,
+        out_pcm: &mut Vec<f32>,
+    ) -> Result<bool, SymphoniaError> {
+        let before = out_pcm.len();
+        let ok = match &mut self.backend {
+            EngineBackend::ExtendedPcm(pcm) => pcm.decode_next_frame_append(out_pcm)?,
+            EngineBackend::Dsf(dsf) => dsf.decode_next_frame_append(out_pcm)?,
+            EngineBackend::Ape(ape) => {
+                let res = ape.decode_next_frame(&mut self.append_scratch)?;
+                if res {
+                    out_pcm.extend_from_slice(&self.append_scratch);
+                }
+                res
+            }
+            EngineBackend::WavPack(wv) => {
+                let res = wv.decode_next_frame(&mut self.append_scratch)?;
+                if res {
+                    out_pcm.extend_from_slice(&self.append_scratch);
+                }
+                res
+            }
+            EngineBackend::Symphonia(session) => {
+                let res = session.decode_next_frame_append(out_pcm)?;
+                self.sample_rate = session.sample_rate;
+                self.channels = session.channels;
+                res
+            }
+        };
+        if ok && out_pcm.len() > before {
+            let ch = self.channels.max(1) as usize;
+            self.frames_from_anchor += ((out_pcm.len() - before) / ch) as u64;
         }
         Ok(ok)
     }

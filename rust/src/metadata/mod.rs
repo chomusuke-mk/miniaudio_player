@@ -258,8 +258,14 @@ impl UniversalMetadataExtractor {
 
         // 2. Fallback / supplement on synthesized compact container `out.bytes`
         if !out.bytes.is_empty() {
+            let needs_id3_fallback = out.id3v2_version.is_none()
+                && (!parsed_any_lofty
+                    || out
+                        .tag_formats
+                        .iter()
+                        .any(|f| matches!(f.as_str(), "RiffInfo" | "AiffText" | "ID3v1")));
             let bytes_snapshot = if !parsed_any_lofty
-                || out.id3v2_version.is_none()
+                || needs_id3_fallback
                 || out.chapters.is_empty()
                 || out.pictures.is_empty()
             {

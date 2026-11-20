@@ -3587,6 +3587,39 @@ impl StreamingDeck {
         )
     }
 
+    /// Takes ownership of the active [`SymphoniaEngine`] for lock-free single-owner decoding
+    /// inside an offline analysis pass.
+    pub fn take_analysis_engine(&mut self) -> Option<crate::decoder::symphonia_engine::SymphoniaEngine> {
+        lock_unpoisoned(&self.engine).take()
+    }
+
+    /// Snapshots the immutable inputs needed to run [`crate::metadata::UniversalMetadataExtractor::extract`]
+    /// offline on a worker thread concurrently with audio decoding.
+    pub fn metadata_extract_inputs(
+        &self,
+    ) -> (
+        Arc<StreamBuffer>,
+        String,
+        Option<crate::metadata::SymphoniaExtractedMeta>,
+        Option<crate::api::types::RustIcyMetadata>,
+    ) {
+        let container_format = self
+            .container_format
+            .read()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let sym_meta = self.symphonia_meta.read().ok().map(|g| g.clone());
+        let icy_meta = self.icy_metadata.read().ok().and_then(|g| g.clone());
+        let meta_buf = self
+            .stream_session
+            .read()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.metadata.clone()))
+            .unwrap_or_else(|| StreamBuffer::new_sparse(4096, None));
+        (meta_buf, container_format, sym_meta, icy_meta)
+    }
+
     /// Pulls the next decoded PCM frame batch from `SymphoniaEngine` at unconstrained CPU speed.
     pub fn decode_next_analysis_frame(&mut self, out_buf: &mut Vec<f32>) -> Result<bool, String> {
         let mut eng_lock = lock_unpoisoned(&self.engine);
@@ -3658,13 +3691,6 @@ impl StreamingDeck {
         static DECK_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
         let deck_id = DECK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-        let ring_cap = (sr as usize * ch as usize * 3).max(262144);
-        let (producer, consumer) = AudioRingBuffer::create(ring_cap);
-        let audio_producer = Arc::new(Mutex::new(Some(producer)));
-
-        let (cmd_prod, cmd_cons) = rtrb::RingBuffer::new(256);
-        let cmd_producer = Arc::new(Mutex::new(Some(cmd_prod)));
-
         let visualizer_seqlock = Arc::new(CachePaddedSeqlock::new(VisualizerData::default()));
         let flush_generation = Arc::new(AtomicU64::new(0));
         let flush_acknowledged = Arc::new(AtomicU64::new(0));
@@ -3698,61 +3724,77 @@ impl StreamingDeck {
         let decoder_running = Arc::new(AtomicBool::new(true));
         let decoder_wake = Arc::new((Mutex::new(false), Condvar::new()));
 
-        let pause_on_device = pause_on_device_change.clone();
-        let state_for_notif = state.clone();
-        let tele_for_notif = telemetry.clone();
-        let notif_cb: Arc<dyn Fn(i32) + Send + Sync> = Arc::new(move |_notification_type: i32| {
-            if pause_on_device.load(Ordering::Relaxed)
-                && state_for_notif.load(Ordering::Relaxed) == STATE_PLAYING
-            {
-                state_for_notif.store(STATE_PAUSED, Ordering::Relaxed);
-                tele_for_notif.post_event(EventType::IsPlaying, MapEventData { is_playing: 0 });
-                tele_for_notif.post_event(
-                    EventType::State,
-                    MapEventData {
-                        state: STATE_PAUSED,
-                    },
-                );
-            }
-        });
+        let (audio_producer, cmd_producer, renderer) = if run_decoder_loop {
+            let ring_cap = (sr as usize * ch as usize * 3).max(262144);
+            let (producer, consumer) = AudioRingBuffer::create(ring_cap);
+            let audio_producer = Arc::new(Mutex::new(Some(producer)));
 
-        let renderer = AudioRenderer {
-            header: crate::core::renderer::PcmRendererHeader {
-                render_fn: crate::core::renderer::audio_renderer_render_trampoline,
-                notif_fn: crate::core::renderer::audio_renderer_notif_trampoline,
-            },
-            deck_id,
-            consumer,
-            cmd_consumer: cmd_cons,
-            state: state.clone(),
-            sample_rate: sample_rate.clone(),
-            channels: channels.clone(),
-            device_sample_rate: device_sample_rate.clone(),
-            device_channels: device_channels.clone(),
-            volume: volume.clone(),
-            rate: rate.clone(),
-            pitch: pitch.clone(),
-            position_frames: position_frames.clone(),
-            position_ms: position_ms.clone(),
-            duration_ms: duration_ms.clone(),
-            decoder_eof: decoder_eof.clone(),
-            seek_request_ms: seek_request_ms.clone(),
-            is_stream: is_stream.clone(),
-            at_live_edge: at_live_edge.clone(),
-            flush_generation: flush_generation.clone(),
-            flush_acknowledged: flush_acknowledged.clone(),
-            local_flush_gen: 0,
-            track_exhausted: track_exhausted.clone(),
-            is_buffering: is_buffering.clone(),
-            dsp: DspChain::new(ch as usize, sr),
-            sonic: SonicStream::new(sr, (ch as usize).clamp(1, 8)),
-            sonic_in_buf: vec![0.0f32; 16384],
-            visualizer_seqlock: visualizer_seqlock.clone(),
-            visualizer_enabled: visualizer_enabled.clone(),
-            notification_callback: Some(notif_cb),
-            anti_pop: Default::default(),
+            let (cmd_prod, cmd_cons) = rtrb::RingBuffer::new(256);
+            let cmd_producer = Arc::new(Mutex::new(Some(cmd_prod)));
+
+            let pause_on_device = pause_on_device_change.clone();
+            let state_for_notif = state.clone();
+            let tele_for_notif = telemetry.clone();
+            let notif_cb: Arc<dyn Fn(i32) + Send + Sync> =
+                Arc::new(move |_notification_type: i32| {
+                    if pause_on_device.load(Ordering::Relaxed)
+                        && state_for_notif.load(Ordering::Relaxed) == STATE_PLAYING
+                    {
+                        state_for_notif.store(STATE_PAUSED, Ordering::Relaxed);
+                        tele_for_notif.post_event(
+                            EventType::IsPlaying,
+                            MapEventData { is_playing: 0 },
+                        );
+                        tele_for_notif.post_event(
+                            EventType::State,
+                            MapEventData {
+                                state: STATE_PAUSED,
+                            },
+                        );
+                    }
+                });
+
+            let renderer = AudioRenderer {
+                header: crate::core::renderer::PcmRendererHeader {
+                    render_fn: crate::core::renderer::audio_renderer_render_trampoline,
+                    notif_fn: crate::core::renderer::audio_renderer_notif_trampoline,
+                },
+                deck_id,
+                consumer,
+                cmd_consumer: cmd_cons,
+                state: state.clone(),
+                sample_rate: sample_rate.clone(),
+                channels: channels.clone(),
+                device_sample_rate: device_sample_rate.clone(),
+                device_channels: device_channels.clone(),
+                volume: volume.clone(),
+                rate: rate.clone(),
+                pitch: pitch.clone(),
+                position_frames: position_frames.clone(),
+                position_ms: position_ms.clone(),
+                duration_ms: duration_ms.clone(),
+                decoder_eof: decoder_eof.clone(),
+                seek_request_ms: seek_request_ms.clone(),
+                is_stream: is_stream.clone(),
+                at_live_edge: at_live_edge.clone(),
+                flush_generation: flush_generation.clone(),
+                flush_acknowledged: flush_acknowledged.clone(),
+                local_flush_gen: 0,
+                track_exhausted: track_exhausted.clone(),
+                is_buffering: is_buffering.clone(),
+                dsp: DspChain::new(ch as usize, sr),
+                sonic: SonicStream::new(sr, (ch as usize).clamp(1, 8)),
+                sonic_in_buf: vec![0.0f32; 16384],
+                visualizer_seqlock: visualizer_seqlock.clone(),
+                visualizer_enabled: visualizer_enabled.clone(),
+                notification_callback: Some(notif_cb),
+                anti_pop: Default::default(),
+            };
+            (audio_producer, cmd_producer, Some(Box::new(renderer)))
+        } else {
+            // Offline analysis deck never attaches a hardware callback or playback ring.
+            (Arc::new(Mutex::new(None)), Arc::new(Mutex::new(None)), None)
         };
-        let renderer = Some(Box::new(renderer));
 
         let mut coordinator = Box::new(Self {
             deck_id,
@@ -4897,10 +4939,12 @@ impl StreamingDeck {
                 }
             };
 
-            let session = StreamSession::new(65536, Some(file_size), false);
-            let classified_boundary = session.ingest_classified(
+            let ring_cap = if self.is_analysis { 64 } else { 65536 };
+            let session = StreamSession::new(ring_cap, Some(file_size), false);
+            let classified_boundary = session.ingest_classified_with_options(
                 &initial_buf,
                 tail_data.as_ref().map(|(v, off)| (v.as_slice(), *off)),
+                self.is_analysis,
             );
             session.mark_eof();
             *write_unpoisoned(&self.boundary_info) = Some(classified_boundary);
@@ -5855,8 +5899,10 @@ impl StreamingDeck {
         );
 
         let is_non_empty = !parsed.bytes.is_empty() || Self::has_any_parsed_fields(&parsed);
-        if let Ok(mut guard) = self.cached_metadata.lock() {
-            *guard = Some((cur_flush, cur_meta_ver, parsed.clone()));
+        if !self.is_analysis {
+            if let Ok(mut guard) = self.cached_metadata.lock() {
+                *guard = Some((cur_flush, cur_meta_ver, parsed.clone()));
+            }
         }
 
         if is_non_empty {

@@ -61,6 +61,10 @@ path = "../test/rust/track_switch_performance_test.rs"
 name = "metadata_coverage_test"
 path = "../test/rust/metadata_coverage_test.rs"
 
+[[test]]
+name = "analysis_performance_test"
+path = "../test/rust/analysis_performance_test.rs"
+
 [dependencies]
 # 100% Rust Audio Decoding and Demuxing
 symphonia = { version = "0.6.1", default-features = false, features = ["opt-simd", "all-codecs", "all-formats", "all-meta"] }
@@ -124,7 +128,7 @@ debug-assertions = true
 overflow-checks = true
 
 [profile.release]
-opt-level = "s"
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = "symbols"

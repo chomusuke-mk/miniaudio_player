@@ -157,27 +157,32 @@ static FREQ_INFOS: [ReplayGainFreqInfo; 20] = [
 
 pub const HISTOGRAM_SLOTS: usize = 12000;
 
-/// High-performance, allocation-free ReplayGain 1.0 scanner.
+/// High-performance ReplayGain 1.0 scanner with register-resident DF1 stereo IIR state
+/// and SSE2 `f64x2` vectorization on `x86_64`.
 pub struct ReplayGainScanner {
-    histogram: [u32; HISTOGRAM_SLOTS],
+    histogram: Box<[u32; HISTOGRAM_SLOTS]>,
     peak: f32,
     window_samples: usize,
     cur_window_samples: usize,
     cur_window_sum: f64,
-    yule_i: usize,
-    butter_i: usize,
     yule_coeff_a: [f64; 11],
     yule_coeff_b: [f64; 11],
     butter_coeff_a: [f64; 3],
     butter_coeff_b: [f64; 3],
-    yule_hist_a: [f32; 256],
-    yule_hist_b: [f32; 256],
-    butter_hist_a: [f32; 256],
-    butter_hist_b: [f32; 256],
+    /// Past 10 stereo inputs `[x[n-1], ..., x[n-10]]` where each element is `[L, R]`.
+    yule_x: [[f64; 2]; 10],
+    /// Past 10 stereo Yule outputs `[y[n-1], ..., y[n-10]]`.
+    yule_y: [[f64; 2]; 10],
+    /// Past 2 stereo Butterworth inputs `[u[n-1], u[n-2]]`.
+    butter_x: [[f64; 2]; 2],
+    /// Past 2 stereo Butterworth outputs `[w[n-1], w[n-2]]`.
+    butter_y: [[f64; 2]; 2],
 }
 
 impl ReplayGainScanner {
-    /// Creates a new ReplayGainScanner tuned for sample_rate.
+    const DENORMAL_FLUSH_THRESHOLD: f64 = 1e-18;
+
+    /// Creates a new `ReplayGainScanner` tuned for `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
         let best = FREQ_INFOS
             .iter()
@@ -185,138 +190,504 @@ impl ReplayGainScanner {
             .unwrap_or(&FREQ_INFOS[9]);
 
         let window_samples = ((sample_rate as f64 / 20.0).round() as usize).max(1);
+        let histogram: Box<[u32; HISTOGRAM_SLOTS]> = vec![0u32; HISTOGRAM_SLOTS]
+            .into_boxed_slice()
+            .try_into()
+            .expect("histogram length matches HISTOGRAM_SLOTS");
 
         Self {
-            histogram: [0; HISTOGRAM_SLOTS],
+            histogram,
             peak: 0.0,
             window_samples,
             cur_window_samples: 0,
             cur_window_sum: 1e-16,
-            yule_i: 20,
-            butter_i: 4,
             yule_coeff_a: best.a_yule,
             yule_coeff_b: best.b_yule,
             butter_coeff_a: best.a_butter,
             butter_coeff_b: best.b_butter,
-            yule_hist_a: [0.0; 256],
-            yule_hist_b: [0.0; 256],
-            butter_hist_a: [0.0; 256],
-            butter_hist_b: [0.0; 256],
+            yule_x: [[0.0; 2]; 10],
+            yule_y: [[0.0; 2]; 10],
+            butter_x: [[0.0; 2]; 2],
+            butter_y: [[0.0; 2]; 2],
         }
     }
 
-    /// Feeds an un-clamped stereo frame (left, right) into the scanner.
     #[inline]
-    pub fn push_stereo_frame(&mut self, s_l: f32, s_r: f32) {
-        let max_abs = s_l.abs().max(s_r.abs());
-        if max_abs > self.peak {
-            self.peak = max_abs;
-        }
-
-        // 1. Yule-Walker 10th-order IIR stereo filter
-        let mut i = self.yule_i;
-        let mut any_denormal = false;
-        for j in (i - 20)..i {
-            if self.yule_hist_a[j].abs() > 1e-10 || self.yule_hist_b[j].abs() > 1e-10 {
-                any_denormal = true;
-                break;
+    fn flush_denormals(&mut self) {
+        for pair in &mut self.yule_x {
+            if pair[0].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[0] = 0.0;
+            }
+            if pair[1].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[1] = 0.0;
             }
         }
-        if !any_denormal {
-            self.yule_hist_a.fill(0.0);
-            self.yule_hist_b.fill(0.0);
-        }
-
-        self.yule_hist_b[i] = s_l;
-        self.yule_hist_b[i + 1] = s_r;
-        let mut left = (s_l as f64) * self.yule_coeff_b[0];
-        let mut right = (s_r as f64) * self.yule_coeff_b[0];
-
-        for k in 1..=10 {
-            let offset_b = i - 2 * k;
-            left += (self.yule_hist_b[offset_b] as f64) * self.yule_coeff_b[k]
-                - (self.yule_hist_a[offset_b] as f64) * self.yule_coeff_a[k];
-            right += (self.yule_hist_b[offset_b + 1] as f64) * self.yule_coeff_b[k]
-                - (self.yule_hist_a[offset_b + 1] as f64) * self.yule_coeff_a[k];
-        }
-
-        let yule_out_l = left as f32;
-        let yule_out_r = right as f32;
-        self.yule_hist_a[i] = yule_out_l;
-        self.yule_hist_a[i + 1] = yule_out_r;
-        i += 2;
-        if i == 256 {
-            self.yule_hist_a.copy_within(236..256, 0);
-            self.yule_hist_b.copy_within(236..256, 0);
-            i = 20;
-        }
-        self.yule_i = i;
-
-        // 2. Butterworth 2nd-order IIR stereo filter
-        let mut bi = self.butter_i;
-        let mut any_b_denormal = false;
-        for j in (bi - 4)..bi {
-            if self.butter_hist_a[j].abs() > 1e-10 || self.butter_hist_b[j].abs() > 1e-10 {
-                any_b_denormal = true;
-                break;
+        for pair in &mut self.yule_y {
+            if pair[0].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[0] = 0.0;
+            }
+            if pair[1].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[1] = 0.0;
             }
         }
-        if !any_b_denormal {
-            self.butter_hist_a.fill(0.0);
-            self.butter_hist_b.fill(0.0);
+        for pair in &mut self.butter_x {
+            if pair[0].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[0] = 0.0;
+            }
+            if pair[1].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[1] = 0.0;
+            }
         }
-
-        self.butter_hist_b[bi] = yule_out_l;
-        self.butter_hist_b[bi + 1] = yule_out_r;
-        let mut b_left = (yule_out_l as f64) * self.butter_coeff_b[0];
-        let mut b_right = (yule_out_r as f64) * self.butter_coeff_b[0];
-
-        for k in 1..=2 {
-            let offset_b = bi - 2 * k;
-            b_left += (self.butter_hist_b[offset_b] as f64) * self.butter_coeff_b[k]
-                - (self.butter_hist_a[offset_b] as f64) * self.butter_coeff_a[k];
-            b_right += (self.butter_hist_b[offset_b + 1] as f64) * self.butter_coeff_b[k]
-                - (self.butter_hist_a[offset_b + 1] as f64) * self.butter_coeff_a[k];
-        }
-
-        let butter_out_l = b_left as f32;
-        let butter_out_r = b_right as f32;
-        self.butter_hist_a[bi] = butter_out_l;
-        self.butter_hist_a[bi + 1] = butter_out_r;
-        bi += 2;
-        if bi == 256 {
-            self.butter_hist_a.copy_within(252..256, 0);
-            self.butter_hist_b.copy_within(252..256, 0);
-            bi = 4;
-        }
-        self.butter_i = bi;
-
-        // 3. Accumulate RMS energy for 50 ms window
-        self.cur_window_sum += (butter_out_l as f64) * (butter_out_l as f64)
-            + (butter_out_r as f64) * (butter_out_r as f64);
-        self.cur_window_samples += 1;
-
-        if self.cur_window_samples >= self.window_samples {
-            self.record_window_rms();
+        for pair in &mut self.butter_y {
+            if pair[0].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[0] = 0.0;
+            }
+            if pair[1].abs() < Self::DENORMAL_FLUSH_THRESHOLD {
+                pair[1] = 0.0;
+            }
         }
     }
 
-    fn record_window_rms(&mut self) {
-        if self.cur_window_samples == 0 {
+    /// Feeds an interleaved PCM float slice into the scanner at full speed.
+    pub fn push_slice(&mut self, pcm: &[f32], channels: usize) {
+        if pcm.is_empty() || channels == 0 {
             return;
         }
-        let rms = 10.0 * (self.cur_window_sum / (self.cur_window_samples as f64)).log10() + 90.0 - 3.0;
+        if channels == 1 {
+            self.push_mono_slice(pcm);
+            return;
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if channels == 2 {
+                // SAFETY: SSE2 is architecturally guaranteed on x86_64.
+                unsafe { self.push_stereo_slice_sse2(pcm) };
+            } else {
+                unsafe { self.push_multichannel_slice_sse2(pcm, channels) };
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.push_stereo_scalar_slice(pcm, channels);
+        }
+    }
+
+    fn push_mono_slice(&mut self, pcm: &[f32]) {
+        let b = self.yule_coeff_b;
+        let a = self.yule_coeff_a;
+        let bb = self.butter_coeff_b;
+        let ba = self.butter_coeff_a;
+
+        let mut x1 = self.yule_x[0][0];
+        let mut x2 = self.yule_x[1][0];
+        let mut x3 = self.yule_x[2][0];
+        let mut x4 = self.yule_x[3][0];
+        let mut x5 = self.yule_x[4][0];
+        let mut x6 = self.yule_x[5][0];
+        let mut x7 = self.yule_x[6][0];
+        let mut x8 = self.yule_x[7][0];
+        let mut x9 = self.yule_x[8][0];
+        let mut x10 = self.yule_x[9][0];
+
+        let mut y1 = self.yule_y[0][0];
+        let mut y2 = self.yule_y[1][0];
+        let mut y3 = self.yule_y[2][0];
+        let mut y4 = self.yule_y[3][0];
+        let mut y5 = self.yule_y[4][0];
+        let mut y6 = self.yule_y[5][0];
+        let mut y7 = self.yule_y[6][0];
+        let mut y8 = self.yule_y[7][0];
+        let mut y9 = self.yule_y[8][0];
+        let mut y10 = self.yule_y[9][0];
+
+        let mut bx1 = self.butter_x[0][0];
+        let mut bx2 = self.butter_x[1][0];
+        let mut by1 = self.butter_y[0][0];
+        let mut by2 = self.butter_y[1][0];
+
+        let mut peak = self.peak;
+        let win_target = self.window_samples;
+        let mut win_cnt = self.cur_window_samples;
+        let mut win_sum = self.cur_window_sum;
+
+        for &s in pcm {
+            let abs_s = s.abs();
+            if abs_s > peak {
+                peak = abs_s;
+            }
+            let x0 = s as f64;
+            let pre_y = (x0 * b[0] + x1 * b[1])
+                + (x2 * b[2] - y2 * a[2])
+                + (x3 * b[3] - y3 * a[3])
+                + (x4 * b[4] - y4 * a[4])
+                + (x5 * b[5] - y5 * a[5])
+                + (x6 * b[6] - y6 * a[6])
+                + (x7 * b[7] - y7 * a[7])
+                + (x8 * b[8] - y8 * a[8])
+                + (x9 * b[9] - y9 * a[9])
+                + (x10 * b[10] - y10 * a[10]);
+            let y0 = pre_y - y1 * a[1];
+
+            x10 = x9;
+            x9 = x8;
+            x8 = x7;
+            x7 = x6;
+            x6 = x5;
+            x5 = x4;
+            x4 = x3;
+            x3 = x2;
+            x2 = x1;
+            x1 = x0;
+            y10 = y9;
+            y9 = y8;
+            y8 = y7;
+            y7 = y6;
+            y6 = y5;
+            y5 = y4;
+            y4 = y3;
+            y3 = y2;
+            y2 = y1;
+            y1 = y0;
+
+            let pre_by = y0 * bb[0] + bx1 * bb[1] + bx2 * bb[2] - by2 * ba[2];
+            let by0 = pre_by - by1 * ba[1];
+            bx2 = bx1;
+            bx1 = y0;
+            by2 = by1;
+            by1 = by0;
+
+            win_sum += 2.0 * (by0 * by0);
+            win_cnt += 1;
+            if win_cnt >= win_target {
+                self.push_window_energy(win_sum, win_cnt);
+                win_sum = 1e-16;
+                win_cnt = 0;
+                if y1.abs() < Self::DENORMAL_FLUSH_THRESHOLD { y1 = 0.0; }
+                if y2.abs() < Self::DENORMAL_FLUSH_THRESHOLD { y2 = 0.0; }
+                if by1.abs() < Self::DENORMAL_FLUSH_THRESHOLD { by1 = 0.0; }
+                if by2.abs() < Self::DENORMAL_FLUSH_THRESHOLD { by2 = 0.0; }
+            }
+        }
+
+        self.peak = peak;
+        self.cur_window_samples = win_cnt;
+        self.cur_window_sum = win_sum;
+        self.yule_x = [
+            [x1, x1],
+            [x2, x2],
+            [x3, x3],
+            [x4, x4],
+            [x5, x5],
+            [x6, x6],
+            [x7, x7],
+            [x8, x8],
+            [x9, x9],
+            [x10, x10],
+        ];
+        self.yule_y = [
+            [y1, y1],
+            [y2, y2],
+            [y3, y3],
+            [y4, y4],
+            [y5, y5],
+            [y6, y6],
+            [y7, y7],
+            [y8, y8],
+            [y9, y9],
+            [y10, y10],
+        ];
+        self.butter_x = [[bx1, bx1], [bx2, bx2]];
+        self.butter_y = [[by1, by1], [by2, by2]];
+        self.flush_denormals();
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    unsafe fn push_stereo_slice_sse2(&mut self, pcm: &[f32]) {
+        self.push_multichannel_slice_sse2(pcm, 2);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    unsafe fn push_multichannel_slice_sse2(&mut self, pcm: &[f32], channels: usize) {
+        use std::arch::x86_64::*;
+
+        const BLOCK: usize = 32;
+
+        // Duplicate scalar f64 coefficients into [c, c] SSE2 pairs in L1 stack slots so mulpd
+        // folds memory loads directly without overflowing 16 architectural XMM registers.
+        let b_pairs: [__m128d; 11] = std::array::from_fn(|k| _mm_set1_pd(self.yule_coeff_b[k]));
+        let a_pairs: [__m128d; 11] = std::array::from_fn(|k| _mm_set1_pd(self.yule_coeff_a[k]));
+        let bb0 = _mm_set1_pd(self.butter_coeff_b[0]);
+        let bb1 = _mm_set1_pd(self.butter_coeff_b[1]);
+        let bb2 = _mm_set1_pd(self.butter_coeff_b[2]);
+        let ba1 = _mm_set1_pd(self.butter_coeff_a[1]);
+        let ba2 = _mm_set1_pd(self.butter_coeff_a[2]);
+
+        let mut x_buf = [_mm_setzero_pd(); 10 + BLOCK];
+        let mut y_buf = [_mm_setzero_pd(); 10 + BLOCK];
+        for k in 0..10 {
+            x_buf[k] = _mm_loadu_pd(self.yule_x[9 - k].as_ptr());
+            y_buf[k] = _mm_loadu_pd(self.yule_y[9 - k].as_ptr());
+        }
+        let mut y1 = y_buf[9];
+        let mut bx1 = _mm_loadu_pd(self.butter_x[0].as_ptr());
+        let mut bx2 = _mm_loadu_pd(self.butter_x[1].as_ptr());
+        let mut by1 = _mm_loadu_pd(self.butter_y[0].as_ptr());
+        let mut by2 = _mm_loadu_pd(self.butter_y[1].as_ptr());
+
+        let mut peak = self.peak;
+        let win_target = self.window_samples;
+        let mut win_cnt = self.cur_window_samples;
+        let mut win_sum_vec = _mm_setzero_pd();
+        let mut base_sum = self.cur_window_sum;
+
+        let total_frames = pcm.len() / channels;
+        let mut frame_idx = 0usize;
+        let mut fir = [_mm_setzero_pd(); BLOCK];
+
+        while frame_idx < total_frames {
+            let win_rem = win_target - win_cnt;
+            let n = win_rem.min(total_frames - frame_idx).min(BLOCK);
+            let src = &pcm[frame_idx * channels..(frame_idx + n) * channels];
+
+            // Pass 1: Load [L, R] -> f64x2 + peak scan (decoupled from feedback loop).
+            for (i, frame) in src.chunks_exact(channels).enumerate() {
+                let s_l = *frame.get_unchecked(0);
+                let s_r = *frame.get_unchecked(1);
+                let m = s_l.abs().max(s_r.abs());
+                if m > peak {
+                    peak = m;
+                }
+                x_buf[10 + i] = _mm_set_pd(s_r as f64, s_l as f64);
+            }
+
+            // Pass 2: Feedforward FIR across all n samples with zero loop-carried dependencies.
+            for i in 0..n {
+                let xb = &x_buf[i..i + 11];
+                let s0 = _mm_add_pd(
+                    _mm_mul_pd(xb[10], b_pairs[0]),
+                    _mm_mul_pd(xb[9], b_pairs[1]),
+                );
+                let s1 = _mm_add_pd(
+                    _mm_mul_pd(xb[8], b_pairs[2]),
+                    _mm_mul_pd(xb[7], b_pairs[3]),
+                );
+                let s2 = _mm_add_pd(
+                    _mm_mul_pd(xb[6], b_pairs[4]),
+                    _mm_mul_pd(xb[5], b_pairs[5]),
+                );
+                let s3 = _mm_add_pd(
+                    _mm_mul_pd(xb[4], b_pairs[6]),
+                    _mm_mul_pd(xb[3], b_pairs[7]),
+                );
+                let s4 = _mm_add_pd(
+                    _mm_mul_pd(xb[2], b_pairs[8]),
+                    _mm_mul_pd(xb[1], b_pairs[9]),
+                );
+                let s5 = _mm_mul_pd(xb[0], b_pairs[10]);
+                let pair_a = _mm_add_pd(_mm_add_pd(s0, s1), _mm_add_pd(s2, s3));
+                let pair_b = _mm_add_pd(s4, s5);
+                fir[i] = _mm_add_pd(pair_a, pair_b);
+            }
+
+            // Pass 3: Cascaded Yule IIR feedback + 2nd-order Butterworth + squared energy sum.
+            for i in 0..n {
+                let yb = &y_buf[i..i + 10];
+                let fb_a = _mm_add_pd(
+                    _mm_add_pd(_mm_mul_pd(yb[8], a_pairs[2]), _mm_mul_pd(yb[7], a_pairs[3])),
+                    _mm_add_pd(_mm_mul_pd(yb[6], a_pairs[4]), _mm_mul_pd(yb[5], a_pairs[5])),
+                );
+                let fb_b = _mm_add_pd(
+                    _mm_add_pd(_mm_mul_pd(yb[4], a_pairs[6]), _mm_mul_pd(yb[3], a_pairs[7])),
+                    _mm_add_pd(_mm_mul_pd(yb[2], a_pairs[8]), _mm_mul_pd(yb[1], a_pairs[9])),
+                );
+                let fb_c = _mm_mul_pd(yb[0], a_pairs[10]);
+                let fb_rest = _mm_add_pd(_mm_add_pd(fb_a, fb_b), fb_c);
+                let pre_y = _mm_sub_pd(fir[i], fb_rest);
+                let y0 = _mm_sub_pd(pre_y, _mm_mul_pd(y1, a_pairs[1]));
+                y_buf[10 + i] = y0;
+                y1 = y0;
+
+                let b_pre = _mm_sub_pd(
+                    _mm_add_pd(
+                        _mm_add_pd(_mm_mul_pd(y0, bb0), _mm_mul_pd(bx1, bb1)),
+                        _mm_mul_pd(bx2, bb2),
+                    ),
+                    _mm_mul_pd(by2, ba2),
+                );
+                let by0 = _mm_sub_pd(b_pre, _mm_mul_pd(by1, ba1));
+                bx2 = bx1;
+                bx1 = y0;
+                by2 = by1;
+                by1 = by0;
+
+                win_sum_vec = _mm_add_pd(win_sum_vec, _mm_mul_pd(by0, by0));
+            }
+
+            x_buf.copy_within(n..10 + n, 0);
+            y_buf.copy_within(n..10 + n, 0);
+
+            frame_idx += n;
+            win_cnt += n;
+
+            if win_cnt >= win_target {
+                let mut tmp = [0.0f64; 2];
+                _mm_storeu_pd(tmp.as_mut_ptr(), win_sum_vec);
+                let total_sum = base_sum + tmp[0] + tmp[1];
+                self.push_window_energy(total_sum, win_cnt);
+                win_sum_vec = _mm_setzero_pd();
+                base_sum = 1e-16;
+                win_cnt = 0;
+
+                let mut dirty = false;
+                for yslot in &mut y_buf[..10] {
+                    let mut p = [0.0f64; 2];
+                    _mm_storeu_pd(p.as_mut_ptr(), *yslot);
+                    if p[0].abs() < Self::DENORMAL_FLUSH_THRESHOLD { p[0] = 0.0; dirty = true; }
+                    if p[1].abs() < Self::DENORMAL_FLUSH_THRESHOLD { p[1] = 0.0; dirty = true; }
+                    if dirty {
+                        *yslot = _mm_loadu_pd(p.as_ptr());
+                    }
+                }
+                y1 = y_buf[9];
+
+                let mut bp = [[0.0f64; 2]; 2];
+                _mm_storeu_pd(bp[0].as_mut_ptr(), by1);
+                _mm_storeu_pd(bp[1].as_mut_ptr(), by2);
+                let mut b_dirty = false;
+                for p in &mut bp {
+                    if p[0].abs() < Self::DENORMAL_FLUSH_THRESHOLD { p[0] = 0.0; b_dirty = true; }
+                    if p[1].abs() < Self::DENORMAL_FLUSH_THRESHOLD { p[1] = 0.0; b_dirty = true; }
+                }
+                if b_dirty {
+                    by1 = _mm_loadu_pd(bp[0].as_ptr());
+                    by2 = _mm_loadu_pd(bp[1].as_ptr());
+                }
+            }
+        }
+
+        let mut rem_tmp = [0.0f64; 2];
+        _mm_storeu_pd(rem_tmp.as_mut_ptr(), win_sum_vec);
+        self.peak = peak;
+        self.cur_window_samples = win_cnt;
+        self.cur_window_sum = base_sum + rem_tmp[0] + rem_tmp[1];
+
+        for k in 0..10 {
+            _mm_storeu_pd(self.yule_x[9 - k].as_mut_ptr(), x_buf[k]);
+            _mm_storeu_pd(self.yule_y[9 - k].as_mut_ptr(), y_buf[k]);
+        }
+        _mm_storeu_pd(self.butter_x[0].as_mut_ptr(), bx1);
+        _mm_storeu_pd(self.butter_x[1].as_mut_ptr(), bx2);
+        _mm_storeu_pd(self.butter_y[0].as_mut_ptr(), by1);
+        _mm_storeu_pd(self.butter_y[1].as_mut_ptr(), by2);
+        self.flush_denormals();
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    fn push_stereo_scalar_slice(&mut self, pcm: &[f32], channels: usize) {
+        let b = self.yule_coeff_b;
+        let a = self.yule_coeff_a;
+        let bb = self.butter_coeff_b;
+        let ba = self.butter_coeff_a;
+
+        let [mut x1, mut x2, mut x3, mut x4, mut x5, mut x6, mut x7, mut x8, mut x9, mut x10] =
+            self.yule_x;
+        let [mut y1, mut y2, mut y3, mut y4, mut y5, mut y6, mut y7, mut y8, mut y9, mut y10] =
+            self.yule_y;
+        let [mut bx1, mut bx2] = self.butter_x;
+        let [mut by1, mut by2] = self.butter_y;
+
+        let mut peak = self.peak;
+        let win_target = self.window_samples;
+        let mut win_cnt = self.cur_window_samples;
+        let mut win_sum = self.cur_window_sum;
+
+        for frame in pcm.chunks_exact(channels) {
+            let s_l = frame[0];
+            let s_r = frame[1];
+            let max_s = s_l.abs().max(s_r.abs());
+            if max_s > peak {
+                peak = max_s;
+            }
+            let x0 = [s_l as f64, s_r as f64];
+            let y0 = [
+                (x0[0] * b[0] + x1[0] * b[1])
+                    + (x2[0] * b[2] - y2[0] * a[2])
+                    + (x3[0] * b[3] - y3[0] * a[3])
+                    + (x4[0] * b[4] - y4[0] * a[4])
+                    + (x5[0] * b[5] - y5[0] * a[5])
+                    + (x6[0] * b[6] - y6[0] * a[6])
+                    + (x7[0] * b[7] - y7[0] * a[7])
+                    + (x8[0] * b[8] - y8[0] * a[8])
+                    + (x9[0] * b[9] - y9[0] * a[9])
+                    + (x10[0] * b[10] - y10[0] * a[10])
+                    - y1[0] * a[1],
+                (x0[1] * b[0] + x1[1] * b[1])
+                    + (x2[1] * b[2] - y2[1] * a[2])
+                    + (x3[1] * b[3] - y3[1] * a[3])
+                    + (x4[1] * b[4] - y4[1] * a[4])
+                    + (x5[1] * b[5] - y5[1] * a[5])
+                    + (x6[1] * b[6] - y6[1] * a[6])
+                    + (x7[1] * b[7] - y7[1] * a[7])
+                    + (x8[1] * b[8] - y8[1] * a[8])
+                    + (x9[1] * b[9] - y9[1] * a[9])
+                    + (x10[1] * b[10] - y10[1] * a[10])
+                    - y1[1] * a[1],
+            ];
+            x10 = x9; x9 = x8; x8 = x7; x7 = x6; x6 = x5;
+            x5 = x4; x4 = x3; x3 = x2; x2 = x1; x1 = x0;
+            y10 = y9; y9 = y8; y8 = y7; y7 = y6; y6 = y5;
+            y5 = y4; y4 = y3; y3 = y2; y2 = y1; y1 = y0;
+
+            let by0 = [
+                y0[0] * bb[0] + bx1[0] * bb[1] + bx2[0] * bb[2] - by2[0] * ba[2] - by1[0] * ba[1],
+                y0[1] * bb[0] + bx1[1] * bb[1] + bx2[1] * bb[2] - by2[1] * ba[2] - by1[1] * ba[1],
+            ];
+            bx2 = bx1; bx1 = y0;
+            by2 = by1; by1 = by0;
+
+            win_sum += by0[0] * by0[0] + by0[1] * by0[1];
+            win_cnt += 1;
+            if win_cnt >= win_target {
+                self.push_window_energy(win_sum, win_cnt);
+                win_sum = 1e-16;
+                win_cnt = 0;
+            }
+        }
+
+        self.peak = peak;
+        self.cur_window_samples = win_cnt;
+        self.cur_window_sum = win_sum;
+        self.yule_x = [x1, x2, x3, x4, x5, x6, x7, x8, x9, x10];
+        self.yule_y = [y1, y2, y3, y4, y5, y6, y7, y8, y9, y10];
+        self.butter_x = [bx1, bx2];
+        self.butter_y = [by1, by2];
+        self.flush_denormals();
+    }
+
+    /// Feeds an un-clamped stereo frame `(left, right)` into the scanner.
+    #[inline]
+    pub fn push_stereo_frame(&mut self, s_l: f32, s_r: f32) {
+        let pair = [s_l, s_r];
+        self.push_slice(&pair, 2);
+    }
+
+    #[inline]
+    fn push_window_energy(&mut self, window_sum: f64, window_samples: usize) {
+        if window_samples == 0 {
+            return;
+        }
+        let rms = 10.0 * (window_sum / (window_samples as f64)).log10() + 90.0 - 3.0;
         let level = (rms * 100.0).floor() as i64;
         let idx = level.clamp(0, (HISTOGRAM_SLOTS - 1) as i64) as usize;
         self.histogram[idx] += 1;
-        self.cur_window_sum = 1e-16;
-        self.cur_window_samples = 0;
     }
 
-    /// Computes the final (gain_db, peak) tuple according to ReplayGain 1.0 (95th percentile).
+    /// Computes the final `(gain_db, peak)` tuple according to ReplayGain 1.0 (95th percentile).
     pub fn finalize(mut self) -> (f32, f32) {
         if self.cur_window_samples > 0 {
-            self.record_window_rms();
+            self.push_window_energy(self.cur_window_sum, self.cur_window_samples);
         }
 
         let total_windows: u32 = self.histogram.iter().sum();

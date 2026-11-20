@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'types.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `emit_track_transition`, `encode_opt_bool`, `notify_device_watcher`, `parse_recording_format`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
+// These functions are ignored because they are not marked as `pub`: `build_custom_source_factory`, `emit_batch`, `emit_event`, `emit_queue_and_index`, `emit_queue`, `emit_snapshot_tick`, `emit_track_transition_core`, `encode_opt_bool`, `notify_device_watcher`, `parse_recording_format`, `push_filtered_events`, `reset_and_emit_batch`, `reset`, `should_emit_i64`, `should_emit_opt_bool`, `should_emit_u64`, `should_emit`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AtomicTelemetryFilter`, `ComplexTelemetryCache`, `EventSinkState`, `FrbTapChunkSink`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `drop`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `default`, `send_chunk`

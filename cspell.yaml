@@ -33,6 +33,7 @@ words:
   - asssume
   - ASYNCIFY
   - audinowho
+  - audioadapter
   - audioBitrate
   - autoadd
   - AUTOCONVERTPCM
@@ -281,6 +282,7 @@ words:
   - Gargaj
   - GCONST
   - Gesemann
+  - getrandom
   - GHIJKL
   - glassbox
   - glog
@@ -603,6 +605,7 @@ words:
   - rtrb
   - rustfft
   - rustflags
+  - rustls
   - RUSTUP
   - safelisted
   - Sandboxed
@@ -627,6 +630,7 @@ words:
   - shuf
   - sidechain
   - SIGSEGV
+  - simd
   - Simd
   - sinc
   - síncronas
@@ -656,6 +660,7 @@ words:
   - SPSC
   - srate
   - SROUND
+  - SSND
   - staticlib
   - stbv
   - STDLIB
@@ -703,6 +708,7 @@ words:
   - threesize
   - thresholding
   - throughs
+  - timecode
   - timestamping
   - timestretch
   - Tishina

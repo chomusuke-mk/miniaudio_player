@@ -27,8 +27,8 @@ pub struct FileByteSource {
 }
 
 impl FileByteSource {
-    /// Read buffer capacity in bytes (64 KB).
-    pub const BUFFER_CAPACITY: usize = 64 * 1024;
+    /// Read buffer capacity in bytes (128 KB).
+    pub const BUFFER_CAPACITY: usize = 128 * 1024;
 
     /// Wraps an open `File` handle into a `FileByteSource`.
     pub fn new(file: File) -> IoResult<Self> {
@@ -88,8 +88,16 @@ impl Seek for FileByteSource {
             ));
         }
         let target_u64 = target_rel as u64;
-        let abs_target = self.base_offset.saturating_add(target_u64);
-        self.reader.seek(SeekFrom::Start(abs_target))?;
+        if target_u64 == self.rel_pos {
+            return Ok(target_u64);
+        }
+        let delta = target_rel - (self.rel_pos as i128);
+        if let Ok(rel_i64) = i64::try_from(delta) {
+            self.reader.seek_relative(rel_i64)?;
+        } else {
+            let abs_target = self.base_offset.saturating_add(target_u64);
+            self.reader.seek(SeekFrom::Start(abs_target))?;
+        }
         self.rel_pos = target_u64;
         Ok(target_u64)
     }

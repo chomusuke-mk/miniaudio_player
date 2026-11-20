@@ -4,6 +4,7 @@ pub mod analysis;
 pub mod biquad;
 pub mod chain;
 pub mod channel_matrix;
+pub mod chromaprint_fast;
 pub mod crossfeed;
 pub mod ducking;
 pub mod equalizer;

@@ -118,44 +118,81 @@ fn bessel_i0(x: f64) -> f64 {
     sum
 }
 
+struct DsdSharedLuts {
+    coeffs: Vec<f32>,
+    /// Forward chronological byte LUT: `rev_lut[k]` weights the `k`-th oldest byte (`0..num_bytes`).
+    rev_byte_lut: Vec<[f32; 256]>,
+}
+
+fn shared_dsd_luts(decimation_factor: usize) -> std::sync::Arc<DsdSharedLuts> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<usize, Arc<DsdSharedLuts>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(found) = guard.get(&decimation_factor) {
+            return Arc::clone(found);
+        }
+    }
+
+    let coeffs = DsdFirDecimator::design_filter(decimation_factor);
+    let rev_byte_lut = if decimation_factor.is_multiple_of(8) && coeffs.len().is_multiple_of(8) {
+        let fwd = DsdFirDecimator::build_byte_lut(&coeffs);
+        // Reverse table order so forward sequential slice `work[i*step .. i*step + num_bytes]`
+        // matches oldest-to-newest FIR weights without backward indexing or branch splitting.
+        fwd.into_iter().rev().collect()
+    } else {
+        Vec::new()
+    };
+    let built = Arc::new(DsdSharedLuts {
+        coeffs,
+        rev_byte_lut,
+    });
+    if let Ok(mut guard) = cache.lock() {
+        let entry = guard
+            .entry(decimation_factor)
+            .or_insert_with(|| Arc::clone(&built));
+        Arc::clone(entry)
+    } else {
+        built
+    }
+}
+
 /// High-rejection Kaiser-windowed FIR decimator for 1-bit PDM (DSD64/128/256) streams.
 ///
-/// Uses a precomputed 8-bit byte lookup table when the decimation factor is a multiple of 8
+/// Uses a cached chronological 8-bit byte lookup table when the decimation factor is a multiple of 8
 /// (covering DSD64=32, DSD128=64, DSD256=128) so 1024+ tap filtering runs via L2-resident
-/// table adds without bit-by-bit unpacking.
+/// 4-way unrolled table adds with zero per-block allocations.
 struct DsdFirDecimator {
     decimation_factor: usize,
-    coeffs: Vec<f32>,
-    byte_lut: Vec<[f32; 256]>,
+    luts: std::sync::Arc<DsdSharedLuts>,
     hist_bytes: Vec<Vec<u8>>,
     hist_bits: Vec<Vec<f32>>,
+    work_bytes: Vec<u8>,
 }
 
 impl DsdFirDecimator {
     fn new(decimation_factor: usize, channels: usize) -> Self {
-        let coeffs = Self::design_filter(decimation_factor);
-        let num_bytes = coeffs.len() / 8;
-        let byte_lut = if decimation_factor.is_multiple_of(8) && coeffs.len().is_multiple_of(8) {
-            Self::build_byte_lut(&coeffs)
-        } else {
-            Vec::new()
-        };
-        let hist_bytes = if byte_lut.is_empty() {
-            Vec::new()
-        } else {
+        let luts = shared_dsd_luts(decimation_factor);
+        let num_bytes = luts.coeffs.len() / 8;
+        let has_lut = !luts.rev_byte_lut.is_empty();
+        let hist_bytes = if has_lut {
             vec![vec![DSF_SILENCE_BYTE; num_bytes]; channels]
+        } else {
+            Vec::new()
         };
-        let hist_bits = if byte_lut.is_empty() {
-            vec![vec![0.0f32; coeffs.len()]; channels]
+        let hist_bits = if !has_lut {
+            vec![vec![0.0f32; luts.coeffs.len()]; channels]
         } else {
             Vec::new()
         };
         Self {
             decimation_factor,
-            coeffs,
-            byte_lut,
+            luts,
             hist_bytes,
             hist_bits,
+            work_bytes: Vec::with_capacity(num_bytes + 8192),
         }
     }
 
@@ -229,7 +266,7 @@ impl DsdFirDecimator {
         bspc: usize,
         out_pcm: &mut Vec<f32>,
     ) -> usize {
-        if !self.byte_lut.is_empty() {
+        if !self.luts.rev_byte_lut.is_empty() {
             return self.process_block_lut(block_bytes, channels, bspc, out_pcm);
         }
         self.process_block_bits(block_bytes, channels, bspc, out_pcm)
@@ -244,41 +281,52 @@ impl DsdFirDecimator {
     ) -> usize {
         let bytes_per_step = self.decimation_factor / 8;
         let pcm_samples_per_block = bspc / bytes_per_step;
-        let num_bytes = self.byte_lut.len();
-        out_pcm.reserve(pcm_samples_per_block * channels);
+        let rev_lut = &self.luts.rev_byte_lut;
+        let num_bytes = rev_lut.len();
+        let base_out = out_pcm.len();
+        out_pcm.resize(base_out + pcm_samples_per_block * channels, 0.0);
+        let out_slice = &mut out_pcm[base_out..];
 
-        let mut decimated_channels = vec![vec![0.0f32; pcm_samples_per_block]; channels];
+        let work_len = num_bytes + bspc;
+        self.work_bytes.clear();
+        self.work_bytes.reserve(work_len);
+
         for ch in 0..channels {
             let ch_bytes = &block_bytes[ch * bspc..(ch + 1) * bspc];
             let hist = &mut self.hist_bytes[ch];
-            let dec_out = &mut decimated_channels[ch];
+            self.work_bytes.clear();
+            self.work_bytes.extend_from_slice(hist);
+            self.work_bytes.extend_from_slice(ch_bytes);
+            let work = &self.work_bytes[..work_len];
 
-            for (i, dec_val) in dec_out.iter_mut().enumerate() {
-                let base_byte = i * bytes_per_step;
-                let split_b = base_byte.min(num_bytes);
-                let mut sum = 0.0f32;
-                for b in 0..split_b {
-                    sum += self.byte_lut[b][ch_bytes[base_byte - 1 - b] as usize];
+            for i in 0..pcm_samples_per_block {
+                let start = i * bytes_per_step;
+                let win = &work[start..start + num_bytes];
+                let mut acc0 = 0.0f32;
+                let mut acc1 = 0.0f32;
+                let mut acc2 = 0.0f32;
+                let mut acc3 = 0.0f32;
+                let mut lut_chunks = rev_lut.chunks_exact(4);
+                let mut win_chunks = win.chunks_exact(4);
+                for (lc, wc) in (&mut lut_chunks).zip(&mut win_chunks) {
+                    acc0 += lc[0][wc[0] as usize];
+                    acc1 += lc[1][wc[1] as usize];
+                    acc2 += lc[2][wc[2] as usize];
+                    acc3 += lc[3][wc[3] as usize];
                 }
-                for b in split_b..num_bytes {
-                    sum += self.byte_lut[b][hist[num_bytes - 1 - (b - base_byte)] as usize];
+                for (l, &w) in lut_chunks
+                    .remainder()
+                    .iter()
+                    .zip(win_chunks.remainder().iter())
+                {
+                    acc0 += l[w as usize];
                 }
-                *dec_val = sum;
+                out_slice[i * channels + ch] = (acc0 + acc1) + (acc2 + acc3);
             }
 
-            if bspc >= num_bytes {
-                hist.copy_from_slice(&ch_bytes[bspc - num_bytes..]);
-            } else if bspc > 0 {
-                hist.copy_within(bspc..num_bytes, 0);
-                hist[num_bytes - bspc..].copy_from_slice(ch_bytes);
-            }
+            hist.copy_from_slice(&work[work_len - num_bytes..]);
         }
 
-        for i in 0..pcm_samples_per_block {
-            for ch_buf in &decimated_channels {
-                out_pcm.push(ch_buf[i]);
-            }
-        }
         pcm_samples_per_block
     }
 
@@ -292,11 +340,12 @@ impl DsdFirDecimator {
         let raw_samples_per_block = bspc * 8;
         let m = self.decimation_factor;
         let pcm_samples_per_block = raw_samples_per_block / m;
-        let fir_len = self.coeffs.len();
+        let coeffs = &self.luts.coeffs;
+        let fir_len = coeffs.len();
+        let base_out = out_pcm.len();
+        out_pcm.resize(base_out + pcm_samples_per_block * channels, 0.0);
+        let out_slice = &mut out_pcm[base_out..];
 
-        out_pcm.reserve(pcm_samples_per_block * channels);
-
-        let mut decimated_channels = vec![vec![0.0f32; pcm_samples_per_block]; channels];
         let mut raw_signal = vec![0.0f32; raw_samples_per_block];
 
         for ch in 0..channels {
@@ -304,20 +353,19 @@ impl DsdFirDecimator {
             Self::unpack_pdm_bits(ch_bytes, &mut raw_signal);
 
             let hist = &mut self.hist_bits[ch];
-            let dec_out = &mut decimated_channels[ch];
 
-            for (i, dec_val) in dec_out.iter_mut().enumerate() {
+            for i in 0..pcm_samples_per_block {
                 let sample_idx = i * m;
                 let mut sum = 0.0f32;
-                for k in 0..fir_len {
+                for (k, &c) in coeffs.iter().enumerate() {
                     let sig_val = if sample_idx >= k {
                         raw_signal[sample_idx - k]
                     } else {
                         hist[fir_len - (k - sample_idx)]
                     };
-                    sum += sig_val * self.coeffs[k];
+                    sum += sig_val * c;
                 }
-                *dec_val = sum;
+                out_slice[i * channels + ch] = sum;
             }
 
             if raw_samples_per_block >= fir_len {
@@ -325,12 +373,6 @@ impl DsdFirDecimator {
             } else if raw_samples_per_block > 0 {
                 hist.copy_within(raw_samples_per_block..fir_len, 0);
                 hist[fir_len - raw_samples_per_block..].copy_from_slice(&raw_signal);
-            }
-        }
-
-        for i in 0..pcm_samples_per_block {
-            for ch_buf in &decimated_channels {
-                out_pcm.push(ch_buf[i]);
             }
         }
 
@@ -457,7 +499,14 @@ impl DsfReader {
     /// Decodes and decimates the next block of DSD frames into normalized float PCM.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
+        self.decode_next_frame_append(out_pcm)
+    }
 
+    /// Decodes and decimates the next block of DSD frames, appending directly to `out_pcm`.
+    pub fn decode_next_frame_append(
+        &mut self,
+        out_pcm: &mut Vec<f32>,
+    ) -> Result<bool, SymphoniaError> {
         if self.current_sample_pos >= self.total_samples_per_channel {
             return Ok(false);
         }
@@ -486,6 +535,7 @@ impl DsfReader {
             }
         }
 
+        let base_out = out_pcm.len();
         let produced = self.decimator.process_block(
             &self.block_buffer,
             self.channels as usize,
@@ -497,10 +547,10 @@ impl DsfReader {
             .saturating_sub(self.current_sample_pos) as usize;
         let valid_frames = produced.min(remaining_frames);
         if valid_frames == 0 {
-            out_pcm.clear();
+            out_pcm.truncate(base_out);
             return Ok(false);
         }
-        out_pcm.truncate(valid_frames * self.channels as usize);
+        out_pcm.truncate(base_out + valid_frames * self.channels as usize);
         self.current_sample_pos += valid_frames as u64;
         Ok(true)
     }

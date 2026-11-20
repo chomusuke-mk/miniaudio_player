@@ -2154,6 +2154,16 @@ impl StreamSession {
         initial_data: &[u8],
         tail_data: Option<(&[u8], Option<u64>)>,
     ) -> crate::decoder::classifier::BoundaryInfo {
+        self.ingest_classified_with_options(initial_data, tail_data, false)
+    }
+
+    /// Variant of [`Self::ingest_classified`] allowing offline analysis decks to skip populating `Body` RAM.
+    pub fn ingest_classified_with_options(
+        &self,
+        initial_data: &[u8],
+        tail_data: Option<(&[u8], Option<u64>)>,
+        skip_body_payload: bool,
+    ) -> crate::decoder::classifier::BoundaryInfo {
         use crate::decoder::classifier::{ClassifiedSlice, StreamClassifier};
 
         let total_size_i64 = self.total_size.map(|s| s as i64).unwrap_or(-1);
@@ -2189,8 +2199,10 @@ impl StreamSession {
                     self.head.set_linear_bytes(head_bytes);
                 }
                 ClassifiedSlice::AudioPayload(audio_bytes) => {
-                    let safe_start = boundary.audio_start.max(0) as u64;
-                    let _ = self.write_at(safe_start, audio_bytes);
+                    if !skip_body_payload {
+                        let safe_start = boundary.audio_start.max(0) as u64;
+                        let _ = self.write_at(safe_start, audio_bytes);
+                    }
                 }
                 ClassifiedSlice::MetadataChunk { offset, data } => {
                     let _ = self.metadata.commit_chunk(offset, data);
