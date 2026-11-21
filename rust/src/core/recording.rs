@@ -6,7 +6,9 @@
 //! - Automatic RIFF header back-patching with sample count on completion.
 //! - Offline bounce rendering at maximum CPU throughput.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs::OpenOptions;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -101,41 +103,89 @@ fn percent_decode_utf8(input: &str) -> Result<String, String> {
         .map_err(|_| format!("Non-UTF-8 characters in file:// URI '{}' (code: -2)", input))
 }
 
-/// Validates and normalizes a filesystem path or `file://` URI for native disk recording.
+/// Validates and normalizes a filesystem path, `file://` URI, or Web OPFS path for recording.
 pub fn normalize_recording_path(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("Recording path cannot be empty (code: -2)".to_string());
     }
 
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("file://") {
-        return resolve_file_uri_to_local_path(trimmed);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let parsed = crate::opfs::sanitize_opfs_recording_path(trimmed)
+            .map_err(|(code, msg)| format!("{} (code: {})", msg, code))?;
+        if parsed.had_opfs_prefix {
+            crate::map_log!(
+                3,
+                "The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
+                 absolute paths resolve automatically to OPFS ('{}')",
+                trimmed,
+                parsed.canonical
+            );
+        }
+        Ok(parsed.canonical)
     }
 
-    if let Some(colon_idx) = trimmed.find("://") {
-        let scheme = &trimmed[..colon_idx];
-        if !scheme.is_empty()
-            && scheme
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("file://") {
+            return resolve_file_uri_to_local_path(trimmed);
+        }
+        if crate::opfs::extract_uri_scheme(trimmed)
+            .is_some_and(|s| s.eq_ignore_ascii_case("opfs"))
         {
             return Err(format!(
-                "Unsupported URI scheme '{}://' for recording path '{}' (code: -9)",
-                scheme, raw
+                "URI scheme 'opfs://' ('{}') is only supported on Web (code: -10)",
+                raw
             ));
         }
-    }
-    if lower.starts_with("package:") {
-        return Err(format!(
-            "Unsupported URI scheme 'package:' for recording path '{}' (code: -9)",
-            raw
-        ));
-    }
 
-    Ok(raw.to_string())
+        if let Some(colon_idx) = trimmed.find("://") {
+            let scheme = &trimmed[..colon_idx];
+            if !scheme.is_empty()
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+            {
+                return Err(format!(
+                    "Unsupported URI scheme '{}://' for recording path '{}' (code: -9)",
+                    scheme, raw
+                ));
+            }
+        }
+        if lower.starts_with("package:") {
+            return Err(format!(
+                "Unsupported URI scheme 'package:' for recording path '{}' (code: -9)",
+                raw
+            ));
+        }
+
+        Ok(raw.to_string())
+    }
 }
 
+/// Sink trait unifying local OS files, Android FDs, and Web OPFS handles for [`LiveRecorder`].
+pub trait RecordingSink: Write + Seek + Send + 'static {
+    fn finalize_sink(self) -> std::io::Result<()>;
+}
+
+impl RecordingSink for File {
+    #[inline]
+    fn finalize_sink(self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl RecordingSink for crate::opfs::OpfsFileWriter {
+    #[inline]
+    fn finalize_sink(self) -> std::io::Result<()> {
+        self.finish_and_close()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn map_open_io_error(path: &str, err: std::io::Error) -> String {
     let code = match err.kind() {
         std::io::ErrorKind::PermissionDenied => -10,
@@ -901,6 +951,7 @@ impl LiveRecorder {
         lock_unpoisoned(&self.async_error).clone()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_recording_file(raw_path: &str) -> Result<File, String> {
         let local_path = normalize_recording_path(raw_path)?;
         OpenOptions::new()
@@ -911,19 +962,45 @@ impl LiveRecorder {
             .map_err(|e| map_open_io_error(&local_path, e))
     }
 
-    /// Opens the output file, allocates the SPSC ring buffer, and spawns the background
-    /// disk writer thread outside any real-time or engine-clock critical section.
+    /// Opens the output file (or OPFS handle on Web), allocates the SPSC ring buffer, and
+    /// spawns the background disk writer thread outside any real-time critical section.
     pub fn prepare_start(
         sample_rate: u32,
         channels: usize,
         format: impl Into<RecordingEncoding>,
         path: &str,
     ) -> Result<(Self, rtrb::Producer<f32>), String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let canonical = normalize_recording_path(path)?;
+            Self::prepare_start_opfs(sample_rate, channels, format, &canonical)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let sr = sample_rate.max(8000);
+            let ch = channels.max(1);
+            let (prod, cons) = rtrb::RingBuffer::new(sr as usize * ch * 4);
+            let mut rec = Self::new(sr, ch, format);
+            rec.start(path, cons)?;
+            Ok((rec, prod))
+        }
+    }
+
+    /// Opens a writable Web OPFS handle via `wasm_opfs`, writes the initial header, and
+    /// spawns the background `AudioStreamWriter<OpfsFileWriter>` thread.
+    #[cfg(target_arch = "wasm32")]
+    pub fn prepare_start_opfs(
+        sample_rate: u32,
+        channels: usize,
+        format: impl Into<RecordingEncoding>,
+        canonical_opfs_path: &str,
+    ) -> Result<(Self, rtrb::Producer<f32>), String> {
+        let writer = crate::opfs::OpfsFileWriter::open(canonical_opfs_path)?;
         let sr = sample_rate.max(8000);
         let ch = channels.max(1);
         let (prod, cons) = rtrb::RingBuffer::new(sr as usize * ch * 4);
         let mut rec = Self::new(sr, ch, format);
-        rec.start(path, cons)?;
+        rec.start_with_writer(writer, cons)?;
         Ok((rec, prod))
     }
 
@@ -960,7 +1037,7 @@ impl LiveRecorder {
         let ch = channels.max(1);
         let (prod, cons) = rtrb::RingBuffer::new(sr as usize * ch * 4);
         let mut rec = Self::new(sr, ch, format);
-        rec.start_with_file(file, cons)?;
+        rec.start_with_writer(file, cons)?;
         Ok((rec, prod))
     }
 
@@ -969,13 +1046,22 @@ impl LiveRecorder {
         if self.is_recording() || self.writer_thread.is_some() {
             return Err("Recording session is already active (code: -6)".to_string());
         }
-        let file = Self::open_recording_file(path)?;
-        self.start_with_file(file, consumer)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let canonical = normalize_recording_path(path)?;
+            let writer = crate::opfs::OpfsFileWriter::open(&canonical)?;
+            self.start_with_writer(writer, consumer)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let file = Self::open_recording_file(path)?;
+            self.start_with_writer(file, consumer)
+        }
     }
 
-    fn start_with_file(
+    fn start_with_writer<W: RecordingSink>(
         &mut self,
-        file: File,
+        writer_sink: W,
         mut consumer: rtrb::Consumer<f32>,
     ) -> Result<(), String> {
         if self.is_recording() || self.writer_thread.is_some() {
@@ -986,7 +1072,7 @@ impl LiveRecorder {
         let ch = self.channels as u16;
         let enc = self.encoding;
 
-        let buf_writer = BufWriter::with_capacity(65536, file);
+        let buf_writer = BufWriter::with_capacity(65536, writer_sink);
         let mut stream_writer = AudioStreamWriter::new(buf_writer, sr, ch, enc)
             .map_err(|e| format!("Failed to initialize recording container: {} (code: -1)", e))?;
 
@@ -1021,7 +1107,11 @@ impl LiveRecorder {
 
                 let finalize_res = stream_writer
                     .finish()
-                    .map(|(_w, total)| total)
+                    .and_then(|(buf_w, total)| {
+                        let sink = buf_w.into_inner().map_err(|e| e.into_error())?;
+                        sink.finalize_sink()?;
+                        Ok(total)
+                    })
                     .map_err(|e| format!("Failed to finalize recording container: {} (code: -1)", e));
 
                 is_rec.store(false, Ordering::Release);

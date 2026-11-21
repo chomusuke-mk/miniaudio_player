@@ -1,7 +1,37 @@
+import 'dart:convert' show utf8;
 import 'dart:typed_data';
 
 import '../api/player_exception.dart';
 import '../loader/custom_byte_provider.dart';
+
+/// Canonical parse outcome for Web OPFS paths (without retaining `opfs://` or leading `/`).
+class OpfsPathParseResult {
+  /// Canonical OPFS path (e.g. `'temporal/sistema/test/1.wav'` or `'1.wav'`), or `null` on error.
+  final String? canonicalPath;
+
+  /// Whether an optional `opfs://` prefix was supplied and stripped.
+  final bool hadOpfsPrefix;
+
+  /// Optional [MapResult] error code (`null` on success).
+  final int? errorCode;
+
+  /// Human-readable error message (`null` on success).
+  final String? errorMessage;
+
+  const OpfsPathParseResult.ok(
+    this.canonicalPath, {
+    required this.hadOpfsPrefix,
+  })  : errorCode = null,
+        errorMessage = null;
+
+  const OpfsPathParseResult.err(
+    this.errorCode,
+    this.errorMessage, {
+    this.hadOpfsPrefix = false,
+  }) : canonicalPath = null;
+
+  bool get hasError => errorCode != null;
+}
 
 /// Represents the synchronous Dart-side normalization of an [AudioSource] input.
 class NormalizedAudioSource {
@@ -19,11 +49,15 @@ class NormalizedAudioSource {
   /// Optional descriptive message paired with [directErrorCode].
   final String? directErrorMessage;
 
+  /// Whether a redundant Web `opfs://` prefix was stripped during normalization.
+  final bool strippedOpfsPrefix;
+
   const NormalizedAudioSource({
     required this.normalizedSource,
     required this.resolveInDart,
     this.directErrorCode,
     this.directErrorMessage,
+    this.strippedOpfsPrefix = false,
   });
 
   bool get hasError => directErrorCode != null;
@@ -229,6 +263,312 @@ String resolveFileUriToPath(String rawUri, {required bool isWindows}) {
   return filePath;
 }
 
+const Set<String> _windowsReservedDeviceNames = <String>{
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'COM1',
+  'COM2',
+  'COM3',
+  'COM4',
+  'COM5',
+  'COM6',
+  'COM7',
+  'COM8',
+  'COM9',
+  'LPT1',
+  'LPT2',
+  'LPT3',
+  'LPT4',
+  'LPT5',
+  'LPT6',
+  'LPT7',
+  'LPT8',
+  'LPT9',
+};
+
+const int _opfsMaxSegmentUtf8Bytes = 255;
+
+bool _isOpfsForbiddenCharCode(int c) {
+  if (c < 0x20 || c == 0x7F) return true;
+  return c == 0x3C /* '<' */ ||
+      c == 0x3E /* '>' */ ||
+      c == 0x3A /* ':' */ ||
+      c == 0x22 /* '"' */ ||
+      c == 0x7C /* '|' */ ||
+      c == 0x3F /* '?' */ ||
+      c == 0x2A /* '*' */ ||
+      c == 0x5C /* '\\' */;
+}
+
+bool _isWindowsReservedSegment(String segment) {
+  final dotIdx = segment.indexOf('.');
+  final stem = (dotIdx >= 0 ? segment.substring(0, dotIdx) : segment)
+      .toUpperCase();
+  return _windowsReservedDeviceNames.contains(stem);
+}
+
+int _runeUtf8ByteLength(int rune) {
+  if (rune <= 0x7F) return 1;
+  if (rune <= 0x7FF) return 2;
+  if (rune <= 0xFFFF) return 3;
+  return 4;
+}
+
+String _truncateUtf8ToBytes(String text, int maxBytes) {
+  if (maxBytes <= 0 || text.isEmpty) return '';
+  final sb = StringBuffer();
+  var used = 0;
+  for (final rune in text.runes) {
+    final w = _runeUtf8ByteLength(rune);
+    if (used + w > maxBytes) break;
+    sb.writeCharCode(rune);
+    used += w;
+  }
+  return sb.toString();
+}
+
+String _sanitizeOpfsSegment(String rawSegment, {required bool isLeaf}) {
+  final sb = StringBuffer();
+  for (final codeUnit in rawSegment.codeUnits) {
+    if (_isOpfsForbiddenCharCode(codeUnit)) {
+      sb.write('_');
+    } else {
+      sb.writeCharCode(codeUnit);
+    }
+  }
+  var cleaned = sb.toString().replaceFirst(RegExp(r'[. ]+$'), '');
+  if (cleaned.isEmpty) return '';
+
+  if (_isWindowsReservedSegment(cleaned)) {
+    cleaned = '_$cleaned';
+  }
+
+  if (utf8.encode(cleaned).length <= _opfsMaxSegmentUtf8Bytes) {
+    return cleaned;
+  }
+
+  if (isLeaf) {
+    final lastDot = cleaned.lastIndexOf('.');
+    if (lastDot > 0) {
+      final ext = cleaned.substring(lastDot);
+      final extBytes = utf8.encode(ext).length;
+      if (extBytes > 1 && extBytes <= 32 && extBytes < _opfsMaxSegmentUtf8Bytes) {
+        final stemBudget = _opfsMaxSegmentUtf8Bytes - extBytes;
+        var stem = _truncateUtf8ToBytes(cleaned.substring(0, lastDot), stemBudget)
+            .replaceFirst(RegExp(r'[. ]+$'), '');
+        if (stem.isEmpty) stem = '_';
+        return '$stem$ext';
+      }
+    }
+  }
+
+  return _truncateUtf8ToBytes(cleaned, _opfsMaxSegmentUtf8Bytes)
+      .replaceFirst(RegExp(r'[. ]+$'), '');
+}
+
+/// Internal helper extracting the body after an optional `opfs://` prefix.
+/// Returns either a canonical `(body, hadPrefix)` record or an `OpfsPathParseResult.err`.
+({String body, bool hadPrefix, OpfsPathParseResult? error}) _extractOpfsBody(
+  String rawPath, {
+  required String contextLabel,
+}) {
+  final trimmed = rawPath.trim();
+  if (trimmed.isEmpty) {
+    return (
+      body: '',
+      hadPrefix: false,
+      error: OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        '$contextLabel path cannot be empty.',
+      ),
+    );
+  }
+
+  final scheme = extractUriScheme(trimmed);
+  if (scheme == null) {
+    return (body: trimmed, hadPrefix: false, error: null);
+  }
+  if (scheme != 'opfs') {
+    return (
+      body: '',
+      hadPrefix: false,
+      error: OpfsPathParseResult.err(
+        MapResult.errorUnsupported,
+        'Unsupported URI scheme "$scheme://" in $contextLabel path "$rawPath".',
+      ),
+    );
+  }
+  if (trimmed.length < 7 || trimmed.substring(0, 7).toLowerCase() != 'opfs://') {
+    return (
+      body: '',
+      hadPrefix: true,
+      error: OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'Malformed opfs URI "$rawPath". Expected "opfs://<path>" or a plain '
+        'relative/absolute path without a URI scheme.',
+        hadOpfsPrefix: true,
+      ),
+    );
+  }
+  return (body: trimmed.substring(7), hadPrefix: true, error: null);
+}
+
+/// Strictly validates a Web OPFS path for playback, analysis, and SFX without
+/// silently altering invalid segment names.
+///
+/// Accepts relative or absolute paths (e.g. `"/temporal/sistema/test/1.wav"`,
+/// `"temporal/sistema/test/1.wav"`, `"1.wav"`) as well as optional `opfs://`
+/// prefixes (stripped from [OpfsPathParseResult.canonicalPath]).
+OpfsPathParseResult parseOpfsPathStrict(String rawPath) {
+  final extracted = _extractOpfsBody(rawPath, contextLabel: 'OPFS');
+  if (extracted.error != null) return extracted.error!;
+  final body = extracted.body;
+  final hadOpfsPrefix = extracted.hadPrefix;
+
+  if (body.contains('\\')) {
+    return OpfsPathParseResult.err(
+      MapResult.errorInvalidArgs,
+      'Invalid backslash "\\" in OPFS path "$rawPath". Use forward slashes "/".',
+      hadOpfsPrefix: hadOpfsPrefix,
+    );
+  }
+
+  // Strip leading '/' only so '/temporal/sistema/test/1.wav' and
+  // 'temporal/sistema/test/1.wav' map to the exact same canonical path.
+  final withoutLeading = body.replaceFirst(RegExp(r'^/+'), '');
+  if (withoutLeading.isEmpty) {
+    return OpfsPathParseResult.err(
+      MapResult.errorInvalidArgs,
+      'OPFS path "$rawPath" must name a file.',
+      hadOpfsPrefix: hadOpfsPrefix,
+    );
+  }
+  if (withoutLeading.endsWith('/')) {
+    return OpfsPathParseResult.err(
+      MapResult.errorInvalidArgs,
+      'OPFS path "$rawPath" cannot end with "/" (missing file name).',
+      hadOpfsPrefix: hadOpfsPrefix,
+    );
+  }
+
+  final segments = withoutLeading.split('/');
+  for (final seg in segments) {
+    if (seg.isEmpty) {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'OPFS path "$rawPath" contains empty "//" path segments.',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+    if (seg == '.' || seg == '..') {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'OPFS path "$rawPath" cannot contain "." or ".." segments.',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+    for (final unit in seg.codeUnits) {
+      if (_isOpfsForbiddenCharCode(unit)) {
+        return OpfsPathParseResult.err(
+          MapResult.errorInvalidArgs,
+          'Invalid character in OPFS segment "$seg" of "$rawPath".',
+          hadOpfsPrefix: hadOpfsPrefix,
+        );
+      }
+    }
+    if (seg.endsWith('.') || seg.endsWith(' ')) {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'OPFS path segment "$seg" in "$rawPath" cannot end with "." or whitespace.',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+    if (_isWindowsReservedSegment(seg)) {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'OPFS path segment "$seg" in "$rawPath" uses a reserved device name.',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+    if (utf8.encode(seg).length > _opfsMaxSegmentUtf8Bytes) {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'OPFS path segment "$seg" in "$rawPath" exceeds 255 UTF-8 bytes.',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+  }
+
+  return OpfsPathParseResult.ok(
+    segments.join('/'),
+    hadOpfsPrefix: hadOpfsPrefix,
+  );
+}
+
+/// Parses and sanitizes a Web OPFS recording path so invalid characters, trailing
+/// dots/spaces, or reserved filenames do not fail with browser `InvalidName` errors.
+///
+/// Rejects empty paths, directory-only trailing slashes, `..` traversal, and
+/// non-OPFS URI schemes. Always returns canonical path without `opfs://` or leading `/`.
+OpfsPathParseResult sanitizeOpfsRecordingPath(String rawPath) {
+  final extracted = _extractOpfsBody(rawPath, contextLabel: 'OPFS recording');
+  if (extracted.error != null) return extracted.error!;
+  final body = extracted.body;
+  final hadOpfsPrefix = extracted.hadPrefix;
+
+  final slashNormalized = body.replaceAll('\\', '/');
+  if (slashNormalized.isEmpty || slashNormalized.endsWith('/')) {
+    return OpfsPathParseResult.err(
+      MapResult.errorInvalidArgs,
+      'OPFS recording path "$rawPath" must specify a file name.',
+      hadOpfsPrefix: hadOpfsPrefix,
+    );
+  }
+
+  final rawParts = slashNormalized.replaceFirst(RegExp(r'^/+'), '').split('/');
+  final nonEmptyRaw = <String>[];
+  for (final part in rawParts) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..') {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'Path traversal ".." is not allowed in OPFS recording path "$rawPath".',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+    nonEmptyRaw.add(part);
+  }
+
+  if (nonEmptyRaw.isEmpty) {
+    return OpfsPathParseResult.err(
+      MapResult.errorInvalidArgs,
+      'OPFS recording path "$rawPath" does not contain a valid file name.',
+      hadOpfsPrefix: hadOpfsPrefix,
+    );
+  }
+
+  final sanitizedSegments = <String>[];
+  for (var i = 0; i < nonEmptyRaw.length; i++) {
+    final isLeaf = i + 1 == nonEmptyRaw.length;
+    final clean = _sanitizeOpfsSegment(nonEmptyRaw[i], isLeaf: isLeaf);
+    if (clean.isEmpty) {
+      return OpfsPathParseResult.err(
+        MapResult.errorInvalidArgs,
+        'OPFS recording segment "${nonEmptyRaw[i]}" in "$rawPath" sanitizes to an empty name.',
+        hadOpfsPrefix: hadOpfsPrefix,
+      );
+    }
+    sanitizedSegments.add(clean);
+  }
+
+  return OpfsPathParseResult.ok(
+    sanitizedSegments.join('/'),
+    hadOpfsPrefix: hadOpfsPrefix,
+  );
+}
+
 /// Synchronously normalizes and validates [rawUri] for all platforms without
 /// blocking I/O.
 NormalizedAudioSource normalizeAudioSourceUri(
@@ -252,15 +592,50 @@ NormalizedAudioSource normalizeAudioSourceUri(
   final scheme = extractUriScheme(trimmed);
   if (scheme == null) {
     if (isWeb) {
-      // Resolve relative HTTP paths cleanly on UI isolate before crossing to WASM worker.
+      final parsedOpfs = parseOpfsPathStrict(trimmed);
+      if (parsedOpfs.hasError) {
+        return NormalizedAudioSource(
+          normalizedSource: trimmed,
+          resolveInDart: true,
+          directErrorCode: parsedOpfs.errorCode,
+          directErrorMessage: parsedOpfs.errorMessage,
+        );
+      }
       return NormalizedAudioSource(
-        normalizedSource: (webBaseUri ?? Uri.base).resolve(trimmed).toString(),
+        normalizedSource: parsedOpfs.canonicalPath!,
         resolveInDart: false,
       );
     }
     return NormalizedAudioSource(
       normalizedSource: trimmed,
       resolveInDart: false,
+    );
+  }
+
+  if (scheme == 'opfs') {
+    if (!isWeb) {
+      return NormalizedAudioSource(
+        normalizedSource: trimmed,
+        resolveInDart: true,
+        directErrorCode: MapResult.errorUnsupported,
+        directErrorMessage:
+            'URI scheme "opfs://" ("$rawUri") is only supported on Web.',
+      );
+    }
+    final parsedOpfs = parseOpfsPathStrict(trimmed);
+    if (parsedOpfs.hasError) {
+      return NormalizedAudioSource(
+        normalizedSource: trimmed,
+        resolveInDart: true,
+        directErrorCode: parsedOpfs.errorCode,
+        directErrorMessage: parsedOpfs.errorMessage,
+        strippedOpfsPrefix: true,
+      );
+    }
+    return NormalizedAudioSource(
+      normalizedSource: parsedOpfs.canonicalPath!,
+      resolveInDart: false,
+      strippedOpfsPrefix: true,
     );
   }
 
@@ -323,8 +698,8 @@ NormalizedAudioSource normalizeAudioSourceUri(
         directErrorCode: MapResult.errorUnsupported,
         directErrorMessage:
             'Local filesystem "file://" URIs ("$rawUri") are not supported '
-            'on Web browsers. Use HTTP(S), "asset://", "data:", "blob:", or '
-            'AudioSource(Uint8List).',
+            'on Web browsers. Use a relative/absolute OPFS path, HTTP(S), '
+            '"asset://", "data:", "blob:", or AudioSource(Uint8List).',
       );
     }
     try {

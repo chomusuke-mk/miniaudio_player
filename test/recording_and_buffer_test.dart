@@ -1,9 +1,12 @@
+import 'dart:convert' show utf8;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import 'package:miniaudio_player/src/resolver/source_resolver_common.dart'
+    show sanitizeOpfsRecordingPath;
 
 Uint8List _generateWavSine({
   int sampleRate = 48000,
@@ -182,6 +185,7 @@ void main() {
         'https://example.com/rec.wav',
         'asset://audio/rec.wav',
         'package:my_app/rec.wav',
+        'opfs://recordings/rec.wav',
         if (!Platform.isAndroid) 'content://media/external/audio/123',
       ]) {
         await expectLater(
@@ -469,6 +473,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 90));
         final res = await player.action.stopRecording();
         expect(res.bytesWritten, greaterThan(0), reason: 'disk bytes $fmt');
+        expect(res.format, equals(fmt));
+        expect(res.isOpfs, isFalse);
         expect(File(filePath).existsSync(), isTrue, reason: 'disk exists $fmt');
 
         final info = (await MiniaudioPlayer.analyzeAudio(
@@ -486,6 +492,123 @@ void main() {
           reason: 'disk container $fmt',
         );
       }
+    });
+
+    test('sanitizeOpfsRecordingPath handles equivalence, invalid-name sanitization, opfs:// stripping, and errors', () {
+      final abs = sanitizeOpfsRecordingPath('/temporal/sistema/test/1.wav');
+      final rel = sanitizeOpfsRecordingPath('temporal/sistema/test/1.wav');
+      final pre = sanitizeOpfsRecordingPath('opfs:///temporal/sistema/test/1.wav');
+      final root = sanitizeOpfsRecordingPath('1.wav');
+      expect(abs.hasError, isFalse);
+      expect(abs.canonicalPath, equals('temporal/sistema/test/1.wav'));
+      expect(rel.canonicalPath, equals(abs.canonicalPath));
+      expect(pre.canonicalPath, equals(abs.canonicalPath));
+      expect(pre.hadOpfsPrefix, isTrue);
+      expect(root.canonicalPath, equals('1.wav'));
+
+      final dirty = sanitizeOpfsRecordingPath('/temporal/sistema/bad:name*?.wav');
+      expect(dirty.hasError, isFalse);
+      expect(dirty.canonicalPath, equals('temporal/sistema/bad_name__.wav'));
+
+      final reserved = sanitizeOpfsRecordingPath('opfs://temporal/CON/aux.. /take .wav.');
+      expect(reserved.hasError, isFalse);
+      expect(reserved.hadOpfsPrefix, isTrue);
+      expect(reserved.canonicalPath, equals('temporal/_CON/_aux/take .wav'));
+
+      final longLeaf = sanitizeOpfsRecordingPath('rec/${'日' * 120}.rf64');
+      expect(longLeaf.hasError, isFalse);
+      expect(longLeaf.canonicalPath!.endsWith('.rf64'), isTrue);
+      final leaf = longLeaf.canonicalPath!.split('/').last;
+      expect(utf8.encode(leaf).length, lessThanOrEqualTo(255));
+      expect(utf8.encode(leaf).length, greaterThan(100));
+
+      for (final bad in ['', '  ', '/', 'temporal/', '../escape.wav', 'temporal/.../a.wav']) {
+        final err = sanitizeOpfsRecordingPath(bad);
+        expect(err.errorCode, equals(MapResult.errorInvalidArgs), reason: bad);
+      }
+      expect(
+        sanitizeOpfsRecordingPath('https://example.com/1.wav').errorCode,
+        equals(MapResult.errorUnsupported),
+      );
+    });
+
+    test('RecordingResult exposes fileName, mimeType, readBytes, toAudioSource, saveTo, exists, delete, and download', () async {
+      final tempDir = await Directory.systemTemp.createTemp('miniaudio_rec_result_');
+      addTearDown(() async {
+        if (tempDir.existsSync()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final wavBytes = _generateWavSine(
+        sampleRate: 48000,
+        channels: 2,
+        durationSeconds: 1.5,
+        frequencyHz: 440.0,
+      );
+      final player = MiniaudioPlayer(
+        queue: [AudioSource(wavBytes, data: 'sine440')],
+        outputs: const {},
+        config: const PlayerConfig(sampleRate: 48000, channels: 2),
+      );
+      addTearDown(player.dispose);
+      await player.action.play();
+
+      final mem = MemoryRecordingBuffer(path: 'takes/mem_take.wv');
+      await player.action.startRecordingToBuffer(
+        mem,
+        format: AudioFileFormat.wavPack,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      final memRes = await player.action.stopRecording();
+
+      expect(memRes.fileName, equals('mem_take.wv'));
+      expect(memRes.mimeType, equals('audio/x-wavpack'));
+      expect(memRes.format, equals(AudioFileFormat.wavPack));
+      expect(memRes.isInMemory, isTrue);
+      expect(memRes.isOpfs, isFalse);
+      expect(await memRes.exists(), isTrue);
+      expect(await memRes.download(), isFalse);
+      expect(await memRes.createBlobUri(), isNull);
+
+      final memBytes = await memRes.readBytes();
+      expect(memBytes.sublist(0, 4), equals([0x77, 0x76, 0x70, 0x6B]));
+
+      final memSrc = memRes.toAudioSource<String>(data: 'mem-tag');
+      expect(memSrc.isMemory, isTrue);
+      expect(memSrc.data, equals('mem-tag'));
+      final memAnalysis = await MiniaudioPlayer.analyzeAudio(
+        memSrc,
+        replayGain: false,
+        waveform: false,
+      );
+      expect(memAnalysis.audioInfo.sampleRate, equals(48000));
+
+      final exportedPath = '${tempDir.path}/exported/copy.wv';
+      final savedDest = await memRes.saveTo(exportedPath);
+      expect(savedDest, equals(exportedPath));
+      expect(File(exportedPath).readAsBytesSync(), equals(memBytes));
+
+      expect(await memRes.delete(), isTrue);
+      expect(await memRes.exists(), isFalse);
+
+      // Disk-backed RecordingResult helpers
+      final diskRes = RecordingResult(
+        path: exportedPath,
+        duration: memRes.duration,
+        bytesWritten: memBytes.length,
+        sampleCount: memRes.sampleCount,
+        format: AudioFileFormat.wavPack,
+      );
+      expect(diskRes.fileName, equals('copy.wv'));
+      expect(diskRes.isInMemory, isFalse);
+      expect(await diskRes.exists(), isTrue);
+      expect(await diskRes.readBytes(), equals(memBytes));
+      final diskSrc = diskRes.toAudioSource<int>(data: 42);
+      expect(diskSrc.isFile, isTrue);
+      expect(diskSrc.data, equals(42));
+      expect(await diskRes.delete(), isTrue);
+      expect(await diskRes.exists(), isFalse);
     });
   });
 }

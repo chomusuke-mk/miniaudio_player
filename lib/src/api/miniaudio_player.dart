@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data' show ByteData, BytesBuilder, Endian;
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/services.dart' show RootIsolateToken;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show Float32List, Int64List, PlatformInt64Util, Uint8List;
@@ -11,7 +11,7 @@ import '../equalizer.dart';
 import '../infinite_mix.dart';
 import '../loader/custom_byte_provider.dart';
 import '../loader/platform_loader.dart';
-import '../loader/recording_sink.dart';
+import '../loader/recording_result_helper.dart';
 import '../resolver/source_resolver.dart';
 import '../reverb.dart';
 import '../rust/api/player.dart' as rust;
@@ -342,11 +342,16 @@ class MiniaudioPlayer<T> {
   /// Recycles native streaming decks with circular buffering so analyzing multi-hour
   /// or infinite streams maintains strictly constant $O(1)$ memory usage.
   ///
+  /// On **Web**, relative or absolute paths without a URI scheme (or optional `opfs://`
+  /// prefix, stripped with an `[INFO]` notice) resolve automatically to OPFS with strict
+  /// segment validation ([MapResult.errorInvalidArgs] on invalid names) and throw
+  /// [MapResult.errorUnsupported] when OPFS is unavailable in the browser context.
+  ///
   /// When `replayGain: false && waveform: false`, static header analysis resolves
   /// near-instantaneously (< 1 ms) without decoding audio sample frames.
   ///
   /// Parameters:
-  /// - [source]: An [AudioSource], local file path [String], remote URL [String] / [Uri],
+  /// - [source]: An [AudioSource], local/Web OPFS file path [String], remote URL [String] / [Uri],
   ///   or in-memory audio bytes ([Uint8List] / `List<int>`).
   /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
   ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
@@ -484,7 +489,10 @@ class MiniaudioPlayer<T> {
 
   /// Performs synchronous offline acoustic analysis of a local file or in-memory audio [source].
   ///
-  /// Network and streaming sources are not supported synchronously; use [analyzeAudio] instead.
+  /// Network, streaming, and **Web OPFS** sources are not supported synchronously
+  /// (Web browsers prohibit `Atomics.wait` on the main UI thread, so Web OPFS paths throw
+  /// [MiniaudioPlayerException] with [MapResult.errorUnsupported]); use `await analyzeAudio()`
+  /// instead.
   ///
   /// Parameters:
   /// - [source]: An [AudioSource], local file path [String], or in-memory audio bytes ([Uint8List]).
@@ -534,6 +542,16 @@ class MiniaudioPlayer<T> {
       throw const MiniaudioPlayerException(
         'analyzeAudioSync only supports local file paths and in-memory byte sources. '
         'For network or streaming sources, use the asynchronous analyzeAudio method.',
+        errorCode: MapResult.errorUnsupported,
+      );
+    }
+    if (kIsWeb &&
+        !audioSource.isMemory &&
+        extractUriScheme(rustSource.source) == null) {
+      throw MiniaudioPlayerException(
+        'Web OPFS path "${audioSource.uri}" cannot be analyzed synchronously in '
+        'analyzeAudioSync() because the browser main thread prohibits Atomics.wait. '
+        'Use await MiniaudioPlayer.analyzeAudio() instead.',
         errorCode: MapResult.errorUnsupported,
       );
     }
@@ -657,6 +675,8 @@ class MiniaudioPlayer<T> {
   late final int _configuredSampleRate;
   late final int _configuredChannels;
   _DartBufferRecordingSession<T>? _activeDartRecording;
+  AudioFileFormat? _activeRecordingFormat;
+  bool _activeRecordingIsOpfs = false;
   bool _isStartingRecording = false;
 
   Future<void> _closeManagedProviders() async {

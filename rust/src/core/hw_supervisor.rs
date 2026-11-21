@@ -338,6 +338,9 @@ impl HardwareDeviceSupervisor {
             );
         }
         let normalized = crate::core::recording::normalize_recording_path(&path)?;
+        #[cfg(target_arch = "wasm32")]
+        let (rec, prod) = LiveRecorder::prepare_start_opfs(sr, ch, encoding, &normalized)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let (rec, prod) = LiveRecorder::prepare_start(sr, ch, encoding, &normalized)?;
         let (prev_rec, prev_prod) = self.engine.exec(move |ply| {
             ply.output_manager

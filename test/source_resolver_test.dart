@@ -240,8 +240,120 @@ void main() {
       expect(relWeb.resolveInDart, isFalse);
       expect(
         relWeb.normalizedSource,
-        equals('https://user.github.io/miniaudio_player/assets/audio/clip.mp3'),
+        equals('assets/audio/clip.mp3'),
       );
+      expect(relWeb.strippedOpfsPrefix, isFalse);
+    });
+
+    test('normalizes Web OPFS relative/absolute equivalence, optional opfs:// prefix, and strict invalid names', () {
+      // Equivalence: '/temporal/sistema/test/1.wav' == 'temporal/sistema/test/1.wav' != '1.wav'
+      final absWeb = normalizeAudioSourceUri(
+        '/temporal/sistema/test/1.wav',
+        isWeb: true,
+        isWindows: false,
+        isAndroid: false,
+        isDebug: true,
+      );
+      final relWeb = normalizeAudioSourceUri(
+        'temporal/sistema/test/1.wav',
+        isWeb: true,
+        isWindows: false,
+        isAndroid: false,
+        isDebug: true,
+      );
+      final rootRel = normalizeAudioSourceUri(
+        '1.wav',
+        isWeb: true,
+        isWindows: false,
+        isAndroid: false,
+        isDebug: true,
+      );
+      final rootAbs = normalizeAudioSourceUri(
+        '/1.wav',
+        isWeb: true,
+        isWindows: false,
+        isAndroid: false,
+        isDebug: true,
+      );
+      expect(absWeb.hasError, isFalse);
+      expect(absWeb.resolveInDart, isFalse);
+      expect(absWeb.normalizedSource, equals('temporal/sistema/test/1.wav'));
+      expect(relWeb.normalizedSource, equals(absWeb.normalizedSource));
+      expect(rootRel.normalizedSource, equals('1.wav'));
+      expect(rootAbs.normalizedSource, equals('1.wav'));
+      expect(rootRel.normalizedSource, isNot(equals(absWeb.normalizedSource)));
+
+      // Optional opfs:// on Web is stripped from output and flagged for INFO log
+      final prefixedWeb = normalizeAudioSourceUri(
+        'OPFS:///temporal/sistema/test/1.wav',
+        isWeb: true,
+        isWindows: false,
+        isAndroid: false,
+        isDebug: true,
+      );
+      expect(prefixedWeb.hasError, isFalse);
+      expect(prefixedWeb.resolveInDart, isFalse);
+      expect(prefixedWeb.strippedOpfsPrefix, isTrue);
+      expect(prefixedWeb.normalizedSource, equals('temporal/sistema/test/1.wav'));
+
+      final logs = <(MiniaudioLogLevel, String)>[];
+      final prevLog = MiniaudioPlayerGlobalConfig.onLog;
+      MiniaudioPlayerGlobalConfig.onLog = (lvl, msg) => logs.add((lvl, msg));
+      try {
+        MapLogger.logRedundantOpfsPrefix(
+          'opfs://temporal/sistema/test/1.wav',
+          canonicalPath: prefixedWeb.normalizedSource,
+        );
+        expect(logs, hasLength(1));
+        expect(logs.single.$1, equals(MiniaudioLogLevel.info));
+        expect(logs.single.$2, contains('unnecessary on Web'));
+        expect(logs.single.$2, contains('temporal/sistema/test/1.wav'));
+      } finally {
+        MiniaudioPlayerGlobalConfig.onLog = prevLog;
+      }
+
+      // opfs:// outside Web is rejected with MapResult.errorUnsupported (-10)
+      final nonWebOpfs = normalizeAudioSourceUri(
+        'opfs://temporal/sistema/test/1.wav',
+        isWeb: false,
+        isWindows: false,
+        isAndroid: false,
+        isDebug: true,
+      );
+      expect(nonWebOpfs.directErrorCode, equals(MapResult.errorUnsupported));
+
+      // Strict playback validation rejects invalid OPFS names with -2 without sanitizing
+      for (final invalidWebPath in [
+        '/',
+        'opfs://',
+        'opfs:1.wav',
+        'temporal/',
+        'temporal//1.wav',
+        'temporal/./1.wav',
+        '../escape.wav',
+        r'temporal\1.wav',
+        'dir/bad:name.wav',
+        'bad*name?.wav',
+        'CON.wav',
+        'temporal/aux.flac',
+        'dir/file.',
+        'dir /file.wav',
+        'C:/audio.wav',
+        '${'a' * 260}.wav',
+      ]) {
+        final err = normalizeAudioSourceUri(
+          invalidWebPath,
+          isWeb: true,
+          isWindows: false,
+          isAndroid: false,
+          isDebug: true,
+        );
+        expect(
+          err.directErrorCode,
+          equals(MapResult.errorInvalidArgs),
+          reason: '"$invalidWebPath" must fail strict OPFS validation with -2',
+        );
+      }
     });
 
     test('normalizes data://, data:, icy://, package:, and preserves AudioSource.uri', () {

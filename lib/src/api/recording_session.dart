@@ -68,14 +68,13 @@ void _writeWaveFmtBody(ByteData bd, int offset, int sr, int ch, bool isFloat) {
 }
 
 /// Coordinates asynchronous FIFO container encoding & finalization from a Push
-/// [watchAudioBus] stream into a [RecordingByteBuffer] or Web OPFS worker buffer.
+/// [watchAudioBus] stream into a [RecordingByteBuffer].
 final class _DartBufferRecordingSession<T> {
   final MiniaudioPlayer<T> _player;
   final RecordingByteBuffer _buffer;
   final String displayPath;
   final AudioOutputSource source;
   final AudioFileFormat encoding;
-  final Future<Uri?> Function()? _finalizeUri;
 
   int _sampleRate;
   int _channels;
@@ -103,12 +102,10 @@ final class _DartBufferRecordingSession<T> {
     required this.encoding,
     required int initialSampleRate,
     required int initialChannels,
-    Future<Uri?> Function()? finalizeUri,
   })  : _player = player,
         _buffer = buffer,
         _sampleRate = initialSampleRate > 0 ? initialSampleRate : 44100,
-        _channels = initialChannels > 0 ? initialChannels : 2,
-        _finalizeUri = finalizeUri;
+        _channels = initialChannels > 0 ? initialChannels : 2;
 
   AudioTapFormat get _tapFormat =>
       encoding.isFloat32 ? AudioTapFormat.float32 : AudioTapFormat.pcm16;
@@ -541,7 +538,6 @@ final class _DartBufferRecordingSession<T> {
     await _writeChain;
 
     MiniaudioPlayerException? finalizeErr;
-    Uri? resultUri;
 
     try {
       await _finalizeBuffer();
@@ -563,12 +559,6 @@ final class _DartBufferRecordingSession<T> {
                 errorCode: MapResult.errorGeneric,
               );
       }
-      final finalizeUri = _finalizeUri;
-      if (finalizeUri != null) {
-        try {
-          resultUri = await finalizeUri();
-        } catch (_) {}
-      }
     }
 
     final finalDur = _durationForSamples(_sampleCount);
@@ -584,13 +574,16 @@ final class _DartBufferRecordingSession<T> {
       throw effectiveError;
     }
 
+    final buffer = _buffer;
     return RecordingResult(
       path: displayPath,
       duration: finalDur,
       bytesWritten: _writtenDataBytes,
       sampleCount: _sampleCount,
       droppedFrames: _droppedFrames,
-      uri: resultUri,
+      format: encoding,
+      isOpfs: false,
+      memoryBuffer: buffer is MemoryRecordingBuffer ? buffer : null,
     );
   }
 }

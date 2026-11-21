@@ -170,6 +170,7 @@ pub fn init_wasm_thread_spawner() {
     {
         thread::ensure_main_thread_spawner();
         crate::net::ureq::ensure_network_worker();
+        crate::opfs::ensure_opfs_worker();
     }
 }
 

@@ -170,7 +170,7 @@ _The bundled [**Studio Master Console**](https://github.com/chomusuke-mk/miniaud
 | Audio Engine Capability                                    |      Android [^1]       | Windows [^2] |            Linux             |    iOS    |   macOS   |           Web [^3]            |
 | :--------------------------------------------------------- | :---------------------: | :----------: | :--------------------------: | :-------: | :-------: | :---------------------------: |
 | **OS Audio Backend**                                       |   AAudio / OpenSL ES    |    WASAPI    | PulseAudio / PipeWire / ALSA | CoreAudio | CoreAudio |    WASM + WebAudio Workers    |
-| **Local Files, URIs & `asset://` Playback**                |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     | ✅ (`asset://`, `data:`, RAM) |
+| **Local Files, URIs & `asset://` Playback**                |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     | ✅ (OPFS paths, `asset://`, `data:`, `blob:`, RAM) |
 | **HTTP/HTTPS `Range`, ICY Radio & HLS (`AES-128`)**        |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
 | **Custom Pull Streams & DRM (`CustomByteProvider`)**       |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
 | **Dual-Deck Queue, Crossfade & Infinite Mix**              |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
@@ -178,14 +178,14 @@ _The bundled [**Studio Master Console**](https://github.com/chomusuke-mk/miniaud
 | **64-Voice Polyphonic SFX & 3D Doppler**                   |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
 | **5-Bus Output Matrix & Auto-Ducking Capture**             |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
 | **Real-Time Audio Taps (Push & Zero-Alloc Pull)**          |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
-| **11-Format Recording (Disk / `RecordingByteBuffer`)**     | ✅ (incl. `content://`) |      ✅      |              ✅              |    ✅     |    ✅     |      ✅ (Memory / OPFS)       |
+| **11-Format Recording (Disk / `RecordingByteBuffer`)**     | ✅ (incl. `content://`) |      ✅      |              ✅              |    ✅     |    ✅     | ✅ (OPFS paths / Memory) |
 | **Single-Pass Analyzer (`BS.1770-4`, Lofty, Chromaprint)** |           ✅            |      ✅      |              ✅              |    ✅     |    ✅     |              ✅               |
 
 [^1]: **Android**: C11 hardware bridge builds with `ANDROID_STL=c++_shared`, 16 KB page alignment support, and AAudio state-change wait guard. Writable `content://` URIs are supported natively for recording.
 
 [^2]: **Windows**: Uses WASAPI low-latency shared endpoints via `miniaudio.h`.
 
-[^3]: **Web**: Multi-threaded `wasm32` WebAssembly using `SharedArrayBuffer` + Atomics and browser Origin Private File System (OPFS) Worker recording.
+[^3]: **Web**: Multi-threaded `wasm32` WebAssembly using `SharedArrayBuffer` + Atomics and Rust-direct Origin Private File System (OPFS) access: relative and absolute paths without a URI scheme resolve automatically to OPFS for playback, analysis, SFX, local HLS, and 11-format live recording (or throw `MapResult.errorUnsupported` when OPFS is unavailable in the browser context).
 
 ---
 
@@ -280,13 +280,15 @@ flutter run -d chrome \
   <img src="https://raw.githubusercontent.com/chomusuke-mk/miniaudio_player/main/pictures/screenshots/playback_engine.png" alt="High-Res Audio Playback Engine Controls" width="600" />
 </p>
 
-Every media source resolves cleanly through `AudioSource<T>`—supporting local paths, `file://` URIs, Flutter `asset://` bundles, `Uint8List` / `data:` URIs (zero duplicate Dart RAM), HTTP/HTTPS byte-range streaming, ICY live radio, and HLS `.m3u8` (including encrypted AES-128-CBC segments):
+Every media source resolves cleanly through `AudioSource<T>`—supporting native file paths, `file://` URIs, **automatic Web OPFS resolution for relative/absolute paths** (`O(1)` RAM streaming & seek; optional `opfs://` prefix is stripped with an `[INFO]` log), Flutter `asset://` / `package:` bundles, `Uint8List` / `data:` / `blob:` URIs, HTTP/HTTPS byte-range streaming, ICY live radio, and HLS `.m3u8` (including encrypted AES-128-CBC segments):
+
+> **Web path rules:** On Web, relative and absolute paths without a URI scheme (e.g. `'/temporal/sistema/test/1.wav'`, `'temporal/sistema/test/1.wav'`, or `'1.wav'`) resolve automatically to OPFS (`'/temporal/sistema/test/1.wav'` and `'temporal/sistema/test/1.wav'` point to the same file, distinct from `'1.wav'`). Bundled Flutter assets must always use `asset://` or `package:`. Playback/analysis validates OPFS segment names strictly (`MapResult.errorInvalidArgs` on invalid names) and throws `MiniaudioPlayerException` (`MapResult.errorUnsupported`) if OPFS is unavailable in the browser context.
 
 ```dart
 final player = MiniaudioPlayer<String>();
 
 await player.action.setQueue([
-  // 1. Local file or file:// URI
+  // 1. Local file path (Native) OR OPFS file path (Web, e.g. 'temporal/sistema/test/1.wav' / '/1.wav')
   AudioSource('/path/to/song.flac', data: 'Local Hi-Res'),
 
   // 2. Flutter asset bundle (zero temporary copies)
@@ -540,26 +542,34 @@ final sub = player.action
 
 ### 6.7 Multi-Format Lock-Free Live Recording (11 Formats, `RecordingByteBuffer` & Web OPFS)
 
-Record selectively from any `AudioOutputSource` bus on dedicated non-RT threads or async Dart sinks across **11 formats** (`wav`, `wavFloat32`, `rf64`, `rf64Float32`, `w64`, `w64Float32`, `aiff`, `caf`, `cafFloat32`, `wavPack`, `wavPackFloat32`), with automatic header back-patching on `stopRecording()` or `dispose()`:
+Record selectively from any `AudioOutputSource` bus on dedicated Rust threads or async Dart sinks across **11 formats** (`wav`, `wavFloat32`, `rf64`, `rf64Float32`, `w64`, `w64Float32`, `aiff`, `caf`, `cafFloat32`, `wavPack`, `wavPackFloat32`), with automatic header back-patching on `stopRecording()` or `dispose()`:
+
+> **Web OPFS recording & browser support:** On Web, passing any relative or absolute path without a URI scheme (or the unnecessary legacy `opfs://` prefix, which emits an `[INFO]` notice and is stripped from `RecordingResult.path`) writes directly to OPFS and auto-sanitizes invalid segment characters to prevent `InvalidName` errors (`'/temporal/sistema/test/1.wav'` and `'temporal/sistema/test/1.wav'` resolve to canonical OPFS path `'temporal/sistema/test/1.wav'`, whereas `'1.wav'` writes to OPFS root). If the current browser or non-secure context does not support OPFS, `startRecording` throws `MiniaudioPlayerException` (`MapResult.errorUnsupported`)—pass `MemoryRecordingBuffer()` for guaranteed cross-browser capture.
 
 ```dart
-// 1. Native disk recording (paths, file:// URIs, Android content:// FDs, or Web OPFS path)
+// 1. Native disk recording (paths, file:// URIs, Android content:// FDs)
+//    OR automatic Web OPFS recording ('/temporal/sistema/test/1.wv' -> res.path == 'temporal/sistema/test/1.wv')
 await player.action.startRecording(
-  '/tmp/clean_set_recording.wv',
+  '/temporal/sistema/test/clean_set_recording.wv',
   format: AudioFileFormat.wavPack, // Lossless .wv (also wav, rf64, w64, aiff, caf)
   source: AudioOutputSource.musicMix,
 );
 final RecordingResult res = await player.action.stopRecording();
 
-// 2. Cross-platform async FIFO buffer (ideal for Web without OPFS, encryption, or uploads)
+// RecordingResult helpers (O(1)-RAM browser download, direct playback, byte read, cleanup):
+await res.download(); // Triggers browser download from OPFS / memory buffer on Web
+await player.action.load(res.toAudioSource()); // Replay directly (valid in both Web OPFS & Native)
+await res.delete();
+
+// 2. Cross-platform async FIFO buffer (guaranteed fallback when browser lacks OPFS, encryption, or uploads)
 final memBuffer = MemoryRecordingBuffer();
 await player.action.startRecordingToBuffer(
   memBuffer,
   format: AudioFileFormat.cafFloat32,
   source: AudioOutputSource.all,
 );
-await player.action.stopRecording();
-final Uint8List finalizedAudio = memBuffer.takeBytes();
+final RecordingResult memRes = await player.action.stopRecording();
+final Uint8List finalizedAudio = await memRes.readBytes();
 ```
 
 ---

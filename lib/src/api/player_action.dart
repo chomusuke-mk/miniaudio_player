@@ -666,8 +666,9 @@ class PlayerAction<T> {
   ///
   /// Memory-backed effects (`AudioSource(Uint8List)`) are decoded and pinned in RAM
   /// (immune to eviction), while Dart immediately releases its local byte references.
-  /// File and network effects are decoded into RAM within the configured memory budget
-  /// and managed autonomously by Rust's multi-factor eviction scorer.
+  /// File paths (including relative/absolute Web OPFS paths validated strictly) and
+  /// network effects are decoded into RAM within the configured memory budget and managed
+  /// autonomously by Rust's multi-factor eviction scorer.
   Future<void> setEffects(List<AudioEffect> effects) async {
     _player._ensureNotDisposed();
     final rustEffects = <rust_types.RustAudioEffect>[];
@@ -897,10 +898,29 @@ class PlayerAction<T> {
 
   /// Starts live recording of rendered audio to a file path (Native/OPFS) or [RecordingByteBuffer].
   ///
+  /// ### Web OPFS Behavior & Errors
+  /// On **Web**, passing a relative or absolute path without a URI scheme (for example
+  /// `'/temporal/sistema/test/1.wav'`, `'temporal/sistema/test/1.wav'`, or `'1.wav'`)
+  /// automatically resolves to the browser's Origin Private File System (OPFS), creating
+  /// missing subdirectories (`'/temporal/sistema/test/1.wav'` and
+  /// `'temporal/sistema/test/1.wav'` map to the same canonical OPFS file
+  /// `'temporal/sistema/test/1.wav'`, while `'1.wav'` resolves at OPFS root).
+  /// An optional `opfs://` prefix is also accepted, stripped from the canonical output,
+  /// and emits an `[INFO]` notice stating it is unnecessary.
+  ///
+  /// Recording path segments on Web are parsed and sanitized automatically to avoid
+  /// browser `InvalidName` errors (while still rejecting empty paths and `..` traversal
+  /// with [MapResult.errorInvalidArgs]).
+  ///
+  /// Throws [MiniaudioPlayerException] with [MapResult.errorUnsupported] when recording
+  /// with a path on a browser or non-secure context that does not support OPFS. Pass
+  /// `buffer: MemoryRecordingBuffer()` (or a custom [RecordingByteBuffer]) for a
+  /// universal cross-browser in-memory fallback.
+  ///
   /// Parameters:
   /// - [pathOrBuffer]: Either a local filesystem path / `file://` URI / Android writable
-  ///   `content://` URI / Web OPFS path (`String`), a [RecordingByteBuffer], or `null` when
-  ///   passing [buffer] explicitly.
+  ///   `content://` URI / Web OPFS relative or absolute path (`String`), a
+  ///   [RecordingByteBuffer], or `null` when passing [buffer] explicitly.
   /// - [buffer]: Optional [RecordingByteBuffer] (such as [MemoryRecordingBuffer]).
   ///   When both a [String] path and [buffer] are supplied, a warning is logged and
   ///   [buffer] takes precedence.
@@ -985,31 +1005,60 @@ class PlayerAction<T> {
         return;
       }
 
-      if (isWebOpfsEnvironment()) {
-        final opfs = await openWebOpfsRecordingSession(
-          resolvedPath!,
-          mimeType: effectiveEncoding.mimeType,
-        );
-        final session = _DartBufferRecordingSession<T>(
-          player: _player,
-          buffer: opfs.buffer,
-          displayPath: opfs.normalizedPath,
-          source: source,
-          encoding: effectiveEncoding,
-          initialSampleRate: _player._configuredSampleRate,
-          initialChannels: _player._configuredChannels,
-          finalizeUri: opfs.finalizeBlobUri,
-        );
-        await session.start();
-        _player._activeDartRecording = session;
-        return;
-      }
-
       final trimmedPath = resolvedPath!.trim();
       if (trimmedPath.isEmpty) {
         throw const MiniaudioPlayerException(
           'Recording path cannot be empty.',
           errorCode: MapResult.errorInvalidArgs,
+        );
+      }
+
+      if (kIsWeb) {
+        final parsed = sanitizeOpfsRecordingPath(trimmedPath);
+        if (parsed.hadOpfsPrefix &&
+            parsed.errorCode != MapResult.errorUnsupported) {
+          MapLogger.logRedundantOpfsPrefix(
+            trimmedPath,
+            canonicalPath: parsed.hasError ? null : parsed.canonicalPath,
+          );
+        }
+        if (parsed.hasError) {
+          throw MiniaudioPlayerException(
+            parsed.errorMessage ?? 'Invalid Web OPFS recording path "$trimmedPath".',
+            errorCode: parsed.errorCode ?? MapResult.errorInvalidArgs,
+          );
+        }
+        if (!isWebOpfsSupported()) {
+          throw const MiniaudioPlayerException(
+            'Web path recording requires Origin Private File System (OPFS), which is '
+            'unavailable or blocked in this browser/context. Pass buffer: '
+            'MemoryRecordingBuffer() (or a custom RecordingByteBuffer) instead.',
+            errorCode: MapResult.errorUnsupported,
+          );
+        }
+        final canonicalOpfsPath = parsed.canonicalPath!;
+        try {
+          await _rust.startRecording(
+            path: canonicalOpfsPath,
+            format: effectiveEncoding.wireCode,
+            source: source.value,
+          );
+          _player._activeRecordingFormat = effectiveEncoding;
+          _player._activeRecordingIsOpfs = true;
+        } catch (e) {
+          throw MiniaudioPlayerException.fromRustError(
+            e,
+            prefix: 'Failed to start Web OPFS recording',
+            defaultErrorCode: MapResult.errorGeneric,
+          );
+        }
+        return;
+      }
+
+      if (extractUriScheme(trimmedPath) == 'opfs') {
+        throw MiniaudioPlayerException(
+          'URI scheme "opfs://" ("$trimmedPath") is only supported on Web.',
+          errorCode: MapResult.errorUnsupported,
         );
       }
 
@@ -1022,6 +1071,8 @@ class PlayerAction<T> {
             format: effectiveEncoding.wireCode,
             source: source.value,
           );
+          _player._activeRecordingFormat = effectiveEncoding;
+          _player._activeRecordingIsOpfs = false;
         } catch (e) {
           throw MiniaudioPlayerException.fromRustError(
             e,
@@ -1038,6 +1089,8 @@ class PlayerAction<T> {
           format: effectiveEncoding.wireCode,
           source: source.value,
         );
+        _player._activeRecordingFormat = effectiveEncoding;
+        _player._activeRecordingIsOpfs = false;
       } catch (e) {
         throw MiniaudioPlayerException.fromRustError(
           e,
@@ -1066,7 +1119,13 @@ class PlayerAction<T> {
     );
   }
 
-  /// Stops live recording, finalizes headers, and returns an immutable [RecordingResult].
+  /// Stops live recording, finalizes container headers, and returns an immutable [RecordingResult].
+  ///
+  /// When recorded with a relative or absolute path (or optional `opfs://` prefix) on Web,
+  /// [RecordingResult.isOpfs] is `true` and [RecordingResult.path] holds the canonical
+  /// sanitized OPFS path without any `opfs://` prefix or leading `/` (for example
+  /// `'temporal/sistema/test/1.wav'`), ready for `download()`, `toAudioSource()`,
+  /// `readBytes()`, `delete()`, or `MiniaudioPlayer.analyzeAudio(res.path)`.
   Future<RecordingResult> stopRecording() async {
     _player._ensureNotDisposed();
     final dartSession = _player._activeDartRecording;
@@ -1083,6 +1142,8 @@ class PlayerAction<T> {
         bytesWritten: res.bytesWritten.toInt(),
         sampleCount: res.sampleCount.toInt(),
         droppedFrames: res.droppedFrames.toInt(),
+        format: _player._activeRecordingFormat,
+        isOpfs: _player._activeRecordingIsOpfs,
       );
     } catch (e) {
       throw MiniaudioPlayerException.fromRustError(
@@ -1090,6 +1151,9 @@ class PlayerAction<T> {
         prefix: 'Failed to stop recording',
         defaultErrorCode: MapResult.errorGeneric,
       );
+    } finally {
+      _player._activeRecordingFormat = null;
+      _player._activeRecordingIsOpfs = false;
     }
   }
 

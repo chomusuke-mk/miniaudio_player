@@ -88,6 +88,44 @@ class PlaybackEngineCard extends StatelessWidget {
     }
   }
 
+  Future<void> _playLastRecording(BuildContext context) async {
+    try {
+      await controller.playLastRecording();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF2D0B14),
+            content: Text(
+              'Failed to play recording: $e',
+              style: const TextStyle(color: StudioColors.accentRose),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteLastRecording(BuildContext context) async {
+    try {
+      await controller.deleteLastRecording();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF2D0B14),
+            content: Text(
+              'Failed to delete recording: $e',
+              style: const TextStyle(color: StudioColors.accentRose),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -1240,6 +1278,82 @@ class PlaybackEngineCard extends StatelessWidget {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+              if (controller.lastRecordingResult != null && !isRec)
+                Tooltip(
+                  message: 'Play last recording',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _playLastRecording(context),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF070B14),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: StudioColors.accentCyan
+                                .withValues(alpha: 0.45),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.play_arrow,
+                              size: 12,
+                              color: StudioColors.accentCyan,
+                            ),
+                            SizedBox(width: 3),
+                            Text(
+                              'Play',
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                color: StudioColors.accentCyan,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+              if (controller.lastRecordingResult != null && !isRec)
+                Tooltip(
+                  message: 'Delete last recording',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _deleteLastRecording(context),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF070B14),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: StudioColors.accentRose
+                                .withValues(alpha: 0.45),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.delete_outline,
+                          size: 13,
+                          color: StudioColors.accentRose,
                         ),
                       ),
                     ),

@@ -64,6 +64,38 @@ abstract final class MapLogger {
     print('[miniaudio_player][WARN] $message');
   }
 
+  /// Emits an API usage note at info level even when global [MiniaudioLogLevel]
+  /// defaults to `none` (forwarding to [onLog] if installed).
+  static void infoImportant(String message) {
+    if (isEnabled(MiniaudioLogLevel.info)) {
+      info(message);
+      return;
+    }
+    final customHandler = MiniaudioPlayerGlobalConfig.onLog;
+    if (customHandler != null) {
+      customHandler(MiniaudioLogLevel.info, message);
+      return;
+    }
+    // ignore: avoid_print
+    print('[miniaudio_player][INFO] $message');
+  }
+
+  /// Logs a standardized `[INFO]` notice when the unnecessary Web `opfs://` prefix is used.
+  static void logRedundantOpfsPrefix(
+    String rawInput, {
+    String? canonicalPath,
+  }) {
+    final normalizedNote =
+        (canonicalPath != null && canonicalPath.isNotEmpty)
+            ? ' (normalized to "$canonicalPath")'
+            : '';
+    infoImportant(
+      'The "opfs://" prefix in "$rawInput" is unnecessary on Web: relative '
+      'and absolute paths without a URI scheme already resolve automatically '
+      'to OPFS$normalizedNote.',
+    );
+  }
+
   /// Logs a high-level lifecycle or state change event (`level = 3`).
   static void info(String message) => log(MiniaudioLogLevel.info, message);
 

@@ -10,11 +10,31 @@ typedef InfiniteMixProvider<T> = Future<List<AudioSource<T>>> Function(
 ///
 /// Designed as a single concrete class with a single unified constructor [AudioSource.new]
 /// accepting:
-/// - [String] (local file path, remote HTTP/HTTPS URL, HLS m3u8 stream, `data:` URI),
+/// - [String] (local file path on native targets, automatic OPFS path on Web for
+///   relative/absolute paths without a URI scheme, `file://` on native, Android
+///   `content://` / `android.resource://`, Flutter `asset://` / `package:`, remote
+///   `http://`/`https://`/`icy://`/HLS `.m3u8` URLs, `ws://`/`wss://`, or `data:` URI),
 /// - [Uri] (file, network, or `data:` URI),
 /// - [Uint8List] / `List<int>` (raw audio bytes in RAM), or
 /// - [CustomByteProvider] (custom pull-based byte stream for DRM, encrypted decryption,
 ///   or tokenized storage).
+///
+/// ### Web OPFS Automatic Path Resolution
+/// On **Web**, passing a relative or absolute path without a URI scheme (for example
+/// `'/temporal/sistema/test/1.wav'`, `'temporal/sistema/test/1.wav'`, or `'1.wav'`)
+/// automatically resolves against the browser's Origin Private File System (OPFS) with
+/// $O(1)$ RAM streaming and seek support. Leading slashes are normalized so
+/// `'/temporal/sistema/test/1.wav'` and `'temporal/sistema/test/1.wav'` point to the
+/// same OPFS file `'temporal/sistema/test/1.wav'`, whereas `'1.wav'` points to OPFS root.
+/// The legacy `opfs://` prefix is also accepted on Web, automatically stripped from canonical
+/// output, and emits an `[INFO]` log indicating it is unnecessary; outside Web, `opfs://`
+/// fails with [MapResult.errorUnsupported].
+///
+/// Bundled Flutter assets on Web must use `'asset://...'` or `'package:...'`, and
+/// network streams must include `'http://'` / `'https://'`. Playback validates OPFS
+/// segment names strictly (`MapResult.errorInvalidArgs` on invalid names without
+/// silent sanitization) and fails with [MapResult.errorUnsupported] if the browser or
+/// context does not support OPFS.
 ///
 /// Once in-memory [bytes] are transferred across the FFI bridge to the native Rust
 /// engine, Dart clears its local byte buffer reference via [_clearBytes] so the Dart GC
@@ -79,7 +99,8 @@ class AudioSource<T> {
         u.startsWith('wss://');
   }
 
-  /// Whether this source points directly to a local file path (including normalized `file://` URIs).
+  /// Whether this source points directly to a local file path (native paths / normalized
+  /// `file://` URIs) or a Web OPFS path.
   bool get isFile =>
       !_isMemory &&
       !isCustom &&
@@ -127,6 +148,13 @@ class AudioSource<T> {
     int? id,
   }) {
     final norm = normalizePlatformAudioSourceUri(originalUri);
+    if (norm.strippedOpfsPrefix &&
+        norm.directErrorCode != MapResult.errorUnsupported) {
+      MapLogger.logRedundantOpfsPrefix(
+        originalUri,
+        canonicalPath: norm.hasError ? null : norm.normalizedSource,
+      );
+    }
     if (!norm.hasError &&
         norm.normalizedSource.toLowerCase().startsWith('data:')) {
       try {
@@ -162,8 +190,10 @@ class AudioSource<T> {
         );
       }
     }
+    final sanitizedUri =
+        norm.strippedOpfsPrefix && !norm.hasError ? norm.normalizedSource : originalUri;
     return AudioSource<T>._internal(
-      uri: originalUri,
+      uri: sanitizedUri,
       headers: headers,
       data: data,
       replayGainDb: replayGainDb,
@@ -171,8 +201,8 @@ class AudioSource<T> {
       internalId: id,
       isMemory: false,
       initialByteLength: 0,
-      sourceKey: 'uri:$originalUri',
-      hasValidSource: originalUri.trim().isNotEmpty && !norm.hasError,
+      sourceKey: 'uri:$sanitizedUri',
+      hasValidSource: sanitizedUri.trim().isNotEmpty && !norm.hasError,
       normalizedSource: norm.normalizedSource,
       resolveInDart: norm.resolveInDart,
       directErrorCode: norm.directErrorCode,
@@ -188,8 +218,14 @@ class AudioSource<T> {
     _bytes = null;
   }
 
-  /// Creates an [AudioSource] from a [String] (local path, URL, HLS stream, `data:` URI),
-  /// a [Uri], in-memory audio bytes ([Uint8List] / `List<int>`), or a [CustomByteProvider].
+  /// Creates an [AudioSource] from a [String] (native path or Web OPFS relative/absolute path,
+  /// URL, `asset://`, `package:`, HLS stream, `data:` URI), a [Uri], in-memory audio bytes
+  /// ([Uint8List] / `List<int>`), or a [CustomByteProvider].
+  ///
+  /// On **Web**, relative and absolute paths without a URI scheme resolve automatically to OPFS
+  /// (invalid segment names fail with [MapResult.errorInvalidArgs], and unsupported browsers fail
+  /// with [MapResult.errorUnsupported]); optional `opfs://` prefixes are stripped with an `[INFO]`
+  /// notice. Flutter assets on Web must use `asset://` or `package:`.
   ///
   /// Optional [headers] are passed to the HTTP/HLS request when [source] is a remote URL.
   /// Optional [data] attaches a domain object, while [replayGainDb] and [replayPeak]

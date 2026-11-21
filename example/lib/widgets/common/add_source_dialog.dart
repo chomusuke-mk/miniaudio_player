@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 
@@ -61,16 +62,21 @@ class _AddSourceDialogState extends State<AddSourceDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Supports HTTP(S), icy:// (Live Streams), file://, asset://, and data: URI.',
-              style: TextStyle(color: StudioColors.textSecondary, fontSize: 11),
+            Text(
+              kIsWeb
+                  ? 'Supports Web OPFS paths (e.g. recordings/take.wav or /1.wav), '
+                      'HTTP(S), icy:// (Live Streams), asset://, and data: URI.'
+                  : 'Supports HTTP(S), icy:// (Live Streams), local paths, file://, asset://, and data: URI.',
+              style: const TextStyle(color: StudioColors.textSecondary, fontSize: 11),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _urlController,
-              decoration: const InputDecoration(
-                labelText: 'Audio URI or URL',
-                hintText: 'https://... or icy://... or file://...',
+              decoration: InputDecoration(
+                labelText: kIsWeb ? 'Audio URI, URL, or OPFS Path' : 'Audio URI or URL',
+                hintText: kIsWeb
+                    ? 'recordings/take.wav, https://..., or asset://...'
+                    : 'https://... or icy://... or file://...',
               ),
             ),
             const SizedBox(height: 12),

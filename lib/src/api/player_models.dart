@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import '../equalizer.dart';
+import '../loader/recording_result_helper.dart';
 import '../reverb.dart';
 import 'crossfade_config.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
+import 'recording_byte_buffer.dart';
 import 'spatial.dart';
 
 /// Formats defined for live audio recording sinks.
@@ -733,9 +737,16 @@ class PlayerConfig {
   });
 }
 
-/// Immutable record summarizing the metrics of a completed audio recording.
+/// Immutable record summarizing the metrics and output target of a completed audio recording,
+/// with ergonomic helpers for browser downloads, byte reads, direct playback, and cleanup.
+///
+/// When recorded on Web using a relative or absolute path (or optional `opfs://` prefix),
+/// [isOpfs] is `true` and [path] holds the canonical sanitized OPFS path without any `opfs://`
+/// prefix (e.g. `'temporal/sistema/test/1.wav'`).
 class RecordingResult {
-  /// The file path (or normalized OPFS / `content://` URI) where the recording was saved.
+  /// Canonical destination path: local filesystem path or `content://` URI on Native,
+  /// canonical OPFS path without `opfs://` prefix on Web ([isOpfs] == `true`), or `''`
+  /// when recorded into an unnamed [MemoryRecordingBuffer].
   final String path;
 
   /// The total duration of the recorded audio.
@@ -750,8 +761,13 @@ class RecordingResult {
   /// Number of PCM frames dropped due to writer backpressure or ring overflow.
   final int droppedFrames;
 
-  /// Optional platform-specific URI (such as a Web `blob:` URL pointing at the finalized WAV).
-  final Uri? uri;
+  /// Container/encoding format used when creating this recording, if known.
+  final AudioFileFormat? format;
+
+  /// Whether [path] refers to a browser Origin Private File System (OPFS) file on Web.
+  final bool isOpfs;
+
+  final MemoryRecordingBuffer? _memoryBuffer;
 
   /// Creates a [RecordingResult] summarizing a completed recording.
   const RecordingResult({
@@ -760,6 +776,154 @@ class RecordingResult {
     required this.bytesWritten,
     required this.sampleCount,
     this.droppedFrames = 0,
-    this.uri,
-  });
+    this.format,
+    this.isOpfs = false,
+    MemoryRecordingBuffer? memoryBuffer,
+  }) : _memoryBuffer = memoryBuffer;
+
+  /// Canonical leaf file name extracted from [path], falling back to `'recording.<ext>'`
+  /// when recorded into an unnamed in-memory buffer.
+  String get fileName {
+    final trimmed = path.trim();
+    if (trimmed.isNotEmpty) {
+      final parts = trimmed.split(RegExp(r'[/\\]'));
+      for (var i = parts.length - 1; i >= 0; i--) {
+        if (parts[i].isNotEmpty) return parts[i];
+      }
+    }
+    final ext = format?.extension ?? 'wav';
+    return 'recording.$ext';
+  }
+
+  /// Resolved MIME type for this recording based on [format] or [path] file extension.
+  String get mimeType {
+    final explicit = format?.mimeType;
+    if (explicit != null) return explicit;
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.rf64')) return 'audio/x-rf64';
+    if (lower.endsWith('.w64')) return 'audio/x-w64';
+    if (lower.endsWith('.aiff') || lower.endsWith('.aif')) return 'audio/aiff';
+    if (lower.endsWith('.caf')) return 'audio/x-caf';
+    if (lower.endsWith('.wv')) return 'audio/x-wavpack';
+    return 'audio/wav';
+  }
+
+  /// Whether this recording is held in a built-in [MemoryRecordingBuffer].
+  bool get isInMemory => _memoryBuffer != null;
+
+  /// Triggers a direct browser file download on Web (`true` when initiated) using
+  /// an $O(1)$-RAM disk-backed `File` handle for OPFS results or the recorded chunks for
+  /// [MemoryRecordingBuffer] results. Returns `false` on non-Web targets or empty sources.
+  Future<bool> download({String? fileName}) async {
+    final targetName = (fileName != null && fileName.trim().isNotEmpty)
+        ? fileName.trim()
+        : this.fileName;
+    if (isOpfs && path.trim().isNotEmpty) {
+      return downloadOpfsRecordingFile(
+        path,
+        fileName: targetName,
+        mimeType: mimeType,
+      );
+    }
+    final mem = _memoryBuffer;
+    if (mem != null) {
+      return downloadMemoryRecordingBytes(
+        mem.chunks,
+        fileName: targetName,
+        mimeType: mimeType,
+      );
+    }
+    return false;
+  }
+
+  /// Reads all finalized container + audio bytes into memory.
+  Future<Uint8List> readBytes() async {
+    final mem = _memoryBuffer;
+    if (mem != null) return mem.toBytes();
+    if (isOpfs) return readOpfsRecordingBytes(path);
+    return readDiskRecordingBytes(path);
+  }
+
+  /// Converts this completed recording directly into an [AudioSource<D>] suitable for
+  /// `player.action.load(...)`, `setQueue(...)`, or `MiniaudioPlayer.analyzeAudio(...)`.
+  ///
+  /// For Web OPFS and native disk paths, this points directly to [path] ($O(1)$ RAM).
+  /// For [MemoryRecordingBuffer], passes the encoded bytes to the native engine.
+  AudioSource<D> toAudioSource<D>({D? data}) {
+    final mem = _memoryBuffer;
+    if (mem != null) {
+      final bytes = mem.toBytes();
+      if (bytes.isEmpty) {
+        throw const MiniaudioPlayerException(
+          'Cannot create AudioSource from an empty or cleared recording buffer.',
+          errorCode: MapResult.errorInvalidState,
+        );
+      }
+      return AudioSource<D>(bytes, data: data);
+    }
+    if (path.trim().isEmpty) {
+      throw const MiniaudioPlayerException(
+        'Cannot create AudioSource: recording has no file path or MemoryRecordingBuffer.',
+        errorCode: MapResult.errorInvalidState,
+      );
+    }
+    return AudioSource<D>(path, data: data);
+  }
+
+  /// Creates an on-demand browser `blob:` URI (`$O(1)` RAM disk-backed for OPFS files)
+  /// for `<audio>` elements, Web Share, or external JS consumers; returns `null` off Web.
+  ///
+  /// Call [revokeBlobUri] once the URL is no longer needed.
+  Future<Uri?> createBlobUri({String? fileName}) async {
+    final targetName = fileName ?? this.fileName;
+    if (isOpfs && path.trim().isNotEmpty) {
+      return createOpfsRecordingBlobUri(
+        path,
+        mimeType: mimeType,
+        fileName: targetName,
+      );
+    }
+    final mem = _memoryBuffer;
+    if (mem != null) {
+      return createMemoryRecordingBlobUri(
+        mem.chunks,
+        mimeType: mimeType,
+        fileName: targetName,
+      );
+    }
+    return null;
+  }
+
+  /// Revokes a Web `blob:` [Uri] previously created by [createBlobUri].
+  static void revokeBlobUri(Uri? uri) => revokeRecordingResultBlobUri(uri);
+
+  /// Returns whether this recording still exists in OPFS, on local disk, or with data in RAM.
+  Future<bool> exists() async {
+    final mem = _memoryBuffer;
+    if (mem != null) return mem.lengthInBytes > 0;
+    if (isOpfs) return opfsRecordingFileExists(path);
+    return diskRecordingFileExists(path);
+  }
+
+  /// Deletes the recorded file (on OPFS or native disk) or clears the in-memory buffer.
+  /// Returns `true` if data was deleted/cleared.
+  Future<bool> delete() async {
+    final mem = _memoryBuffer;
+    if (mem != null) {
+      final hadData = mem.lengthInBytes > 0;
+      mem.clear();
+      return hadData;
+    }
+    if (isOpfs) return deleteOpfsRecordingFile(path);
+    return deleteDiskRecordingFile(path);
+  }
+
+  /// Copies/saves this recording to [destinationPath] (local filesystem on Native,
+  /// sanitized OPFS path on Web) and returns the canonical saved destination path.
+  Future<String> saveTo(String destinationPath) => saveRecordingToDestination(
+        destinationPath: destinationPath,
+        sourcePath: path,
+        sourceIsOpfs: isOpfs,
+        memoryChunks: _memoryBuffer?.chunks,
+      );
 }

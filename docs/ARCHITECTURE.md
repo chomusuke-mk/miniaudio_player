@@ -101,7 +101,8 @@ miniaudio_player/
 │       ├── api/                       # Canonical MiniaudioPlayer<T>, action, state, stream, sources,
 │       │                              # analysis models, audio_tap, devices, DSP config, spatial,
 │       │                              # recording, recording_byte_buffer, recording_session
-│       ├── loader/                    # CustomByteProvider, platform loaders, recording_sink_* (OPFS),
+│       ├── loader/                    # CustomByteProvider, platform loaders,
+│       │                              # recording_result_helper_* (OPFS/Disk/Memory export),
 │       │                              # tap_buffer_* (C-ABI FFI & WASM pull buffers)
 │       ├── rust/                      # Auto-generated FRB v2 Dart bindings
 │       └── *.dart                     # Crossfeed, Equalizer, InfiniteMix, Reverb models
@@ -125,6 +126,7 @@ miniaudio_player/
 │       │                              # Sonic wrapper, Rubato resampler, 3D Spatial, 10-Band Visualizer
 │       ├── hls/                       # M3U8 playlist parser, AES-128-CBC decryptor, MPEG-TS demuxer
 │       ├── metadata/                  # Lofty + Symphonia + ID3v2 CHAP + ICY unified metadata extractor
+│       ├── opfs/                      # WebAssembly OPFS path validator/sanitizer + SharedArrayBuffer VFD worker bridge
 │       └── sync/                      # CancelToken, ReaperHandle, ring buffer helpers, CachePaddedSeqlock
 ├── example/
 │   └── lib/                           # Studio Master Console (3 views: Console, Analyzer, Ingest Matrix)
@@ -149,7 +151,7 @@ miniaudio_player/
   - **Lane 2 (Immediate RT Lane)**: Transport controls (`pause`, `stop`, `seek`), DSP updates (`setVolume`, `setRate`, `setPitch`, `setEqualizer`, `setReverb`, `setPreamp`, `setCrossfeed`, `setSpatializer`, `setSilenceConfig`, `setReplayGainMode`, `setLimiter`), SFX triggers (`playEffect`, `stopAllEffects`, listener/Doppler), hardware routing, real-time taps (`watchAudioBus`, `openAudioTapBuffer`), and multi-format recording (`startRecording`, `startRecordingToBuffer`, `stopRecording`) bypass the queue chain completely so slow HTTP opens never stall pause/seek/SFX latency.
 - **`player.state` (`PlayerState<T>`)** provides $O(1)$ synchronous Dart snapshots updated strictly from native Rust events (`_onRustEvent`), keeping Flutter's UI tree decoupled from polling.
 - **`player.stream` (`PlayerStream<T>`)** exposes reactive broadcast streams (`playbackState`, `position`, `buffer`, `queue`, `audioInfo`, `metadata`, `visualizer`, `isRecording`, `isDuckingActive`, `micRmsLevel`, `allocatedRamBytes`, `needMoreTracks`, `errors`, etc.). Heavy telemetry emitters (`visualizerEnabled`, `metadataEnabled`) default to zero-cost dormant mode until activated.
-- **Cross-Platform Recording Sinks**: [`startRecording`](../lib/src/api/player_action.dart) accepts native filesystem paths, `file://` URIs, Android writable `content://` FDs (`startRecordingFd`), custom async FIFO `RecordingByteBuffer` implementations (`MemoryRecordingBuffer`), or Web OPFS Worker files ([`recording_sink_web.dart`](../lib/src/loader/recording_sink_web.dart)), all unified behind [`_DartBufferRecordingSession`](../lib/src/api/recording_session.dart) for buffer/Web targets.
+- **Cross-Platform Recording Sinks**: [`startRecording`](../lib/src/api/player_action.dart) accepts native filesystem paths, `file://` URIs, Android writable `content://` FDs (`startRecordingFd`), Web relative/absolute OPFS paths (handled natively in Rust via `OpfsFileWriter` inside [`wasm_opfs.rs`](../rust/src/opfs/wasm_opfs.rs); optional `opfs://` prefixes are stripped with an `[INFO]` notice, and unsupported browsers throw `MapResult.errorUnsupported`), or custom async FIFO `RecordingByteBuffer` implementations (`MemoryRecordingBuffer`) behind [`_DartBufferRecordingSession`](../lib/src/api/recording_session.dart). On completion, `stopRecording()` returns [`RecordingResult`](../lib/src/api/player_models.dart) with on-demand `download()`, `readBytes()`, `toAudioSource()`, `createBlobUri()`, `exists()`, `delete()`, and `saveTo()` helpers ([`recording_result_helper.dart`](../lib/src/loader/recording_result_helper.dart)).
 
 ### Source Ownership & Custom Byte Providers
 
@@ -188,7 +190,8 @@ Rather than duplicating buffers in Dart or blocking decoders on raw HTTP sockets
 
 | Input Kind               | Rust Implementation                        | Mechanism                                                                                                                                                 |
 | ------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local Files / `asset://` | `FileByteSource`                           | OS file descriptor wrapped in a `64 KB` `BufReader`, loading initial header window + tail tags directly on `map-io-local`.                                |
+| Local Files / `asset://` | `FileByteSource`                           | OS file descriptor wrapped in a `128 KB` `BufReader`, loading initial header window + tail tags directly on `map-io-local`.                                |
+| Web OPFS Paths           | `OpfsByteSource` (`wasm32`)                | Virtual FD (`vfd`) inside `miniaudio-opfs-worker` over `SharedArrayBuffer` + `Atomics`, reading slices lock-free via `file.getFile()` in $O(1)$ RAM.      |
 | Memory / `data:` URI     | `MemoryByteSource`                         | Moves Dart byte vector ownership directly into Rust (`_clearBytes()`), offering sub-microsecond in-RAM random access.                                     |
 | HTTP / HTTPS VOD         | `StreamByteSource` (`HttpVod`)             | `ureq` TLS client issuing HTTP `Range` byte requests with `CancelToken` abort and epoch invalidation.                                                     |
 | Live Radio / ICY         | `StreamByteSource` (`HttpLive`)            | Sliding-window live jitter buffer with inline Shoutcast/Icecast ICY metadata frame extraction (`icy-metaint`).                                            |
@@ -316,7 +319,7 @@ flowchart LR
 `AudioOutput` endpoints, real-time audio taps (`watchAudioBus` / `openAudioTapBuffer`), and live recording (`LiveRecorder` / `startRecording`) can independently tap any of 5 discrete buses (`all`, `musicMix`, `activeTrack`, `standbyTrack`, `voiceOnly`):
 
 - **Real-Time Audio Taps (`core/tap.rs`)**: `TapRtMatrix::write_buses` writes frames lock-free according to `active_bus_mask: AtomicU8`. Subscribers consume coalesced `AudioPcmChunk` streams (`watchAudioBus`) via `map-tap-dispatcher`, or poll reusable `AudioTapBuffer` ring memory (`openAudioTapBuffer`) via zero-alloc C-ABI (`map_tap_alloc_buffer`, `map_tap_poll_bytes`, `NativeFinalizer`) on Native and `wasm_poll_audio_tap_bytes` on Web.
-- **Multi-Format Recording (`core/recording.rs` & `recording_session.dart`)**: `AudioStreamWriter` and `_DartBufferRecordingSession` support 11 encodings (`wav`, `wavFloat32`, `rf64`, `rf64Float32`, `w64`, `w64Float32`, `aiff`, `caf`, `cafFloat32`, `wavPack`, `wavPackFloat32`) backed by pure-Rust header writers and `wavicle` block compression (`encode_wavpack_block`), with automatic header/sample-count back-patching on `stop()` or `Drop`.
+- **Multi-Format Recording (`core/recording.rs` & `recording_session.dart`)**: `AudioStreamWriter<W: Write + Seek>` and `_DartBufferRecordingSession` support 11 encodings (`wav`, `wavFloat32`, `rf64`, `rf64Float32`, `w64`, `w64Float32`, `aiff`, `caf`, `cafFloat32`, `wavPack`, `wavPackFloat32`) backed by pure-Rust header writers (`File` on native / `fd` on Android / `OpfsFileWriter` with `createSyncAccessHandle()` on Web) and `wavicle` block compression (`encode_wavpack_block`), with automatic header/sample-count back-patching on `stop()` or `Drop`.
 
 ### Physical Endpoint Deduplication (`AUTO` Collision Resolution)
 
@@ -325,7 +328,7 @@ On OSes where `'AUTO'` resolves to a concrete default device ID (e.g., `"Built-i
 ### Platform Backend Matrix
 
 - **Desktop & Mobile (Linux, Windows, macOS, Android, iOS)**: `rust/c_src/miniaudio_device_bridge.c` initializes `ma_context` / `ma_device` (WASAPI, CoreAudio, PulseAudio/PipeWire/ALSA, AAudio/OpenSL ES). On Android, an AAudio `waitForStateChange` wrapper clamps timeouts to `1.0 s` (`1_000_000_000 ns`) and recovers valid `STARTING`/`STARTED` states cleanly.
-- **Web (`wasm32`)**: `rust/src/api/player.rs` exposes `wasm_worker_pump_quantum` to advance the player actor per Web Audio render quantum.
+- **Web (`wasm32`)**: `rust/src/api/player.rs` exposes `wasm_worker_pump_quantum` to advance the player actor per Web Audio render quantum, while [`rust/src/opfs/wasm_opfs.rs`](../rust/src/opfs/wasm_opfs.rs) boots `miniaudio-opfs-worker` from `init_wasm_thread_spawner()` so relative/absolute paths (and stripped `opfs://` paths) execute $O(1)$-RAM seekable reads and 11-format live recording directly from WASM workers.
 
 ---
 

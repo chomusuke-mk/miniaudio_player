@@ -2,9 +2,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::{Seek, SeekFrom};
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use crate::sync::thread::{self, JoinHandle};
@@ -15,8 +13,7 @@ use crate::bridge::ffi::*;
 use crate::buffer::FdOpenOutcome;
 use crate::buffer::{
     BufferedBoundaryKind, ByteTimeMap, CustomByteSourceHandle, CustomDartByteSource,
-    DartResolveRegistry, FileByteSource, ProbeFetcherFn, ResolvedCoreSource, StreamBuffer,
-    StreamSession,
+    DartResolveRegistry, ProbeFetcherFn, ResolvedCoreSource, StreamBuffer, StreamSession,
 };
 use crate::core::renderer::{AudioRenderer, DspCommand};
 use crate::decoder::{
@@ -978,6 +975,8 @@ enum HlsFetchBackend {
     },
     #[cfg(not(target_arch = "wasm32"))]
     LocalFile,
+    #[cfg(target_arch = "wasm32")]
+    Opfs,
     DartResolved {
         resolver: Arc<DartResolveRegistry>,
         headers: Option<Vec<crate::api::types::RustHttpHeader>>,
@@ -993,6 +992,8 @@ impl HlsFetchBackend {
             },
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => Self::LocalFile,
+            #[cfg(target_arch = "wasm32")]
+            Self::Opfs => Self::Opfs,
             Self::DartResolved { resolver, headers } => Self::DartResolved {
                 resolver: resolver.clone(),
                 headers: headers.clone(),
@@ -1005,6 +1006,8 @@ impl HlsFetchBackend {
             Self::Network { .. } => true,
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => false,
+            #[cfg(target_arch = "wasm32")]
+            Self::Opfs => false,
             Self::DartResolved { .. } => false,
         }
     }
@@ -1028,6 +1031,13 @@ impl HlsFetchBackend {
             Self::LocalFile => std::fs::read(url)
                 .map(|b| (b, url.to_string()))
                 .map_err(|_| MAP_ERROR_FILE_NOT_FOUND),
+            #[cfg(target_arch = "wasm32")]
+            Self::Opfs => {
+                let parsed = crate::opfs::parse_opfs_path_strict(url).map_err(|(code, _)| code)?;
+                crate::opfs::opfs_read_all_bytes(&parsed.canonical, 16 * 1024 * 1024)
+                    .map(|b| (b, parsed.canonical))
+                    .map_err(|(code, _)| code)
+            }
             Self::DartResolved { resolver, headers } => {
                 let resolved = resolver
                     .resolve(url, headers.as_deref(), None)
@@ -1092,6 +1102,12 @@ impl HlsFetchBackend {
             Self::LocalFile => {
                 let raw_bytes = read_local_segment_bytes(seg_url, byte_range)?;
                 demux_or_wrap_hls_segment(seg_url, None, raw_bytes)
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::Opfs => {
+                let parsed = crate::opfs::parse_opfs_path_strict(seg_url).ok()?;
+                let raw_bytes = crate::opfs::opfs_read_range(&parsed.canonical, byte_range)?;
+                demux_or_wrap_hls_segment(&parsed.canonical, None, raw_bytes)
             }
             Self::DartResolved { resolver, headers } => {
                 let resolved = resolver.resolve(seg_url, headers.as_deref(), None).ok()?;
@@ -5336,7 +5352,6 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn extract_seekable_head_and_tail<R: Read + Seek>(
         reader: &mut R,
         total_size: i64,
@@ -5456,11 +5471,84 @@ impl StreamingDeck {
 
         #[cfg(target_arch = "wasm32")]
         {
-            self.open_network_with_cancel(path, None, None)
+            if let Some(scheme) = crate::opfs::extract_uri_scheme(path) {
+                if !scheme.eq_ignore_ascii_case("opfs") {
+                    return self.mark_open_error_with_message(
+                        MAP_ERROR_UNSUPPORTED,
+                        &format!(
+                            "Unsupported URI scheme '{}://' for Web path '{}' (code: -10)",
+                            scheme, path
+                        ),
+                    );
+                }
+            }
+            let parsed = match crate::opfs::parse_opfs_path_strict(path) {
+                Ok(p) => p,
+                Err((code, msg)) => {
+                    return self.mark_open_error_with_message(code, &msg);
+                }
+            };
+            if parsed.had_opfs_prefix {
+                crate::map_log!(
+                    3,
+                    "The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
+                     absolute paths resolve automatically to OPFS ('{}')",
+                    path,
+                    parsed.canonical
+                );
+            }
+
+            let canonical = parsed.canonical;
+            if canonical.to_ascii_lowercase().ends_with(".m3u8") {
+                if let Ok(m3u8_bytes) =
+                    crate::opfs::opfs_read_all_bytes(&canonical, 16 * 1024 * 1024)
+                {
+                    if crate::hls::M3u8Parser::is_m3u8(&m3u8_bytes) {
+                        let backend = HlsFetchBackend::Opfs;
+                        return self.open_hls_playlist_bytes(
+                            &canonical,
+                            &m3u8_bytes,
+                            None,
+                            &backend,
+                            true,
+                        );
+                    }
+                }
+            }
+
+            let source = match crate::opfs::OpfsByteSource::open(&canonical) {
+                Ok(s) => s,
+                Err((code, msg)) => {
+                    return self.mark_open_error_with_message(code, &msg);
+                }
+            };
+            let ext = StreamClassifier::extract_extension_hint(&canonical);
+            let reopen_path = canonical.clone();
+            *lock_unpoisoned(&self.reopen_local_fn) = Some(Arc::new(move || {
+                crate::opfs::OpfsByteSource::open(&reopen_path)
+                    .ok()
+                    .map(|s| Box::new(s) as Box<dyn symphonia::core::io::MediaSource>)
+            }));
+            let rc = self.open_seekable_media_source(source, ext, &canonical);
+            if rc != MAP_SUCCESS {
+                *lock_unpoisoned(&self.reopen_local_fn) = None;
+            }
+            rc
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if crate::opfs::extract_uri_scheme(path)
+                .is_some_and(|s| s.eq_ignore_ascii_case("opfs"))
+            {
+                return self.mark_open_error_with_message(
+                    MAP_ERROR_UNSUPPORTED,
+                    &format!(
+                        "URI scheme 'opfs://' ('{}') is only supported on Web (code: -10)",
+                        path
+                    ),
+                );
+            }
             if path.to_ascii_lowercase().ends_with(".m3u8") {
                 if let Ok(m3u8_bytes) = std::fs::read(path) {
                     if crate::hls::M3u8Parser::is_m3u8(&m3u8_bytes) {
@@ -5500,7 +5588,7 @@ impl StreamingDeck {
                     .ok()
                     .map(|s| Box::new(s) as Box<dyn symphonia::core::io::MediaSource>)
             }));
-            let rc = self.open_seekable_file_byte_source(source, ext, path);
+            let rc = self.open_seekable_media_source(source, ext, path);
             if rc != MAP_SUCCESS {
                 *lock_unpoisoned(&self.reopen_local_fn) = None;
             }
@@ -5508,61 +5596,53 @@ impl StreamingDeck {
         }
     }
 
-    /// Shared opener for any seekable [`FileByteSource`] (local files or Android
-    /// `content://`/`android.resource://` FDs) using $O(1)$ RAM and zero duplicate opens.
-    pub fn open_seekable_file_byte_source(
+    /// Shared opener for any seekable [`symphonia::core::io::MediaSource`] (local files,
+    /// Android `content://`/`android.resource://` FDs, or Web OPFS sources) using $O(1)$ RAM.
+    pub fn open_seekable_media_source<S: symphonia::core::io::MediaSource + 'static>(
         &mut self,
-        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))] mut source: FileByteSource,
+        mut source: S,
         ext_hint: Option<&str>,
         label: &str,
     ) -> i32 {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (source, ext_hint, label);
-            self.mark_open_error(MAP_ERROR_UNSUPPORTED)
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let file_size = symphonia::core::io::MediaSource::byte_len(&source).unwrap_or(0);
-            let (initial_buf, tail_data, boundary) =
-                Self::extract_seekable_head_and_tail(&mut source, file_size as i64);
-            let _ = source.seek(SeekFrom::Start(0));
+        let file_size = symphonia::core::io::MediaSource::byte_len(&source).unwrap_or(0);
+        let (initial_buf, tail_data, boundary) =
+            Self::extract_seekable_head_and_tail(&mut source, file_size as i64);
+        let _ = source.seek(SeekFrom::Start(0));
 
-            let effective_hint = boundary.container.hint_extension().or(ext_hint);
-            crate::map_log!(
-                4,
-                "open_file sniffed: source={}, container={:?}, effective_hint={:?}, size={}",
-                label,
-                boundary.container,
-                effective_hint,
-                file_size
-            );
+        let effective_hint = boundary.container.hint_extension().or(ext_hint);
+        crate::map_log!(
+            4,
+            "open_seekable_media_source sniffed: source={}, container={:?}, effective_hint={:?}, size={}",
+            label,
+            boundary.container,
+            effective_hint,
+            file_size
+        );
 
-            let eng = match SymphoniaEngine::new(source, effective_hint) {
-                Ok(e) => e,
-                Err(e) => {
-                    return self.mark_open_error_with_message(
-                        MAP_ERROR_DECODE_FAILED,
-                        &format!("Failed to decode '{}': {:?}", label, e),
-                    );
-                }
-            };
+        let eng = match SymphoniaEngine::new(source, effective_hint) {
+            Ok(e) => e,
+            Err(e) => {
+                return self.mark_open_error_with_message(
+                    MAP_ERROR_DECODE_FAILED,
+                    &format!("Failed to decode '{}': {:?}", label, e),
+                );
+            }
+        };
 
-            let ring_cap = if self.is_analysis { 64 } else { 65536 };
-            let session = StreamSession::new(ring_cap, Some(file_size), false);
-            let classified_boundary = session.ingest_classified_with_options(
-                &initial_buf,
-                tail_data.as_ref().map(|(v, off)| (v.as_slice(), *off)),
-                self.is_analysis,
-            );
-            session.mark_eof();
-            *write_unpoisoned(&self.boundary_info) = Some(classified_boundary);
-            *write_unpoisoned(&self.stream_session) = Some(session);
+        let ring_cap = if self.is_analysis { 64 } else { 65536 };
+        let session = StreamSession::new(ring_cap, Some(file_size), false);
+        let classified_boundary = session.ingest_classified_with_options(
+            &initial_buf,
+            tail_data.as_ref().map(|(v, off)| (v.as_slice(), *off)),
+            self.is_analysis,
+        );
+        session.mark_eof();
+        *write_unpoisoned(&self.boundary_info) = Some(classified_boundary);
+        *write_unpoisoned(&self.stream_session) = Some(session);
 
-            self.init_engine(eng, false, file_size, &initial_buf);
-            crate::map_log!(3, "open_seekable_file_byte_source successfully opened: {}", label);
-            MAP_SUCCESS
-        }
+        self.init_engine(eng, false, file_size, &initial_buf);
+        crate::map_log!(3, "open_seekable_media_source successfully opened: {}", label);
+        MAP_SUCCESS
     }
 
     pub fn open_memory_with_hint(&mut self, data: &[u8], hint_ext: Option<&str>) -> i32 {
@@ -7573,7 +7653,7 @@ impl DualSource {
                     let ext = hint_ext
                         .as_deref()
                         .or_else(|| StreamClassifier::extract_extension_hint(source_uri));
-                    deck.open_seekable_file_byte_source(byte_source, ext, source_uri)
+                    deck.open_seekable_media_source(byte_source, ext, source_uri)
                 }
                 Ok(FdOpenOutcome::MemoryBytes(bytes)) => {
                     let ext = hint_ext

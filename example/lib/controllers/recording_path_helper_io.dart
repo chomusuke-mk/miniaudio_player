@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -18,14 +17,3 @@ Future<String> createTempRecordingFilePath(String fileName) async {
   final dirPath = recDir.path.endsWith(sep) ? recDir.path : '${recDir.path}$sep';
   return '$dirPath$fileName';
 }
-
-Uri? createWebRecordingBlobUri(
-  Uint8List bytes, {
-  String mimeType = 'audio/wav',
-  String? fileName,
-}) =>
-    null;
-
-void revokeWebRecordingBlobUri(Uri? uri) {}
-
-bool triggerWebRecordingDownload(String uri, {String? fileName}) => false;

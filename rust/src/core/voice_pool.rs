@@ -388,13 +388,51 @@ fn decode_effect_uri_direct(
 ) -> Result<SoundBuffer, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
-        SoundBuffer::decode_from_owned_bytes(bytes, None)
-            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+        if trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || trimmed.starts_with("blob:")
+            || trimmed.starts_with("data:")
+        {
+            let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
+            return SoundBuffer::decode_from_owned_bytes(bytes, None)
+                .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e));
+        }
+        if let Some(scheme) = crate::opfs::extract_uri_scheme(trimmed) {
+            if !scheme.eq_ignore_ascii_case("opfs") {
+                return Err(format!(
+                    "Unsupported URI scheme '{}://' for Web effect '{}' (code: -10)",
+                    scheme, id
+                ));
+            }
+        }
+        let parsed = crate::opfs::parse_opfs_path_strict(trimmed)
+            .map_err(|(code, msg)| format!("{} (code: {})", msg, code))?;
+        if parsed.had_opfs_prefix {
+            crate::map_log!(
+                3,
+                "The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
+                 absolute paths resolve automatically to OPFS ('{}')",
+                trimmed,
+                parsed.canonical
+            );
+        }
+        let ext_hint = crate::decoder::StreamClassifier::extract_extension_hint(&parsed.canonical);
+        let opfs_src = crate::opfs::OpfsByteSource::open(&parsed.canonical)
+            .map_err(|(code, msg)| format!("{} (code: {})", msg, code))?;
+        SoundBuffer::decode_from_media_source(opfs_src, ext_hint)
+            .map_err(|e| format!("Decoding OPFS effect '{}' failed: {}", id, e))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if crate::opfs::extract_uri_scheme(trimmed)
+            .is_some_and(|s| s.eq_ignore_ascii_case("opfs"))
+        {
+            return Err(format!(
+                "URI scheme 'opfs://' ('{}') for effect '{}' is only supported on Web (code: -10)",
+                trimmed, id
+            ));
+        }
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
             return SoundBuffer::decode_from_owned_bytes(bytes, None)

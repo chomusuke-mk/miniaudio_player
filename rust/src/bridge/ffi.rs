@@ -10,6 +10,8 @@ pub type MapDeviceContext = MapDeviceContextOpaque;
 /// Canonical error codes for miniaudio_player.
 /// Operation completed successfully.
 pub const MAP_SUCCESS: i32 = 0;
+/// Generic unspecified error.
+pub const MAP_ERROR_GENERIC: i32 = -1;
 /// Invalid arguments supplied.
 pub const MAP_ERROR_INVALID_ARGS: i32 = -2;
 /// File or resource not found.
@@ -20,6 +22,8 @@ pub const MAP_ERROR_DECODE_FAILED: i32 = -6;
 pub const MAP_ERROR_UNSUPPORTED: i32 = -10;
 /// Hardware access permission denied.
 pub const MAP_ERROR_ACCESS_DENIED: i32 = -11;
+/// Resource busy or locked.
+pub const MAP_ERROR_BUSY: i32 = -12;
 
 /// Low-level audio device descriptor for C interop.
 #[repr(C)]

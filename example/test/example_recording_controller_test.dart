@@ -106,8 +106,8 @@ void main() {
         openedPaths.add(path);
         return nextOpenResult;
       },
-      webDownloader: (uri, {fileName}) {
-        downloadedCalls.add((uri, fileName));
+      recordingDownloader: (res, {fileName}) async {
+        downloadedCalls.add((res.path, fileName));
         return true;
       },
     );
@@ -165,6 +165,8 @@ void main() {
     expect(lastFinder, findsOneWidget);
     expect(find.byIcon(Icons.open_in_new), findsOneWidget);
     expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Play'), findsOneWidget);
+    expect(find.byIcon(Icons.delete_outline), findsOneWidget);
 
     await tester.tap(lastFinder);
     await tester.pump();
@@ -180,6 +182,20 @@ void main() {
     );
     expect(controller.lastRecordingFileName!.endsWith('.wav'), isTrue);
 
+    await tester.runAsync(() async {
+      await controller.playLastRecording();
+    });
+    await tester.pump();
+    expect(
+      controller.engine.state.queue
+          .any((item) => item.uri == controller.lastRecordingResult!.path),
+      isTrue,
+    );
+    await tester.runAsync(() async {
+      await controller.engine.action.stop();
+      await controller.engine.action.clearQueue();
+    });
+
     nextOpenResult = OpenResult(
       type: ResultType.noAppToOpen,
       message: 'No WAV player found',
@@ -187,6 +203,14 @@ void main() {
     await tester.tap(lastFinder);
     await tester.pump();
     expect(find.textContaining('Could not open recording'), findsOneWidget);
+
+    final recordedFilePath = controller.lastRecordingResult!.path;
+    await tester.runAsync(() async {
+      await controller.deleteLastRecording();
+    });
+    await tester.pump();
+    expect(controller.lastRecordingResult, isNull);
+    expect(File(recordedFilePath).existsSync(), isFalse);
   });
 
   test('AudioEngineController tracks extension and MIME type per recording format',
@@ -198,8 +222,8 @@ void main() {
         openedCalls.add((path, type));
         return OpenResult(type: ResultType.done, message: 'done');
       },
-      webDownloader: (uri, {fileName}) {
-        downloadedCalls.add((uri, fileName));
+      recordingDownloader: (res, {fileName}) async {
+        downloadedCalls.add((res.path, fileName));
         return true;
       },
     );
