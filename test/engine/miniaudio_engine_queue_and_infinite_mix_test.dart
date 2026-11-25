@@ -301,18 +301,63 @@ void main() {
 
     test('LoopMode.one preserves current track repeating rather than advancing',
         () async {
-      await engine.action.setQueue([
-        AudioSource(trackA.path, data: 'Track 1'),
-        AudioSource(trackB.path, data: 'Track 2'),
-      ]);
-      await engine.action.play();
+      final loopEngine = MiniaudioPlayer<String>(
+        config: PlayerConfig(
+          crossfade: CrossfadeConfig(
+            autoDuration: const Duration(milliseconds: 2000),
+            manualDuration: Duration.zero,
+          ),
+        ),
+      );
+      final xfadeEvents = <bool>[];
+      final xfadeSub = loopEngine.stream.isCrossfading.listen(xfadeEvents.add);
+      try {
+        await loopEngine.action.setQueue([
+          AudioSource(trackA.path, data: 'Track 1'),
+          AudioSource(trackB.path, data: 'Track 2'),
+        ]);
+        await loopEngine.action.play();
 
-      await engine.action.setLoopMode(LoopMode.one);
-      expect(engine.state.loopMode, equals(LoopMode.one));
+        await loopEngine.action.setLoopMode(LoopMode.one);
+        expect(loopEngine.state.loopMode, equals(LoopMode.one));
+        expect(loopEngine.state.currentIndex, equals(0));
+        expect(loopEngine.state.currentItem?.data, equals('Track 1'));
 
-      // With loopMode = one, current index is 0
-      expect(engine.state.currentIndex, equals(0));
-      expect(engine.state.currentItem?.data, equals('Track 1'));
+        final dur = await awaitStateOrStream<Duration?>(
+          stream: loopEngine.stream.duration,
+          current: () => loopEngine.state.duration,
+          predicate: (d) => d != null && d > const Duration(seconds: 5),
+          timeout: const Duration(seconds: 5),
+        );
+        expect(dur, isNotNull);
+
+        await loopEngine.action
+            .seek(dur! - const Duration(milliseconds: 1500));
+        await awaitStateOrStream<Duration>(
+          stream: loopEngine.stream.position,
+          current: () => loopEngine.state.position,
+          predicate: (p) => p >= dur - const Duration(milliseconds: 3000),
+          timeout: const Duration(seconds: 5),
+        );
+
+        await awaitStateOrStream<Duration>(
+          stream: loopEngine.stream.position,
+          current: () => loopEngine.state.position,
+          predicate: (p) => p < const Duration(seconds: 5),
+          timeout: const Duration(seconds: 8),
+        );
+
+        expect(xfadeEvents, everyElement(isFalse));
+        expect(loopEngine.state.isCrossfading, isFalse);
+        expect(loopEngine.state.currentIndex, equals(0));
+        expect(loopEngine.state.currentItem?.data, equals('Track 1'));
+        expect(loopEngine.state.isPlaying, isTrue);
+      } finally {
+        await xfadeSub.cancel();
+        if (!loopEngine.isDisposed) {
+          await loopEngine.dispose();
+        }
+      }
     });
 
     test(

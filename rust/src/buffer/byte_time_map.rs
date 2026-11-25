@@ -767,6 +767,84 @@ impl ByteTimeMap {
         None
     }
 
+    /// Scans `slice` for a verified 2-frame MPEG audio header pair and returns the byte offset
+    /// within `slice` of the first frame header.
+    pub fn find_verified_mpeg_sync(slice: &[u8]) -> Option<usize> {
+        #[inline]
+        fn parse_mpeg_hdr(b: &[u8]) -> Option<(usize, u8, u8, u8)> {
+            if b.len() < 4 || b[0] != 0xFF || (b[1] & 0xE0) != 0xE0 {
+                return None;
+            }
+            let version = (b[1] >> 3) & 0x03;
+            if version == 1 {
+                return None;
+            }
+            let layer = (b[1] >> 1) & 0x03;
+            if layer == 0 {
+                return None;
+            }
+            let br_idx = ((b[2] >> 4) & 0x0F) as usize;
+            if br_idx == 0 || br_idx == 15 {
+                return None;
+            }
+            let sr_idx = ((b[2] >> 2) & 0x03) as usize;
+            if sr_idx == 3 {
+                return None;
+            }
+            let pad = ((b[2] >> 1) & 0x01) as usize;
+
+            let sr: usize = match version {
+                3 => [44_100, 48_000, 32_000][sr_idx],
+                2 => [22_050, 24_000, 16_000][sr_idx],
+                0 => [11_025, 12_000, 8_000][sr_idx],
+                _ => return None,
+            };
+
+            const V1_L1: [usize; 15] = [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448];
+            const V1_L2: [usize; 15] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384];
+            const V1_L3: [usize; 15] = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+            const V2_L1: [usize; 15] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256];
+            const V2_L23: [usize; 15] = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+
+            let br_kbps = match (version == 3, layer) {
+                (true, 3) => V1_L1[br_idx],
+                (true, 2) => V1_L2[br_idx],
+                (true, 1) => V1_L3[br_idx],
+                (false, 3) => V2_L1[br_idx],
+                (false, _) => V2_L23[br_idx],
+                _ => return None,
+            };
+
+            let frame_len = match layer {
+                3 => ((12 * br_kbps * 1000) / sr + pad) * 4,
+                2 => (144 * br_kbps * 1000) / sr + pad,
+                1 if version == 3 => (144 * br_kbps * 1000) / sr + pad,
+                1 => (72 * br_kbps * 1000) / sr + pad,
+                _ => return None,
+            };
+            if !(24..=4096).contains(&frame_len) {
+                return None;
+            }
+            Some((frame_len, version, layer, sr_idx as u8))
+        }
+
+        let mut i = 0usize;
+        while i + 8 <= slice.len() {
+            if let Some((len1, ver1, lay1, sr1)) = parse_mpeg_hdr(&slice[i..]) {
+                let next = i + len1;
+                if next + 4 <= slice.len() {
+                    if let Some((_, ver2, lay2, sr2)) = parse_mpeg_hdr(&slice[next..]) {
+                        if ver1 == ver2 && lay1 == lay2 && sr1 == sr2 {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
     /// Scans `slice` (rooted at stream byte `slice_offset`) and returns complete verified `OggS`
     /// page metadata matching `serial` with non-negative granule positions.
     pub fn scan_ogg_pages_in_slice(

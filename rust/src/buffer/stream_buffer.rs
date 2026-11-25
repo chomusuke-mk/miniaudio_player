@@ -1669,6 +1669,10 @@ pub struct StreamSession {
     boundary_kind: Arc<RwLock<BufferedBoundaryKind>>,
     /// Cached `(r_start, r_end, is_eof, start_ms, end_ms)` from the most recent boundary scan.
     last_mapped_window: Arc<Mutex<Option<(u64, u64, bool, i64, i64)>>>,
+    /// When `true`, non-Range streams that fit in `Body` disable the 30s lookahead cap so the full track stays in RAM.
+    full_file_prefetch: Arc<AtomicBool>,
+    /// Monotonic counter incremented on non-Range forward/backward HTTP stream drain chunks so `read_blocking` stays alive while draining.
+    drain_progress_seq: Arc<AtomicU64>,
 }
 
 /// Segment metadata descriptor for bounded-lookahead HLS VOD streaming and instant segment seek.
@@ -2057,11 +2061,63 @@ impl StreamSession {
             hls_vod: Arc::new(RwLock::new(None)),
             boundary_kind: Arc::new(RwLock::new(BufferedBoundaryKind::None)),
             last_mapped_window: Arc::new(Mutex::new(None)),
+            full_file_prefetch: Arc::new(AtomicBool::new(false)),
+            drain_progress_seq: Arc::new(AtomicU64::new(0)),
         };
         if let Some(tot) = total_size {
             session.body.set_audio_end(Some(tot));
         }
         session
+    }
+
+    #[inline]
+    fn full_file_prefetch_window_config() -> SlidingWindowConfig {
+        SlidingWindowConfig {
+            back_duration_ms: 0,
+            ahead_duration_ms: 3_600_000,
+            window_duration_ms: 5_000,
+            coalesce_windows: 1,
+        }
+    }
+
+    /// Marks active drain progress during non-Range stream repositioning so `read_blocking`
+    /// resets its idle timeout while bytes are steadily discarded toward a seek target.
+    #[inline]
+    pub fn note_drain_progress(&self) {
+        self.drain_progress_seq.fetch_add(1, Ordering::Release);
+    }
+
+    /// Returns the monotonic non-Range drain progress sequence counter.
+    #[inline]
+    pub fn drain_progress_seq(&self) -> u64 {
+        self.drain_progress_seq.load(Ordering::Acquire)
+    }
+
+    /// Disables the 30s lookahead cap when `!supports_range()` and the entire audio payload
+    /// fits inside `Body`, allowing all `<= 8 MiB` non-Range tracks to cache completely in RAM.
+    pub fn enable_full_file_prefetch_if_fits(&self) {
+        if self.is_live || self.supports_range() {
+            return;
+        }
+        let start = self.audio_start.load(Ordering::Acquire);
+        let payload_bytes = self
+            .audio_end_offset()
+            .unwrap_or(0)
+            .saturating_sub(start);
+        let cap = self.body.circular_metrics().2;
+        if payload_bytes > 0 && payload_bytes <= cap as u64 {
+            self.full_file_prefetch.store(true, Ordering::Release);
+            let (byte_rate, playback_rate) = self
+                .body
+                .sliding_window_state()
+                .map(|s| (s.byte_rate_per_sec, s.playback_rate))
+                .unwrap_or((SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC, 1.0));
+            self.body.configure_sliding_window(
+                Self::full_file_prefetch_window_config(),
+                byte_rate,
+                playback_rate,
+            );
+        }
     }
 
     /// Computes exact stream byte rate from `bitrate_bps` (or `audio_payload_bytes / duration_ms`)
@@ -2082,11 +2138,14 @@ impl StreamSession {
             SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC
         };
 
-        let cfg = self
-            .body
-            .sliding_window_state()
-            .map(|s| s.config)
-            .unwrap_or_default();
+        let cfg = if self.full_file_prefetch.load(Ordering::Acquire) {
+            Self::full_file_prefetch_window_config()
+        } else {
+            self.body
+                .sliding_window_state()
+                .map(|s| s.config)
+                .unwrap_or_default()
+        };
         self.body
             .configure_sliding_window(cfg, byte_rate, playback_rate);
     }
@@ -2428,7 +2487,10 @@ impl StreamSession {
         timeout: Option<Duration>,
     ) -> Result<usize, BufferError> {
         let max_wait = timeout.unwrap_or(Duration::from_millis(2000));
-        let start_time = MonotonicInstant::now();
+        let mut last_drain_seq = self.drain_progress_seq();
+        let mut idle_start = MonotonicInstant::now();
+        let hard_start = MonotonicInstant::now();
+        let hard_cap = max_wait.max(Duration::from_secs(30));
 
         loop {
             if self.has_pending_seek_preempt() {
@@ -2457,11 +2519,19 @@ impl StreamSession {
                     if self.body.is_eof() && offset >= r_end {
                         return Ok(0);
                     }
-                    let elapsed = start_time.elapsed();
-                    if elapsed >= max_wait {
+                    let cur_drain_seq = self.drain_progress_seq();
+                    if cur_drain_seq != last_drain_seq {
+                        last_drain_seq = cur_drain_seq;
+                        idle_start = MonotonicInstant::now();
+                    }
+                    let idle_elapsed = idle_start.elapsed();
+                    let hard_elapsed = hard_start.elapsed();
+                    if idle_elapsed >= max_wait || hard_elapsed >= hard_cap {
                         return Err(BufferError::WouldBlock);
                     }
-                    let slice_wait = (max_wait - elapsed).min(Duration::from_millis(20));
+                    let slice_wait = (max_wait - idle_elapsed)
+                        .min(hard_cap - hard_elapsed)
+                        .min(Duration::from_millis(20));
                     let guard = lock_unpoisoned(&self.body.backend);
                     if self.body.should_abort.load(Ordering::Acquire) {
                         return Err(BufferError::Aborted);

@@ -53,7 +53,7 @@ struct CoordInner {
     auto_advance_epoch: AtomicU64,
     dispatch_lock: Mutex<()>,
     prewarm_lock: Mutex<()>,
-    last_prewarm: Mutex<Option<(u64, i64, String, bool)>>,
+    last_prewarm: Mutex<Option<(u64, usize, u64, i64, String, bool)>>,
     auto_advance_inflight: Mutex<Option<(usize, u64, u64)>>,
     disposed: AtomicBool,
     on_async_commit: AsyncCommitCallback,
@@ -388,16 +388,22 @@ impl ControlCoordinator {
     }
 
     pub fn set_loop_mode(&self, mode: i32) -> Result<bool, String> {
+        let clamped = mode.clamp(0, 2);
         let changed = self.inner.engine.exec(move |ply| {
             let prev = ply.music_manager.inner.loop_mode.load(Ordering::Relaxed);
-            if prev != mode {
-                ply.music_manager.set_loop_mode(mode);
+            if prev != clamped {
+                ply.music_manager.set_loop_mode(clamped);
                 true
             } else {
                 false
             }
         })?;
         if changed {
+            self.inner.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
+            *lock_unpoisoned(&self.inner.auto_advance_inflight) = None;
+            if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
+                pool.cancel_auto_advance();
+            }
             self.inner.bump_prewarm_epoch();
             self.inner.cancel_prewarms();
             self.schedule_prewarm();
@@ -777,14 +783,19 @@ impl CoordInner {
             if ply.music_manager.inner.standby_is_ready_for(&item) {
                 return None;
             }
+            let active = ply.music_manager.active_deck_ref();
+            let active_deck_id = active.deck_id;
+            let active_open_gen = active.open_generation.load(Ordering::Acquire);
             let tpl = ply.music_manager.inner.capture_dsp_template();
             let factory = ply.music_manager.inner.custom_source_factory.clone();
             let resolver = ply.music_manager.inner.dart_resolver.clone();
-            Some((item, tpl, factory, resolver))
+            Some((active_deck_id, active_open_gen, item, tpl, factory, resolver))
         }) else {
             return;
         };
-        let Some((item, template, custom_factory, dart_resolver)) = candidate else {
+        let Some((active_deck_id, active_open_gen, item, template, custom_factory, dart_resolver)) =
+            candidate
+        else {
             return;
         };
         if p_epoch != self.prewarm_epoch.load(Ordering::Acquire) {
@@ -793,14 +804,26 @@ impl CoordInner {
 
         {
             let mut last = lock_unpoisoned(&self.last_prewarm);
-            if let Some((e, id, ref src, retried)) = *last {
-                if e == p_epoch && id == item.id && src == &item.source {
+            if let Some((e, dk, og, id, ref src, retried)) = *last {
+                if e == p_epoch
+                    && dk == active_deck_id
+                    && og == active_open_gen
+                    && id == item.id
+                    && src == &item.source
+                {
                     if !retry_if_failed || retried {
                         return;
                     }
                 }
             }
-            *last = Some((p_epoch, item.id, item.source.clone(), retry_if_failed));
+            *last = Some((
+                p_epoch,
+                active_deck_id,
+                active_open_gen,
+                item.id,
+                item.source.clone(),
+                retry_if_failed,
+            ));
         }
 
         if let Some(pool) = lock_unpoisoned(&self.io_pool).clone() {

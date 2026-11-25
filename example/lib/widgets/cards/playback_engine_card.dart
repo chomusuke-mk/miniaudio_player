@@ -443,163 +443,142 @@ class PlaybackEngineCard extends StatelessWidget {
           const SizedBox(height: 10),
 
           // 2. Waveform Progress Bar & Seek
-          ListenableBuilder(
-            listenable: controller.trackSelectionListenable,
-            builder: (context, _) {
-              final track = controller.selectedTrack;
-              return StreamBuilder<Duration?>(
-                stream: engine.stream.duration,
-                initialData: engine.state.duration,
-                builder: (context, durSnap) {
-                  final dur = durSnap.data ?? engine.state.duration;
-                  return StreamBuilder<Duration>(
-                    stream: engine.stream.position,
-                    initialData: engine.state.position,
-                    builder: (context, posSnap) {
-                      final pos = posSnap.data ?? Duration.zero;
-                      final progress = (dur != null && dur.inMilliseconds > 0)
-                          ? (pos.inMilliseconds / dur.inMilliseconds).clamp(
-                              0.0,
-                              1.0,
-                            )
+          StreamBuilder<Duration?>(
+            stream: engine.stream.duration,
+            initialData: engine.state.duration,
+            builder: (context, durSnap) {
+              final dur = durSnap.data ?? engine.state.duration;
+              final hasDur = dur != null && dur.inMilliseconds > 0;
+              return StreamBuilder<Duration>(
+                stream: engine.stream.position,
+                initialData: engine.state.position,
+                builder: (context, posSnap) {
+                  final pos = posSnap.data ?? Duration.zero;
+                  final progress = hasDur
+                      ? (pos.inMilliseconds / dur.inMilliseconds).clamp(
+                          0.0,
+                          1.0,
+                        )
+                      : 0.0;
+
+                  return StreamBuilder<Buffer>(
+                    stream: engine.stream.buffer,
+                    initialData: engine.state.buffer,
+                    builder: (context, bufSnap) {
+                      final buf = bufSnap.data ?? engine.state.buffer;
+                      final bufferStartProgress = hasDur
+                          ? (buf.start.inMilliseconds / dur.inMilliseconds)
+                                .clamp(0.0, 1.0)
+                          : 0.0;
+                      final bufferedProgress = hasDur
+                          ? (buf.end.inMilliseconds / dur.inMilliseconds)
+                                .clamp(0.0, 1.0)
                           : 0.0;
 
-                      return StreamBuilder<Buffer>(
-                        stream: engine.stream.buffer,
-                        initialData: engine.state.buffer,
-                        builder: (context, bufSnap) {
-                          final buf = bufSnap.data ?? engine.state.buffer;
-                          final isLocal =
-                              track?.source.isMemory == true ||
-                              (track?.source.uri != null &&
-                                  !track!.source.uri!.toLowerCase().startsWith(
-                                    'http',
-                                  ));
-                          final bufferStartProgress = isLocal
-                              ? 0.0
-                              : (dur != null && dur.inMilliseconds > 0
-                                    ? (buf.start.inMilliseconds /
-                                              dur.inMilliseconds)
-                                          .clamp(0.0, 1.0)
-                                    : 0.0);
-                          final bufferedProgress = isLocal
-                              ? 1.0
-                              : (dur != null && dur.inMilliseconds > 0
-                                    ? (buf.end.inMilliseconds /
-                                              dur.inMilliseconds)
-                                          .clamp(0.0, 1.0)
-                                    : 0.0);
-
-                          return Column(
-                            children: [
-                              LayoutBuilder(
-                                builder: (ctx, constraints) {
-                                  return GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTapDown: (details) {
-                                      if (dur == null) return;
-                                      final frac =
-                                          details.localPosition.dx /
-                                          constraints.maxWidth;
-                                      _seekToFraction(context, frac, dur);
-                                    },
-                                    onHorizontalDragStart: (details) {
-                                      if (dur == null) return;
-                                      final frac =
-                                          details.localPosition.dx /
-                                          constraints.maxWidth;
-                                      _seekToFraction(context, frac, dur);
-                                    },
-                                    onHorizontalDragUpdate: (details) {
-                                      if (dur == null) return;
-                                      final frac =
-                                          details.localPosition.dx /
-                                          constraints.maxWidth;
-                                      _seekToFraction(context, frac, dur);
-                                    },
-                                    child: Container(
-                                      height: 44,
-                                      width: double.infinity,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF070B14),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(
-                                          color: StudioColors.cardBorder,
-                                          width: 1.0,
-                                        ),
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(5),
-                                        child: RepaintBoundary(
-                                          child: ListenableBuilder(
-                                            listenable:
-                                                controller.waveformListenable,
-                                            builder: (context, _) {
-                                              return CustomPaint(
-                                                size: Size(
-                                                  constraints.maxWidth,
-                                                  44,
-                                                ),
-                                                painter: WaveformPainter(
-                                                  points:
-                                                      controller.waveformPoints,
-                                                  progress: progress,
-                                                  bufferStartProgress:
-                                                      bufferStartProgress,
-                                                  bufferedProgress:
-                                                      bufferedProgress,
-                                                  playedColor:
-                                                      StudioColors.accentCyan,
-                                                  unplayedColor: StudioColors
-                                                      .cardBorderFocused,
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  );
+                      return Column(
+                        children: [
+                          LayoutBuilder(
+                            builder: (ctx, constraints) {
+                              return GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTapDown: (details) {
+                                  if (dur == null) return;
+                                  final frac =
+                                      details.localPosition.dx /
+                                      constraints.maxWidth;
+                                  _seekToFraction(context, frac, dur);
                                 },
-                              ),
-                              const SizedBox(height: 4),
+                                onHorizontalDragStart: (details) {
+                                  if (dur == null) return;
+                                  final frac =
+                                      details.localPosition.dx /
+                                      constraints.maxWidth;
+                                  _seekToFraction(context, frac, dur);
+                                },
+                                onHorizontalDragUpdate: (details) {
+                                  if (dur == null) return;
+                                  final frac =
+                                      details.localPosition.dx /
+                                      constraints.maxWidth;
+                                  _seekToFraction(context, frac, dur);
+                                },
+                                child: Container(
+                                  height: 44,
+                                  width: double.infinity,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF070B14),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: StudioColors.cardBorder,
+                                      width: 1.0,
+                                    ),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(5),
+                                    child: RepaintBoundary(
+                                      child: ListenableBuilder(
+                                        listenable:
+                                            controller.waveformListenable,
+                                        builder: (context, _) {
+                                          return CustomPaint(
+                                            size: Size(
+                                              constraints.maxWidth,
+                                              44,
+                                            ),
+                                            painter: WaveformPainter(
+                                              points: controller.waveformPoints,
+                                              progress: progress,
+                                              bufferStartProgress:
+                                                  bufferStartProgress,
+                                              bufferedProgress:
+                                                  bufferedProgress,
+                                              playedColor:
+                                                  StudioColors.accentCyan,
+                                              unplayedColor: StudioColors
+                                                  .cardBorderFocused,
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 4),
 
-                              // Current time (left) and total time (right) under waveform
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      _formatDuration(pos),
-                                      style: const TextStyle(
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: StudioColors.accentCyan,
-                                        fontFamily: 'monospace',
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                          // Current time (left) and total time (right) under waveform
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  _formatDuration(pos),
+                                  style: const TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: StudioColors.accentCyan,
+                                    fontFamily: 'monospace',
                                   ),
-                                  Flexible(
-                                    child: Text(
-                                      dur != null
-                                          ? _formatDuration(dur)
-                                          : 'LIVE',
-                                      style: const TextStyle(
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: StudioColors.textSecondary,
-                                        fontFamily: 'monospace',
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Flexible(
+                                child: Text(
+                                  dur != null ? _formatDuration(dur) : 'LIVE',
+                                  style: const TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: StudioColors.textSecondary,
+                                    fontFamily: 'monospace',
                                   ),
-                                ],
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ],
-                          );
-                        },
+                          ),
+                        ],
                       );
                     },
                   );

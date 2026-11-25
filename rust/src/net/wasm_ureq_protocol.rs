@@ -16,6 +16,26 @@ pub const STATE_HEADERS_READY: i32 = 1;
 pub const STATE_EOF: i32 = 2;
 pub const STATE_ERROR: i32 = 3;
 
+/// Synthetic `CTRL_STATUS` when a strict `Range` request is blocked by CORS or
+/// short-circuited via the JS worker's `rangeBlockedHosts` cache.
+pub const STATUS_CORS_RANGE_BLOCKED: i32 = -6;
+/// Synthetic `CTRL_STATUS` when a strict `Icy-MetaData: 1` request is blocked
+/// by CORS or short-circuited via the JS worker's `icyBlockedHosts` cache.
+pub const STATUS_CORS_ICY_BLOCKED: i32 = -7;
+
+/// Synthetic response header injected by the JS worker indicating whether the
+/// response originated from a cross-origin CORS fetch (`"1"`) vs same-origin/local (`"0"`).
+pub const HDR_CORS_RESPONSE: &str = "x-miniaudio-cors-response";
+/// Internal request control header marking `Range` as optional (e.g. HLS `#EXT-X-BYTERANGE`).
+pub const HDR_RANGE_OPTIONAL: &str = "x-miniaudio-range-optional";
+/// Internal request control header disabling fallback to a plain GET when `Icy-MetaData: 1` fails.
+pub const HDR_ICY_STRICT: &str = "x-miniaudio-icy-strict";
+
+/// Canonical `ureq::Error::Transport` message mapped from [`STATUS_CORS_RANGE_BLOCKED`].
+pub const ERR_CORS_RANGE_BLOCKED: &str = "cors_range_blocked";
+/// Canonical `ureq::Error::Transport` message mapped from [`STATUS_CORS_ICY_BLOCKED`].
+pub const ERR_CORS_ICY_BLOCKED: &str = "cors_icy_blocked";
+
 pub const CTRL_STATE: usize = 0;
 pub const CTRL_STATUS: usize = 1;
 pub const CTRL_WRITE_POS: usize = 2;

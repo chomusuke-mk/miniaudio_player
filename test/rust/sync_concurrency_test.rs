@@ -529,3 +529,52 @@ fn test_wasm_capture_ring_wraparound_generation_and_resampler() {
     let peak = out_44k.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(peak > 0.45 && peak <= 0.51, "unexpected resampled peak: {}", peak);
 }
+
+#[test]
+fn test_wasm_cors_protocol_constants_and_network_header_policy() {
+    use miniaudio_player::api::types::RustHttpHeader;
+    use miniaudio_player::core::dual_source::{
+        should_probe_network_tail_and_range, should_send_initial_icy_header,
+    };
+    use miniaudio_player::net::wasm_ureq_protocol::*;
+
+    // Protocol status & header constants stay distinct and lowercase where expected.
+    const {
+        assert!(STATUS_CORS_RANGE_BLOCKED < 0);
+        assert!(STATUS_CORS_ICY_BLOCKED < 0);
+        assert!(STATUS_CORS_RANGE_BLOCKED != STATUS_CORS_ICY_BLOCKED);
+    }
+    assert_ne!(ERR_CORS_RANGE_BLOCKED, ERR_CORS_ICY_BLOCKED);
+    assert_eq!(HDR_CORS_RESPONSE, "x-miniaudio-cors-response");
+    assert_eq!(HDR_RANGE_OPTIONAL, "x-miniaudio-range-optional");
+    assert_eq!(HDR_ICY_STRICT, "x-miniaudio-icy-strict");
+
+    // Native always sends Icy-MetaData unless user overrides it; Web sends upfront only for `icy://`.
+    assert!(should_send_initial_icy_header(None, false, false));
+    assert!(should_send_initial_icy_header(None, true, false));
+    assert!(!should_send_initial_icy_header(None, false, true));
+    assert!(should_send_initial_icy_header(None, true, true));
+
+    let custom_icy = [RustHttpHeader {
+        key: "icy-metadata".to_string(),
+        value: "0".to_string(),
+    }];
+    assert!(!should_send_initial_icy_header(
+        Some(&custom_icy),
+        false,
+        false
+    ));
+    assert!(!should_send_initial_icy_header(
+        Some(&custom_icy),
+        true,
+        true
+    ));
+
+    // Simple single-range requests are CORS-safelisted; unexposed Accept-Ranges still probes tail + bytes=0-0.
+    assert_eq!(should_probe_network_tail_and_range(false, false), (true, true));
+    // Exposed Accept-Ranges: bytes already confirms Range support -> probe tail, skip redundant bytes=0-0.
+    assert_eq!(should_probe_network_tail_and_range(true, false), (true, false));
+    // Explicit Accept-Ranges: none skips both tail and bytes=0-0 probes.
+    assert_eq!(should_probe_network_tail_and_range(false, true), (false, false));
+    assert_eq!(should_probe_network_tail_and_range(true, true), (false, false));
+}

@@ -1096,3 +1096,339 @@ fn test_step5_active_auto_crossfade_seek_50_aborts_cleanly_no_track_switch() {
         );
     }
 }
+
+#[test]
+fn test_mp4_post_eof_and_active_crossfade_seek_back_no_freeze_no_skip() {
+    let music_dir = FixtureResolver::fixtures_dir();
+    let server = MultiFileHttpServer::start(music_dir.clone());
+    let m4a = CATALOG_28[5]; // 06_Calculated_Motion_aac.m4a
+    let next_track = CATALOG_28[6]; // 07_Fevered_Strings_alac.m4a
+
+    for mode in [
+        NetworkMode::Local,
+        NetworkMode::RemoteFull,
+        NetworkMode::RemoteLimited,
+    ] {
+        if mode == NetworkMode::RemoteLimited {
+            server.set_profile(35, 160 * 1024);
+        } else {
+            server.set_profile(0, 0);
+        }
+        let harness = PlayerHarness::spawn();
+        let primary_uri = match mode {
+            NetworkMode::Local => music_dir.join(m4a.rel_path).to_string_lossy().into_owned(),
+            _ => format!("http://127.0.0.1:{}/{}", server.port, percent_encode_rel(m4a.rel_path)),
+        };
+        let second_uri = match mode {
+            NetworkMode::Local => music_dir.join(next_track.rel_path).to_string_lossy().into_owned(),
+            _ => format!("http://127.0.0.1:{}/{}", server.port, percent_encode_rel(next_track.rel_path)),
+        };
+        harness
+            .coordinator
+            .set_queue(
+                vec![
+                    AudioSourceCore {
+                        id: 1,
+                        source: primary_uri,
+                        headers: None,
+                        data_bytes: None,
+                        replay_gain_db: None,
+                        replay_peak: None,
+                        resolve_in_dart: false,
+                    },
+                    AudioSourceCore {
+                        id: 2,
+                        source: second_uri,
+                        headers: None,
+                        data_bytes: None,
+                        replay_gain_db: None,
+                        replay_peak: None,
+                        resolve_in_dart: false,
+                    },
+                ],
+                harness.custom_factory(),
+            )
+            .unwrap();
+        harness.coordinator.play(Some(1), Some(0), None, None, false).unwrap();
+
+        let mut dur_ms = 0i64;
+        for _ in 0..250 {
+            let (_, dur, _, _, end, _, _, _, _) = harness.active_deck_status();
+            if dur > 0 && end > 1000 {
+                dur_ms = dur;
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(dur_ms > 20_000, "[{}] expected dur_ms > 20_000, got {}", mode.label(), dur_ms);
+
+        // 1. Seek inside buffer and confirm playback advances cleanly.
+        harness.coordinator.seek(10_000).unwrap();
+        harness.wait_seek_settled(Duration::from_secs(10)).unwrap();
+        let (_, pos_in, _, _) = harness.watch_playback(Duration::from_millis(250));
+        assert!(pos_in >= 10_000, "[{}] in-buffer seek pos={}ms", mode.label(), pos_in);
+
+        // 2. Seek out-of-buffer near end (~dur - 21s, mirroring ~158651ms log step) so standby prewarms.
+        let near_tail = (dur_ms - 21_000).max(20_000);
+        harness.coordinator.seek(near_tail).unwrap();
+        harness.wait_seek_settled(Duration::from_secs(10)).unwrap();
+        let _ = harness.wait_buffer_ready(near_tail, 2_000, dur_ms, Duration::from_secs(12));
+
+        // 3. Seek inside the 5000ms auto-crossfade tail window (~dur - 2.5s) and wait until
+        // BOTH AutoCrossfade is active AND active deck decoder_eof == true (while index == 0).
+        let xfade_tail = dur_ms - 2_500;
+        harness.coordinator.seek(xfade_tail).unwrap();
+        harness.wait_seek_settled(Duration::from_secs(10)).unwrap();
+
+        let eof_and_xfade_wait = Instant::now();
+        let mut saw_both = false;
+        while eof_and_xfade_wait.elapsed() < Duration::from_secs(4) {
+            let (is_xf, idx, dec_eof) = harness
+                .engine
+                .exec(|ply| {
+                    (
+                        ply.music_manager.inner.crossfade.is_active(),
+                        ply.music_manager.current_index(),
+                        ply.music_manager
+                            .active_deck_ref()
+                            .decoder_eof
+                            .load(Ordering::Acquire),
+                    )
+                })
+                .unwrap();
+            if is_xf && dec_eof && idx == 0 {
+                saw_both = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            saw_both,
+            "[{}] expected active AutoCrossfade + decoder_eof == true before backward seek",
+            mode.label()
+        );
+
+        // 4. Seek backward outside buffer (83_150ms) during active crossfade + demuxer EOF.
+        let target_back = 83_150i64.min(dur_ms / 2);
+        harness.coordinator.seek(target_back).unwrap();
+        harness.wait_seek_settled(Duration::from_secs(10)).unwrap();
+        let _ = harness.wait_buffer_ready(target_back, 1_500, dur_ms, Duration::from_secs(10));
+
+        let start_pos = harness.active_deck_status().0;
+        let advance_deadline = Instant::now() + Duration::from_secs(4);
+        let mut advanced_ok = false;
+        while Instant::now() < advance_deadline {
+            let (pos, _, _, _, _, is_buf, _, idx, xf) = harness.active_deck_status();
+            assert_eq!(idx, 0, "[{}] track skipped to {} after post-EOF seek!", mode.label(), idx);
+            assert!(!xf, "[{}] crossfade stayed active after backward seek", mode.label());
+            if !is_buf && pos >= start_pos + 400 && (pos - target_back).abs() < 4_500 {
+                advanced_ok = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let (final_pos, _, _, _, _, final_buf, _, final_idx, _) = harness.active_deck_status();
+        assert!(
+            advanced_ok,
+            "[{}] playback stalled after MP4 post-EOF backward seek to {}ms (start={}ms, final={}ms, buf={}, idx={})",
+            mode.label(),
+            target_back,
+            start_pos,
+            final_pos,
+            final_buf,
+            final_idx
+        );
+        assert_eq!(harness.engine.snapshots().playback_state(), PlaybackState::Playing);
+
+        // 5. Repeat post-EOF seek directly back to 0ms and ensure clean playback advance.
+        harness.coordinator.seek(dur_ms - 1_500).unwrap();
+        harness.wait_seek_settled(Duration::from_secs(10)).unwrap();
+        let zero_wait = Instant::now();
+        while zero_wait.elapsed() < Duration::from_secs(2) {
+            let dec_eof = harness
+                .engine
+                .exec(|ply| ply.music_manager.active_deck_ref().decoder_eof.load(Ordering::Acquire))
+                .unwrap();
+            if dec_eof {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        harness.coordinator.seek(0).unwrap();
+        harness.wait_seek_settled(Duration::from_secs(10)).unwrap();
+        let (_, pos_zero, idx_zero, _) = harness.watch_playback(Duration::from_millis(500));
+        assert_eq!(idx_zero, 0);
+        assert!(
+            pos_zero >= 150 && pos_zero < 3_500,
+            "[{}] expected post-EOF seek(0) to advance cleanly, got {}ms",
+            mode.label(),
+            pos_zero
+        );
+    }
+}
+
+#[test]
+fn test_loop_mode_one_does_not_crossfade_and_repeats_same_track_multiple_times() {
+    let music_dir = FixtureResolver::fixtures_dir();
+    let track1 = music_dir.join(CATALOG_28[0].rel_path).to_string_lossy().into_owned();
+    let track2 = music_dir.join(CATALOG_28[1].rel_path).to_string_lossy().into_owned();
+
+    let harness = PlayerHarness::spawn();
+    harness
+        .coordinator
+        .set_queue(
+            vec![
+                AudioSourceCore {
+                    id: 1,
+                    source: track1,
+                    headers: None,
+                    data_bytes: None,
+                    replay_gain_db: None,
+                    replay_peak: None,
+                    resolve_in_dart: false,
+                },
+                AudioSourceCore {
+                    id: 2,
+                    source: track2,
+                    headers: None,
+                    data_bytes: None,
+                    replay_gain_db: None,
+                    replay_peak: None,
+                    resolve_in_dart: false,
+                },
+            ],
+            harness.custom_factory(),
+        )
+        .unwrap();
+
+    harness.coordinator.set_loop_mode(1).unwrap();
+    harness.coordinator.play(Some(1), Some(0), None, None, false).unwrap();
+
+    let mut dur_ms = 0i64;
+    for _ in 0..200 {
+        let (_, dur, _, _, end, _, _, _, _) = harness.active_deck_status();
+        if dur > 0 && end > 1000 {
+            dur_ms = dur;
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(dur_ms > 20_000);
+
+    // Wait for standby to prewarm active track (id == 1) under LoopMode.one.
+    let prewarm_wait = Instant::now();
+    let mut prewarmed_same = false;
+    while prewarm_wait.elapsed() < Duration::from_secs(4) {
+        let standby_id = harness
+            .engine
+            .exec(|ply| ply.music_manager.inner.standby_ready_id.load(Ordering::Acquire))
+            .unwrap();
+        if standby_id == 1 {
+            prewarmed_same = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(prewarmed_same, "expected LoopMode.one to prewarm track id 1 on standby deck");
+
+    // 1. Seek inside the 5000ms auto-crossfade tail window; must NOT auto-crossfade or advance to track 1.
+    harness.coordinator.seek(dur_ms - 2_500).unwrap();
+    harness.wait_seek_settled(Duration::from_secs(8)).unwrap();
+
+    let wrap1_wait = Instant::now();
+    let mut wrapped1 = None;
+    while wrap1_wait.elapsed() < Duration::from_secs(8) {
+        let (pos, _, _, _, _, _, _, idx, xf) = harness.active_deck_status();
+        assert!(!xf, "LoopMode.one entered AutoCrossfade unexpectedly during tail #1!");
+        assert!(!harness.engine.snapshots().is_xfading(), "LoopMode.one snapshot is_xfading during tail #1!");
+        assert_eq!(idx, 0, "LoopMode.one switched away from index 0 during tail #1!");
+        if pos < 4_000 {
+            wrapped1 = Some(pos);
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let w1 = wrapped1.expect("expected LoopMode.one repeat #1 to wrap back to < 4000ms");
+    let (_, pos_after1, idx_after1, xf_after1) = harness.watch_playback(Duration::from_millis(350));
+    assert_eq!(idx_after1, 0);
+    assert!(!xf_after1);
+    assert!(pos_after1 >= w1 + 150, "repeat #1 failed to advance from {}ms (now {}ms)", w1, pos_after1);
+
+    // 2. Second wraparound: verify `last_prewarm` re-prewarms the newly freed deck and repeats cleanly again.
+    let prewarm2_wait = Instant::now();
+    let mut prewarmed_same_again = false;
+    while prewarm2_wait.elapsed() < Duration::from_secs(4) {
+        let standby_id = harness
+            .engine
+            .exec(|ply| ply.music_manager.inner.standby_ready_id.load(Ordering::Acquire))
+            .unwrap();
+        if standby_id == 1 {
+            prewarmed_same_again = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(prewarmed_same_again, "expected standby to re-prewarm track id 1 before repeat #2");
+
+    harness.coordinator.seek(dur_ms - 1_800).unwrap();
+    harness.wait_seek_settled(Duration::from_secs(8)).unwrap();
+    let wrap2_wait = Instant::now();
+    let mut wrapped2 = None;
+    while wrap2_wait.elapsed() < Duration::from_secs(8) {
+        let (pos, _, _, _, _, _, _, idx, xf) = harness.active_deck_status();
+        assert!(!xf, "LoopMode.one entered AutoCrossfade unexpectedly during tail #2!");
+        assert_eq!(idx, 0, "LoopMode.one switched away from index 0 during tail #2!");
+        if pos < 4_000 {
+            wrapped2 = Some(pos);
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let w2 = wrapped2.expect("expected LoopMode.one repeat #2 to wrap back to < 4000ms");
+    let (_, pos_after2, idx_after2, xf_after2) = harness.watch_playback(Duration::from_millis(350));
+    assert_eq!(idx_after2, 0);
+    assert!(!xf_after2);
+    assert!(pos_after2 >= w2 + 150, "repeat #2 failed to advance from {}ms (now {}ms)", w2, pos_after2);
+
+    // 3. Switching to LoopMode.one while AutoCrossfade is already active must abort crossfade and repeat track 0.
+    harness.coordinator.set_loop_mode(0).unwrap();
+    harness.coordinator.seek(dur_ms - 3_000).unwrap();
+    harness.wait_seek_settled(Duration::from_secs(8)).unwrap();
+    let xfade_start_wait = Instant::now();
+    while xfade_start_wait.elapsed() < Duration::from_secs(3) {
+        if harness.engine.snapshots().is_xfading() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(harness.engine.snapshots().is_xfading(), "expected AutoCrossfade active under LoopMode.off");
+
+    harness.coordinator.set_loop_mode(1).unwrap();
+    assert!(!harness.engine.snapshots().is_xfading(), "set_loop_mode(1) must abort active AutoCrossfade");
+    let wrap3_wait = Instant::now();
+    let mut wrapped3 = None;
+    while wrap3_wait.elapsed() < Duration::from_secs(8) {
+        let (pos, _, _, _, _, _, _, idx, xf) = harness.active_deck_status();
+        assert!(!xf, "AutoCrossfade restarted after switching to LoopMode.one!");
+        assert_eq!(idx, 0, "switched to index {} instead of staying on 0 after set_loop_mode(1)", idx);
+        if pos < 4_000 {
+            wrapped3 = Some(pos);
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(wrapped3.is_some(), "expected track 0 to repeat after aborting AutoCrossfade via set_loop_mode(1)");
+
+    // 4. Manual next() while LoopMode.one is active must still advance to track 1.
+    harness.coordinator.next(Some(0), false).unwrap();
+    let skip_wait = Instant::now();
+    let mut skipped_to_1 = false;
+    while skip_wait.elapsed() < Duration::from_secs(4) {
+        if harness.active_deck_status().7 == 1 {
+            skipped_to_1 = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(skipped_to_1, "manual next() under LoopMode.one must still advance to index 1");
+}

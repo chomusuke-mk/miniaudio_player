@@ -1906,5 +1906,727 @@ fn test_live_radio_moda_and_onda_cero_metadata() {
     }
 }
 
+#[test]
+fn test_non_range_http_out_of_buffer_seeks_across_formats() {
+    use miniaudio_player::bridge::ffi::MiniaudioBufferedRange;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let fixtures: [(&str, &str); 5] = [
+        ("mp3_small", "03_Before_The_Dawn_cbr_noxing.mp3"),
+        ("flac_no_seektable", "04_Belaya_Tishina.flac"),
+        ("m4a_alac", "07_Fevered_Strings_alac.m4a"),
+        ("wav_24m", "08_Firelight_Promise_24bit_mono.wav"),
+        ("mka_flac", "11_Mar_de_cristal.mka"),
+    ];
+    let bytes_by_route: Arc<std::collections::HashMap<String, Vec<u8>>> = Arc::new(
+        fixtures
+            .iter()
+            .map(|(route, rel)| {
+                let p = FixtureResolver::resolve(rel);
+                (format!("/{}", route), std::fs::read(&p).unwrap())
+            })
+            .collect(),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_srv = stop.clone();
+    let files_srv = bytes_by_route.clone();
+
+    let srv = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Acquire) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut req_line = String::new();
+                    if reader.read_line(&mut req_line).is_err() {
+                        continue;
+                    }
+                    let path = req_line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let mut has_range = false;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                            break;
+                        }
+                        if line.to_ascii_lowercase().starts_with("range:") {
+                            has_range = true;
+                        }
+                    }
+
+                    // Emulate non-Range / DWDS / CORS-range-blocked server:
+                    // - reject Range probes with 403
+                    // - never emit Accept-Ranges
+                    // - always serve full GET 200 OK
+                    if has_range {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.flush();
+                        continue;
+                    }
+                    if let Some(payload) = files_srv.get(&path).cloned() {
+                        std::thread::spawn(move || {
+                            let hdr = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n",
+                                payload.len()
+                            );
+                            if stream.write_all(hdr.as_bytes()).is_err() {
+                                return;
+                            }
+                            let mut off = 0usize;
+                            while off < payload.len() {
+                                let end = (off + 65_536).min(payload.len());
+                                if stream.write_all(&payload[off..end]).is_err() {
+                                    break;
+                                }
+                                off = end;
+                            }
+                            let _ = stream.flush();
+                        });
+                    } else {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    fn pump_until_audible(deck: &mut StreamingDeck, label: &str) -> Vec<f32> {
+        let mut renderer = deck.renderer.take().expect("deck renderer");
+        let mut out = vec![0.0f32; 1024 * 2];
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let mut peak = 0.0f32;
+        while Instant::now() < deadline {
+            renderer.render_pcm(out.as_mut_ptr(), 1024);
+            let step_peak = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+            if step_peak > 1e-4 {
+                peak = peak.max(step_peak);
+                if !deck.is_buffering.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(8));
+        }
+        deck.renderer = Some(renderer);
+        assert!(
+            peak > 1e-4,
+            "{}: expected audible PCM (peak={}), eof={}, exhausted={}, pos={}ms",
+            label,
+            peak,
+            deck.decoder_eof.load(Ordering::Relaxed),
+            deck.track_exhausted.load(Ordering::Relaxed),
+            deck.position_ms.load(Ordering::Relaxed),
+        );
+        out
+    }
+
+    fn verify_seek(
+        deck: &mut StreamingDeck,
+        name: &str,
+        target_ms: i64,
+        tol_ms: i64,
+    ) {
+        assert_eq!(deck.seek(target_ms), 0, "{}: seek({}) failed", name, target_ms);
+        std::thread::sleep(Duration::from_millis(40));
+        let _ = pump_until_audible(deck, &format!("{} seek({})", name, target_ms));
+        assert!(
+            !deck.decoder_eof.load(Ordering::Relaxed),
+            "{}: false decoder_eof after seek({})",
+            name,
+            target_ms
+        );
+        assert!(
+            !deck.track_exhausted.load(Ordering::Relaxed),
+            "{}: false track_exhausted after seek({})",
+            name,
+            target_ms
+        );
+        let pos = deck.position_ms.load(Ordering::Relaxed);
+        assert!(
+            (pos - target_ms).abs() <= tol_ms,
+            "{}: pos={}ms drifted from target={}ms (tol={})",
+            name,
+            pos,
+            target_ms,
+            tol_ms
+        );
+    }
+
+    // 1. Small <= 8 MiB MP3 fills full track and seeks 80% cleanly without snap-back.
+    {
+        let url = format!("http://127.0.0.1:{}/mp3_small", port);
+        let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+        assert!(
+            !deck
+                .stream_session
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .supports_range(),
+            "server forbids Range"
+        );
+        deck.play();
+        let _ = pump_until_audible(&mut deck, "mp3_small start");
+        let dur = deck.duration_ms.load(Ordering::Relaxed);
+        assert!(dur > 100_000, "unexpected mp3 duration {}", dur);
+
+        verify_seek(&mut deck, "mp3_small", (dur * 80) / 100, 4_000);
+
+        let wait_full = Instant::now() + Duration::from_secs(5);
+        let mut br = MiniaudioBufferedRange::default();
+        while Instant::now() < wait_full {
+            let _ = deck.get_buffered_range(&mut br);
+            if br.end_ms >= dur - 2_000 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            br.end_ms >= dur - 2_000,
+            "<= 8 MiB non-Range MP3 should buffer full track (got end={}ms / dur={}ms)",
+            br.end_ms,
+            dur
+        );
+        let _ = deck.stop();
+    }
+
+    // 2. Large > 8 MiB FLAC without SEEKTABLE: forward 50%, forward 78%, backward 20%.
+    {
+        let url = format!("http://127.0.0.1:{}/flac_no_seektable", port);
+        let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+        deck.play();
+        let _ = pump_until_audible(&mut deck, "flac start");
+        let dur = deck.duration_ms.load(Ordering::Relaxed);
+        verify_seek(&mut deck, "flac 50%", dur / 2, 5_000);
+        verify_seek(&mut deck, "flac 78%", (dur * 78) / 100, 5_000);
+        verify_seek(&mut deck, "flac 20%", dur / 5, 5_000);
+        let _ = deck.stop();
+    }
+
+    // 3. Large > 8 MiB M4A ALAC: forward 50% and backward 15% (must NOT skip to next track).
+    {
+        let url = format!("http://127.0.0.1:{}/m4a_alac", port);
+        let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+        deck.play();
+        let _ = pump_until_audible(&mut deck, "m4a_alac start");
+        let dur = deck.duration_ms.load(Ordering::Relaxed);
+        verify_seek(&mut deck, "m4a_alac 50%", dur / 2, 4_000);
+        verify_seek(&mut deck, "m4a_alac 15%", (dur * 15) / 100, 4_000);
+        let _ = deck.stop();
+    }
+
+    // 4. Large > 8 MiB 24-bit mono WAV: forward 50% and backward 15% (must NOT skip).
+    {
+        let url = format!("http://127.0.0.1:{}/wav_24m", port);
+        let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+        deck.play();
+        let _ = pump_until_audible(&mut deck, "wav_24m start");
+        let dur = deck.duration_ms.load(Ordering::Relaxed);
+        verify_seek(&mut deck, "wav_24m 50%", dur / 2, 3_500);
+        verify_seek(&mut deck, "wav_24m 15%", (dur * 15) / 100, 3_500);
+        let _ = deck.stop();
+    }
+
+    // 5. Large > 8 MiB MKA FLAC: forward 50% and backward 15%.
+    {
+        let url = format!("http://127.0.0.1:{}/mka_flac", port);
+        let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+        assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+        deck.play();
+        let _ = pump_until_audible(&mut deck, "mka_flac start");
+        let dur = deck.duration_ms.load(Ordering::Relaxed);
+        verify_seek(&mut deck, "mka_flac 50%", dur / 2, 8_000);
+        verify_seek(&mut deck, "mka_flac 15%", (dur * 15) / 100, 8_000);
+        let _ = deck.stop();
+    }
+
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[test]
+fn test_unexposed_accept_ranges_http_loads_tail_metadata_without_icy_header() {
+    use miniaudio_player::core::dual_source::should_send_initial_icy_header;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    assert!(
+        !should_send_initial_icy_header(None, false, true),
+        "web/wasm VOD requests must never emit upfront Icy-MetaData header"
+    );
+
+    let fixtures: [(&str, &str, &str, &str); 6] = [
+        (
+            "wav_24m",
+            "08_Firelight_Promise_24bit_mono.wav",
+            "Firelight Promise",
+            "Nolan Reid",
+        ),
+        (
+            "wv",
+            "09_Flesh_and_Chrome.wv",
+            "Flesh and Chrome",
+            "Vespera 9",
+        ),
+        (
+            "mka",
+            "11_Mar_de_cristal.mka",
+            "Mar de cristal",
+            "Camila Solís",
+        ),
+        (
+            "aiff",
+            "18_Running_With_Daylight.aif",
+            "Running With Daylight",
+            "Noah Lind",
+        ),
+        ("ape", "25_Velocity_of_One.ape", "Velocity of One", "Lucas Moreau"),
+        (
+            "dsf",
+            "29_駆け抜けて、この空を.dsf",
+            "駆け抜けて、この空を",
+            "桜庭 凛 (Rin Sakuraba)",
+        ),
+    ];
+
+    let bytes_by_route: Arc<std::collections::HashMap<String, Vec<u8>>> = Arc::new(
+        fixtures
+            .iter()
+            .map(|(route, rel, _, _)| {
+                let p = FixtureResolver::resolve(rel);
+                (format!("/{}", route), std::fs::read(&p).unwrap())
+            })
+            .collect(),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_srv = stop.clone();
+    let files_srv = bytes_by_route.clone();
+
+    let srv = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Acquire) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut req_line = String::new();
+                    if reader.read_line(&mut req_line).is_err() {
+                        continue;
+                    }
+                    let path = req_line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let mut range_hdr: Option<String> = None;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                            break;
+                        }
+                        if let Some((k, v)) = line.split_once(':') {
+                            if k.trim().eq_ignore_ascii_case("range") {
+                                range_hdr = Some(v.trim().to_string());
+                            }
+                        }
+                    }
+
+                    let Some(payload) = files_srv.get(&path).cloned() else {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        continue;
+                    };
+
+                    // Model a cross-origin CDN (like raw.githubusercontent.com under CORS):
+                    // - Injects `x-miniaudio-cors-response: 1`
+                    // - NEVER exposes `Accept-Ranges` in response headers
+                    // - Honors single simple `Range: bytes=start-end` with 206 Partial Content
+                    std::thread::spawn(move || {
+                        if let Some(rng) = range_hdr.and_then(|r| r.strip_prefix("bytes=").map(str::to_string)) {
+                            let (s_str, e_str) = rng.split_once('-').unwrap_or(("0", ""));
+                            let start = s_str.parse::<usize>().unwrap_or(0);
+                            let end_inc = if e_str.is_empty() {
+                                payload.len().saturating_sub(1)
+                            } else {
+                                e_str.parse::<usize>().unwrap_or(payload.len().saturating_sub(1))
+                            };
+                            if start >= payload.len() || end_inc < start || end_inc >= payload.len() {
+                                let _ = stream.write_all(
+                                    b"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                );
+                                return;
+                            }
+                            let slice = &payload[start..=end_inc];
+                            let hdr = format!(
+                                "HTTP/1.1 206 Partial Content\r\nContent-Type: application/octet-stream\r\n\
+                                 x-miniaudio-cors-response: 1\r\nContent-Range: bytes {}-{}/{}\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n",
+                                start,
+                                end_inc,
+                                payload.len(),
+                                slice.len()
+                            );
+                            if stream.write_all(hdr.as_bytes()).is_ok() {
+                                let _ = stream.write_all(slice);
+                                let _ = stream.flush();
+                            }
+                            return;
+                        }
+
+                        let hdr = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\
+                             x-miniaudio-cors-response: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            payload.len()
+                        );
+                        if stream.write_all(hdr.as_bytes()).is_err() {
+                            return;
+                        }
+                        let mut off = 0usize;
+                        while off < payload.len() {
+                            let end = (off + 65_536).min(payload.len());
+                            if stream.write_all(&payload[off..end]).is_err() {
+                                break;
+                            }
+                            off = end;
+                        }
+                        let _ = stream.flush();
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    for (route, rel, expected_title, expected_artist) in fixtures {
+        let url = format!("http://127.0.0.1:{}/{}", port, route);
+        let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+        assert_eq!(
+            deck.open_network_with_cancel(&url, None, None),
+            0,
+            "open_network failed for {}",
+            rel
+        );
+        assert!(
+            deck.stream_session
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .supports_range(),
+            "{}: expected simple Range 206 probe to enable supports_range even when Accept-Ranges is unexposed",
+            rel
+        );
+        let meta = deck
+            .get_parsed_metadata()
+            .unwrap_or_else(|| panic!("{}: expected parsed tail metadata", rel));
+        assert_eq!(meta.title.as_deref(), Some(expected_title), "{}: title", rel);
+        assert_eq!(
+            meta.track_artist.as_deref(),
+            Some(expected_artist),
+            "{}: artist",
+            rel
+        );
+        assert!(
+            !meta.album.as_deref().unwrap_or("").trim().is_empty(),
+            "{}: expected non-empty album",
+            rel
+        );
+        assert!(
+            !meta.pictures.is_empty(),
+            "{}: expected non-empty cover art pictures",
+            rel
+        );
+        let _ = deck.stop();
+    }
+
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[test]
+fn test_mp4_non_range_http_post_eof_seek_recovers_without_freeze() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let payload = std::fs::read(FixtureResolver::resolve("06_Calculated_Motion_aac.m4a")).unwrap();
+    let payload_srv = Arc::new(payload);
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_srv = stop.clone();
+
+    let srv = std::thread::spawn(move || {
+        while !stop_srv.load(Ordering::Acquire) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut req_line = String::new();
+                    if reader.read_line(&mut req_line).is_err() {
+                        continue;
+                    }
+                    let mut has_range = false;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                            break;
+                        }
+                        if line.to_ascii_lowercase().starts_with("range:") {
+                            has_range = true;
+                        }
+                    }
+                    if has_range {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.flush();
+                        continue;
+                    }
+                    let data = payload_srv.clone();
+                    std::thread::spawn(move || {
+                        let hdr = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: audio/mp4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            data.len()
+                        );
+                        if stream.write_all(hdr.as_bytes()).is_err() {
+                            return;
+                        }
+                        let mut off = 0usize;
+                        while off < data.len() {
+                            let end = (off + 65_536).min(data.len());
+                            if stream.write_all(&data[off..end]).is_err() {
+                                break;
+                            }
+                            off = end;
+                        }
+                        let _ = stream.flush();
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    fn pump_until_audible(deck: &mut StreamingDeck, label: &str) {
+        let mut renderer = deck.renderer.take().expect("deck renderer");
+        let mut out = vec![0.0f32; 1024 * 2];
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let mut peak = 0.0f32;
+        while Instant::now() < deadline {
+            renderer.render_pcm(out.as_mut_ptr(), 1024);
+            let step_peak = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+            if step_peak > 1e-4 {
+                peak = peak.max(step_peak);
+                if !deck.is_buffering.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(8));
+        }
+        deck.renderer = Some(renderer);
+        assert!(
+            peak > 1e-4,
+            "{}: expected audible PCM (peak={}, eof={}, exhausted={}, buf={}, pos={}ms)",
+            label,
+            peak,
+            deck.decoder_eof.load(Ordering::Relaxed),
+            deck.track_exhausted.load(Ordering::Relaxed),
+            deck.is_buffering.load(Ordering::Relaxed),
+            deck.position_ms.load(Ordering::Relaxed)
+        );
+    }
+
+    let url = format!("http://127.0.0.1:{}/06_Calculated_Motion_aac.m4a", port);
+    let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+    assert_eq!(deck.open_network_with_cancel(&url, None, None), 0);
+    assert!(
+        !deck
+            .stream_session
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .supports_range()
+    );
+    deck.play();
+    pump_until_audible(&mut deck, "mp4_non_range_init");
+
+    let dur = deck.duration_ms.load(Ordering::Relaxed);
+    assert!(dur > 20_000);
+
+    // Seek near EOF and wait without draining `renderer` so the decoder reaches EOF while
+    // PCM remains buffered in `rtrb`, reproducing the exact crossfade EOF timing window.
+    assert_eq!(deck.seek(dur - 2_000), 0);
+    let eof_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < eof_deadline {
+        if deck.decoder_eof.load(Ordering::Acquire)
+            && deck.seek_request_ms.load(Ordering::Acquire) < 0
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        deck.decoder_eof.load(Ordering::Acquire),
+        "expected decoder_eof == true near end of non-Range MP4"
+    );
+
+    // Seek backward to 83_150ms (emulating the failing backward seek during active crossfade).
+    assert_eq!(deck.seek(83_150), 0);
+    pump_until_audible(&mut deck, "mp4_non_range_post_eof_back");
+
+    let mut renderer = deck.renderer.take().unwrap();
+    let mut out = vec![0.0f32; 1024 * 2];
+    let start_pos = deck.position_ms.load(Ordering::Relaxed);
+    let advance_deadline = Instant::now() + Duration::from_secs(4);
+    let mut advanced = false;
+    while Instant::now() < advance_deadline {
+        renderer.render_pcm(out.as_mut_ptr(), 1024);
+        assert!(
+            !deck.decoder_eof.load(Ordering::Relaxed),
+            "false decoder_eof after non-Range MP4 post-EOF backward seek"
+        );
+        let pos = deck.position_ms.load(Ordering::Relaxed);
+        if pos >= start_pos + 400 && !deck.is_buffering.load(Ordering::Relaxed) {
+            advanced = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(21));
+    }
+    deck.renderer = Some(renderer);
+    assert!(
+        advanced,
+        "playback froze on non-Range MP4 post-EOF seek (start={}ms, cur={}ms, buf={})",
+        start_pos,
+        deck.position_ms.load(Ordering::Relaxed),
+        deck.is_buffering.load(Ordering::Relaxed)
+    );
+
+    let _ = deck.stop();
+    stop.store(true, Ordering::Release);
+    let _ = srv.join();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_mp4_fd_post_eof_seek_recovers_cleanly() {
+    use miniaudio_player::buffer::ResolvedCoreSource;
+    use miniaudio_player::core::dual_source::{AudioSourceCore, DualSource};
+    use std::time::{Duration, Instant};
+
+    let path = FixtureResolver::resolve("06_Calculated_Motion_aac.m4a");
+    let file = std::fs::File::open(&path).unwrap();
+    let mut deck = StreamingDeck::new_deck(48_000, 2, 1024).unwrap();
+    let item = AudioSourceCore {
+        id: 1,
+        source: "content://test/06_Calculated_Motion_aac.m4a".to_string(),
+        headers: None,
+        data_bytes: None,
+        replay_gain_db: None,
+        replay_peak: None,
+        resolve_in_dart: true,
+    };
+    let rc = DualSource::open_deck_with_pre_resolved(
+        &mut deck,
+        &item,
+        Some(ResolvedCoreSource::Fd {
+            file,
+            offset: 0,
+            length: None,
+            hint_ext: Some("m4a".to_string()),
+        }),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(rc, 0, "expected FD open of M4A to succeed");
+    deck.play();
+
+    let dur = deck.duration_ms.load(Ordering::Relaxed);
+    assert!(dur > 20_000);
+    assert_eq!(deck.seek(dur - 2_000), 0);
+
+    let eof_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < eof_deadline {
+        if deck.decoder_eof.load(Ordering::Acquire)
+            && deck.seek_request_ms.load(Ordering::Acquire) < 0
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(deck.decoder_eof.load(Ordering::Acquire), "expected FD M4A decoder_eof");
+
+    assert_eq!(deck.seek(83_150), 0);
+    let settle_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < settle_deadline {
+        if deck.seek_request_ms.load(Ordering::Acquire) < 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!deck.decoder_eof.load(Ordering::Relaxed));
+
+    let mut renderer = deck.renderer.take().unwrap();
+    let mut out = vec![0.0f32; 1024 * 2];
+    let mut peak = 0.0f32;
+    let start_pos = deck.position_ms.load(Ordering::Relaxed);
+    let adv_deadline = Instant::now() + Duration::from_secs(3);
+    let mut advanced = false;
+    while Instant::now() < adv_deadline {
+        renderer.render_pcm(out.as_mut_ptr(), 1024);
+        peak = peak.max(out.iter().map(|s| s.abs()).fold(0.0f32, f32::max));
+        assert!(
+            !deck.decoder_eof.load(Ordering::Relaxed),
+            "FD M4A hit unexpected EOF right after post-EOF seek"
+        );
+        if deck.position_ms.load(Ordering::Relaxed) >= start_pos + 350 && peak > 1e-4 {
+            advanced = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(21));
+    }
+    deck.renderer = Some(renderer);
+    assert!(
+        advanced,
+        "FD M4A failed to advance cleanly after post-EOF backward seek (start={}ms, cur={}ms, peak={})",
+        start_pos,
+        deck.position_ms.load(Ordering::Relaxed),
+        peak
+    );
+    let _ = deck.stop();
+}
+
 
 

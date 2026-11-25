@@ -158,6 +158,7 @@ struct SymphoniaTrackSession {
     duration_ms: Option<u64>,
     symphonia_meta: SymphoniaExtractedMeta,
     last_io_unexpected_eof: bool,
+    reached_eof: bool,
 }
 
 impl SymphoniaTrackSession {
@@ -217,6 +218,7 @@ impl SymphoniaTrackSession {
             duration_ms,
             symphonia_meta,
             last_io_unexpected_eof: false,
+            reached_eof: false,
         })
     }
 
@@ -339,8 +341,14 @@ impl SymphoniaTrackSession {
         self.last_io_unexpected_eof = false;
         loop {
             let packet = match self.format_reader.next_packet() {
-                Ok(Some(pkt)) => pkt,
-                Ok(None) => return Ok(false),
+                Ok(Some(pkt)) => {
+                    self.reached_eof = false;
+                    pkt
+                }
+                Ok(None) => {
+                    self.reached_eof = true;
+                    return Ok(false);
+                }
                 Err(SymphoniaError::IoError(ref err))
                     if err.kind() == std::io::ErrorKind::UnexpectedEof =>
                 {
@@ -382,7 +390,11 @@ impl SymphoniaTrackSession {
         }
     }
 
-    fn advance_to_ms(&mut self, target_stop_ms: u64) -> Option<u64> {
+    fn advance_to_ms_cancellable<F: Fn() -> bool>(
+        &mut self,
+        target_stop_ms: u64,
+        is_cancelled: &F,
+    ) -> Option<u64> {
         let tb = self
             .format_reader
             .tracks()
@@ -390,7 +402,18 @@ impl SymphoniaTrackSession {
             .find(|t| t.id == self.track_id)
             .and_then(|t| t.time_base)?;
         let mut last_ms = None;
-        while let Ok(Some(pkt)) = self.format_reader.next_packet() {
+        loop {
+            if is_cancelled() {
+                break;
+            }
+            let pkt = match self.format_reader.next_packet() {
+                Ok(Some(pkt)) => pkt,
+                Ok(None) => {
+                    self.reached_eof = true;
+                    break;
+                }
+                Err(_) => break,
+            };
             if pkt.track_id != self.track_id {
                 continue;
             }
@@ -461,7 +484,9 @@ impl SymphoniaTrackSession {
                         )
                         .is_ok()
                     {
-                        if let Some(pkt_ms) = self.advance_to_ms(position_ms.saturating_sub(150)) {
+                        if let Some(pkt_ms) = self
+                            .advance_to_ms_cancellable(position_ms.saturating_sub(150), &|| false)
+                        {
                             actual_ms = pkt_ms;
                         }
                         recovered = true;
@@ -479,6 +504,7 @@ impl SymphoniaTrackSession {
         }
 
         self.last_io_unexpected_eof = false;
+        self.reached_eof = false;
         self.decoder.reset();
         Ok(actual_ms)
     }
@@ -507,6 +533,7 @@ pub struct SymphoniaEngine {
     anchor_ms: u64,
     frames_from_anchor: u64,
     append_scratch: Vec<f32>,
+    is_windowed: bool,
 }
 
 impl SymphoniaEngine {
@@ -552,6 +579,7 @@ impl SymphoniaEngine {
                     anchor_ms: 0,
                     frames_from_anchor: 0,
                     append_scratch: Vec::new(),
+                    is_windowed: false,
                 });
             }
             ExtendedPcmProbe::NotMatched(src) => src,
@@ -573,6 +601,7 @@ impl SymphoniaEngine {
                     anchor_ms: 0,
                     frames_from_anchor: 0,
                     append_scratch: Vec::new(),
+                    is_windowed: false,
                 });
             }
             DsfProbe::NotMatched(src) => src,
@@ -595,6 +624,7 @@ impl SymphoniaEngine {
                     anchor_ms: 0,
                     frames_from_anchor: 0,
                     append_scratch: Vec::new(),
+                    is_windowed: false,
                 });
             }
             ApeProbe::NotMatched(src) => src,
@@ -617,6 +647,7 @@ impl SymphoniaEngine {
                     anchor_ms: 0,
                     frames_from_anchor: 0,
                     append_scratch: Vec::new(),
+                    is_windowed: false,
                 });
             }
             WavpackProbe::NotMatched(src) => src,
@@ -660,6 +691,7 @@ impl SymphoniaEngine {
             anchor_ms: 0,
             frames_from_anchor: 0,
             append_scratch: Vec::new(),
+            is_windowed: false,
         })
     }
 
@@ -752,6 +784,18 @@ impl SymphoniaEngine {
             EngineBackend::Symphonia(session) => session.last_io_unexpected_eof,
             _ => false,
         }
+    }
+
+    /// Returns `true` after the Symphonia demuxer yielded `Ok(None)` (logical EOF).
+    #[inline]
+    pub fn has_reached_eof(&self) -> bool {
+        matches!(&self.backend, EngineBackend::Symphonia(session) if session.reached_eof)
+    }
+
+    /// Returns true if the active decoder is a Symphonia ISO-BMFF/MP4/M4A container session.
+    #[inline]
+    pub fn is_mp4_stream(&self) -> bool {
+        matches!(&self.backend, EngineBackend::Symphonia(s) if s.container_format == "MP4")
     }
 
     /// Decodes the next packet or block into interleaved normalized float PCM samples.
@@ -879,6 +923,22 @@ impl SymphoniaEngine {
         matches!(&self.backend, EngineBackend::Symphonia(s) if s.container_format == "ADTS")
     }
 
+    /// Returns `true` when this engine was opened over a windowed non-seekable mid-stream source.
+    #[inline]
+    pub fn is_windowed(&self) -> bool {
+        self.is_windowed
+    }
+
+    /// Returns `true` if the active decoder is a Symphonia MPEG/MP3 session.
+    #[inline]
+    pub fn is_mp3_stream(&self) -> bool {
+        matches!(
+            &self.backend,
+            EngineBackend::Symphonia(s)
+                if s.container_format == "MP3" || matches!(s.codec, "MP3" | "MP2" | "MP1")
+        )
+    }
+
     /// Returns true if the active decoder is the native WavPack backend.
     #[inline]
     pub fn is_wavpack_stream(&self) -> bool {
@@ -910,8 +970,18 @@ impl SymphoniaEngine {
 
     /// Advances demuxed packets without decoding up to `target_stop_ms` (returns last seen ms).
     pub fn advance_to_ms(&mut self, target_stop_ms: u64) -> Option<u64> {
+        self.advance_to_ms_cancellable(target_stop_ms, &|| false)
+    }
+
+    /// Advances demuxed packets without decoding up to `target_stop_ms`, polling `is_cancelled`
+    /// between packets so superseded seeks abort promptly.
+    pub fn advance_to_ms_cancellable<F: Fn() -> bool>(
+        &mut self,
+        target_stop_ms: u64,
+        is_cancelled: &F,
+    ) -> Option<u64> {
         match &mut self.backend {
-            EngineBackend::Symphonia(s) => s.advance_to_ms(target_stop_ms),
+            EngineBackend::Symphonia(s) => s.advance_to_ms_cancellable(target_stop_ms, is_cancelled),
             _ => None,
         }
     }
@@ -935,6 +1005,18 @@ impl SymphoniaEngine {
         Self::new_with_options(src, Some("flac"), false)
     }
 
+    fn new_windowed_with_head<S: MediaSource + 'static>(
+        virtual_head: Vec<u8>,
+        offset: u64,
+        inner: S,
+        ext_hint: &'static str,
+    ) -> Result<Self, SymphoniaError> {
+        let src = HeadTailWindowSource::new(virtual_head, offset, Box::new(inner));
+        let mut eng = Self::new_with_options(src, Some(ext_hint), false)?;
+        eng.is_windowed = true;
+        Ok(eng)
+    }
+
     /// Initializes a non-seekable Ogg decoder combining memory-resident Ogg identification/setup
     /// header pages (`header_pages`) directly with `inner` positioned at `page_offset`.
     pub fn new_windowed_ogg<S: MediaSource + 'static>(
@@ -942,8 +1024,7 @@ impl SymphoniaEngine {
         page_offset: u64,
         inner: S,
     ) -> Result<Self, SymphoniaError> {
-        let src = HeadTailWindowSource::new(header_pages, page_offset, Box::new(inner));
-        Self::new_with_options(src, Some("ogg"), false)
+        Self::new_windowed_with_head(header_pages, page_offset, inner, "ogg")
     }
 
     /// Initializes a non-seekable Matroska/WebM decoder combining an unknown-size `Segment` header
@@ -954,8 +1035,7 @@ impl SymphoniaEngine {
         inner: S,
         ext_hint: &'static str,
     ) -> Result<Self, SymphoniaError> {
-        let src = HeadTailWindowSource::new(patched_head, cluster_offset, Box::new(inner));
-        Self::new_with_options(src, Some(ext_hint), false)
+        Self::new_windowed_with_head(patched_head, cluster_offset, inner, ext_hint)
     }
 
     /// Initializes a non-seekable raw ADTS AAC decoder directly at verified frame offset `frame_offset`.
@@ -963,8 +1043,25 @@ impl SymphoniaEngine {
         frame_offset: u64,
         inner: S,
     ) -> Result<Self, SymphoniaError> {
-        let src = HeadTailWindowSource::new(Vec::new(), frame_offset, Box::new(inner));
-        Self::new_with_options(src, Some("aac"), false)
+        Self::new_windowed_with_head(Vec::new(), frame_offset, inner, "aac")
+    }
+
+    /// Initializes a non-seekable FLAC decoder combining fixed metadata header blocks
+    /// (`header_bytes`) directly with `inner` positioned at verified frame offset `frame_offset`.
+    pub fn new_windowed_flac<S: MediaSource + 'static>(
+        header_bytes: Vec<u8>,
+        frame_offset: u64,
+        inner: S,
+    ) -> Result<Self, SymphoniaError> {
+        Self::new_windowed_with_head(header_bytes, frame_offset, inner, "flac")
+    }
+
+    /// Initializes a non-seekable MPEG/MP3 decoder directly at verified frame offset `frame_offset`.
+    pub fn new_windowed_mp3<S: MediaSource + 'static>(
+        frame_offset: u64,
+        inner: S,
+    ) -> Result<Self, SymphoniaError> {
+        Self::new_windowed_with_head(Vec::new(), frame_offset, inner, "mp3")
     }
 }
 
@@ -1063,6 +1160,12 @@ impl PatchedFlacSource {
             total_virtual_len: inner_len.map(|n| n.saturating_add(delta)),
         }
     }
+
+    #[inline]
+    fn effective_total_len(&self) -> Option<u64> {
+        self.total_virtual_len
+            .or_else(|| self.inner.byte_len().map(|n| n.saturating_add(self.delta)))
+    }
 }
 
 impl std::io::Read for PatchedFlacSource {
@@ -1096,7 +1199,7 @@ impl std::io::Seek for PatchedFlacSource {
             std::io::SeekFrom::Start(p) => p,
             std::io::SeekFrom::Current(d) => (self.pos as i64).saturating_add(d).max(0) as u64,
             std::io::SeekFrom::End(d) => {
-                let len = self.total_virtual_len.ok_or_else(|| {
+                let len = self.effective_total_len().ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::Unsupported,
                         "PatchedFlacSource missing byte_len for SeekFrom::End",
@@ -1124,7 +1227,7 @@ impl MediaSource for PatchedFlacSource {
     }
 
     fn byte_len(&self) -> Option<u64> {
-        self.total_virtual_len
+        self.effective_total_len()
     }
 }
 

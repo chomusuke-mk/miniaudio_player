@@ -57,6 +57,24 @@ impl FileByteSource {
         let file = File::open(path)?;
         Self::new(file)
     }
+
+    /// Creates an offset-isolated `pread`-backed reopener sharing the same underlying OS FD.
+    #[cfg(unix)]
+    pub fn try_make_pread_reopener(
+        &self,
+    ) -> Option<Arc<dyn Fn() -> Option<Box<dyn MediaSource>> + Send + Sync>> {
+        let cloned = self.reader.get_ref().try_clone().ok()?;
+        let shared = Arc::new(cloned);
+        let base_offset = self.base_offset;
+        let size = self.size;
+        Some(Arc::new(move || {
+            Some(Box::new(PreadFileByteSource::new(
+                Arc::clone(&shared),
+                base_offset,
+                size,
+            )) as Box<dyn MediaSource>)
+        }))
+    }
 }
 
 impl Read for FileByteSource {
@@ -104,6 +122,104 @@ impl Seek for FileByteSource {
 }
 
 impl MediaSource for FileByteSource {
+    #[inline]
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.size)
+    }
+}
+
+#[cfg(unix)]
+struct PreadFileReader {
+    file: Arc<File>,
+    base_offset: u64,
+    size: u64,
+    rel_pos: u64,
+}
+
+#[cfg(unix)]
+impl Read for PreadFileReader {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        use std::os::unix::fs::FileExt;
+        let remaining = self.size.saturating_sub(self.rel_pos);
+        if remaining == 0 || buf.is_empty() {
+            return Ok(0);
+        }
+        let max_read = buf.len().min(remaining as usize);
+        let abs_off = self.base_offset.saturating_add(self.rel_pos);
+        let n = self.file.read_at(&mut buf[..max_read], abs_off)?;
+        self.rel_pos += n as u64;
+        Ok(n)
+    }
+}
+
+#[cfg(unix)]
+impl Seek for PreadFileReader {
+    #[inline]
+    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
+        let target_rel: i128 = match pos {
+            SeekFrom::Start(n) => n as i128,
+            SeekFrom::End(delta) => (self.size as i128).saturating_add(delta as i128),
+            SeekFrom::Current(delta) => (self.rel_pos as i128).saturating_add(delta as i128),
+        };
+        if target_rel < 0 {
+            return Err(IoError::new(
+                ErrorKind::InvalidInput,
+                "Invalid seek before start of bounded pread file slice",
+            ));
+        }
+        self.rel_pos = target_rel as u64;
+        Ok(self.rel_pos)
+    }
+}
+
+#[cfg(unix)]
+struct PreadFileByteSource {
+    reader: BufReader<PreadFileReader>,
+    size: u64,
+}
+
+#[cfg(unix)]
+impl PreadFileByteSource {
+    fn new(file: Arc<File>, base_offset: u64, size: u64) -> Self {
+        Self {
+            reader: BufReader::with_capacity(
+                FileByteSource::BUFFER_CAPACITY,
+                PreadFileReader {
+                    file,
+                    base_offset,
+                    size,
+                    rel_pos: 0,
+                },
+            ),
+            size,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Read for PreadFileByteSource {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        self.reader.read(buf)
+    }
+}
+
+#[cfg(unix)]
+impl Seek for PreadFileByteSource {
+    #[inline]
+    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
+        self.reader.seek(pos)
+    }
+}
+
+#[cfg(unix)]
+impl MediaSource for PreadFileByteSource {
     #[inline]
     fn is_seekable(&self) -> bool {
         true

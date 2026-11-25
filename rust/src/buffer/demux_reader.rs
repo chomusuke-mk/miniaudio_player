@@ -38,6 +38,18 @@ impl DemuxedStreamReader {
         }
     }
 
+    #[inline]
+    fn record_read_progress(&self, probe_mode: bool, new_phys: u64) {
+        if probe_mode {
+            self.session.note_probe_read_end(new_phys);
+            if !self.session.supports_range() {
+                self.session.advance_read_cursor(new_phys);
+            }
+        } else {
+            self.session.advance_read_cursor(new_phys);
+        }
+    }
+
     fn resolve_seek_target(&self, pos: SeekFrom) -> IoResult<u64> {
         match pos {
             SeekFrom::Start(offset) => Ok(offset),
@@ -87,13 +99,8 @@ impl Read for DemuxedStreamReader {
         match self.session.read_at(phys_cursor, buf) {
             Ok(bytes_read) => {
                 self.cursor += bytes_read as u64;
-                let new_phys = phys_cursor + bytes_read as u64;
                 if bytes_read > 0 {
-                    if probe_mode {
-                        self.session.note_probe_read_end(new_phys);
-                    } else {
-                        self.session.advance_read_cursor(new_phys);
-                    }
+                    self.record_read_progress(probe_mode, phys_cursor + bytes_read as u64);
                 }
                 Ok(bytes_read)
             }
@@ -130,9 +137,8 @@ impl Read for DemuxedStreamReader {
                 {
                     Ok(bytes_read) => {
                         self.cursor += bytes_read as u64;
-                        let new_phys = phys_cursor + bytes_read as u64;
-                        if bytes_read > 0 && !probe_mode {
-                            self.session.advance_read_cursor(new_phys);
+                        if bytes_read > 0 {
+                            self.record_read_progress(probe_mode, phys_cursor + bytes_read as u64);
                         }
                         Ok(bytes_read)
                     }

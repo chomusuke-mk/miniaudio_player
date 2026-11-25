@@ -352,8 +352,11 @@ impl DualSource {
         if cur < 0 || (cur as usize) >= q.len() {
             return None;
         }
-        let next_idx = (cur as usize) + 1;
         let loop_mode = self.loop_mode.load(Ordering::Relaxed);
+        if loop_mode == 1 {
+            return Some((cur as usize, q[cur as usize].clone()));
+        }
+        let next_idx = (cur as usize) + 1;
         if next_idx < q.len() {
             Some((next_idx, q[next_idx].clone()))
         } else if loop_mode == 2 {

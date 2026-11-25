@@ -17,8 +17,9 @@ use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
 use super::wasm_ureq_protocol::{
     advance_ring_pos, decode_header_wire_bytes, ring_available, WasmStreamShared, CTRL_ABORTED,
     CTRL_HDR_LEN, CTRL_JS_EXITED, CTRL_JS_WAIT_FALLBACK, CTRL_READ_POS, CTRL_STATE, CTRL_STATUS,
-    CTRL_WAKE_JS, CTRL_WAKE_RUST, CTRL_WORDS, CTRL_WRITE_POS, HDR_CAP, RING_CAP, STATE_CONNECTING,
-    STATE_EOF, STATE_ERROR,
+    CTRL_WAKE_JS, CTRL_WAKE_RUST, CTRL_WORDS, CTRL_WRITE_POS, ERR_CORS_ICY_BLOCKED,
+    ERR_CORS_RANGE_BLOCKED, HDR_CAP, RING_CAP, STATE_CONNECTING, STATE_EOF, STATE_ERROR,
+    STATUS_CORS_ICY_BLOCKED, STATUS_CORS_RANGE_BLOCKED,
 };
 use crate::sync::{lock_unpoisoned, MonotonicInstant};
 
@@ -128,11 +129,16 @@ const NETWORK_WORKER_JS: &str = r#"
 'use strict';
 var wasmMem = null;
 var netCh = null;
+var pageOrigin = '';
+var pageHref = '';
 var streams = new Map();
 
 var STATE_HEADERS_READY = 1;
 var STATE_EOF = 2;
 var STATE_ERROR = 3;
+
+var STATUS_CORS_RANGE_BLOCKED = -6;
+var STATUS_CORS_ICY_BLOCKED = -7;
 
 var CTRL_STATE = 0;
 var CTRL_STATUS = 1;
@@ -154,18 +160,51 @@ var FORBIDDEN = {
     'keep-alive': true,
     'accept-encoding': true,
     'origin': true,
-    'referer': true
+    'referer': true,
+    'x-miniaudio-range-optional': true,
+    'x-miniaudio-icy-strict': true
 };
 var icyBlockedHosts = new Set();
+var rangeBlockedHosts = new Set();
+var simpleGetSucceededHosts = new Set();
 
+function addBoundedSet(set, key) {
+    if (!key) return;
+    if (set.size >= 256) {
+        var oldest = set.values().next().value;
+        if (oldest !== undefined) set.delete(oldest);
+    }
+    set.add(key);
+}
+function getBaseHref() {
+    if (pageHref) return pageHref;
+    return (typeof self !== 'undefined' && self.location && self.location.href)
+        ? self.location.href
+        : undefined;
+}
 function getHostKey(url) {
     try {
-        var base = (typeof self !== 'undefined' && self.location && self.location.href)
-            ? self.location.href
-            : undefined;
-        return new URL(url, base).origin;
+        return new URL(url, getBaseHref()).origin;
     } catch (_) {
         return url;
+    }
+}
+function isCrossOrigin(url) {
+    if (!url || url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
+        return false;
+    }
+    var refOrigin = pageOrigin;
+    if (!refOrigin && typeof self !== 'undefined' && self.location && self.location.origin) {
+        refOrigin = self.location.origin;
+    }
+    if (!refOrigin || refOrigin === 'null') {
+        return false;
+    }
+    try {
+        var targetOrigin = new URL(url, getBaseHref()).origin;
+        return Boolean(targetOrigin && targetOrigin !== 'null' && targetOrigin !== refOrigin);
+    } catch (_) {
+        return false;
     }
 }
 function getCtrl(ptr) {
@@ -179,7 +218,7 @@ function wakeRust(ctrlPtr) {
     Atomics.add(c, CTRL_WAKE_RUST, 1);
     Atomics.notify(c, CTRL_WAKE_RUST);
 }
-function writeResponseHeaders(res, ctrlPtr, hdrPtr, hdrCap) {
+function writeResponseHeaders(res, reqUrl, ctrlPtr, hdrPtr, hdrCap) {
     var enc = new TextEncoder();
     var buf = getBuf(hdrPtr, hdrCap);
     var off = 0;
@@ -198,6 +237,8 @@ function writeResponseHeaders(res, ctrlPtr, hdrPtr, hdrCap) {
     if (res.url && typeof res.url === 'string') {
         writePair('x-miniaudio-final-url', res.url);
     }
+    var cross = (res.type === 'cors' || isCrossOrigin(res.url || reqUrl));
+    writePair('x-miniaudio-cors-response', cross ? '1' : '0');
     Atomics.store(getCtrl(ctrlPtr), CTRL_HDR_LEN, off);
 }
 function buildFetchHeaders(hdrPairs, includeRange, includeIcy) {
@@ -215,36 +256,135 @@ function buildFetchHeaders(hdrPairs, includeRange, includeIcy) {
     return h;
 }
 async function fetchWithHeaderFallback(url, hdrPairs, ac) {
+    if (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
+        try {
+            var localRes = await fetch(url, { signal: ac.signal });
+            if (localRes.status === 0) {
+                return { ok: false, res: null, statusCode: -5, error: null };
+            }
+            return { ok: true, res: localRes };
+        } catch (localErr) {
+            if (ac.signal.aborted) throw localErr;
+            return { ok: false, res: null, statusCode: -5, error: localErr };
+        }
+    }
+
     var hasRange = false;
     var hasIcy = false;
+    var rangeOptional = false;
+    var icyStrict = false;
     if (hdrPairs && hdrPairs.length) {
         for (var i = 0; i < hdrPairs.length; i++) {
             var low = String(hdrPairs[i][0] || '').toLowerCase();
+            var val = String(hdrPairs[i][1] || '');
             if (low === 'range') hasRange = true;
             if (low === 'icy-metadata') hasIcy = true;
+            if (low === 'x-miniaudio-range-optional' && val === '1') rangeOptional = true;
+            if (low === 'x-miniaudio-icy-strict' && val === '1') icyStrict = true;
         }
     }
-    var isLocalScheme = (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0);
-    if (isLocalScheme) {
-        hasRange = false;
-        hasIcy = false;
-    }
+
     var hostKey = getHostKey(url);
-    var tryIcy = hasIcy && !icyBlockedHosts.has(hostKey);
-    var attempts = [];
-    function pushAttempt(r, ic) {
-        for (var j = 0; j < attempts.length; j++) {
-            if (attempts[j].range === r && attempts[j].icy === ic) return;
+    var crossOrigin = isCrossOrigin(url);
+
+    // Case 2: Strict Range (e.g. VOD tail/VBR probe or stream seek/reconnect).
+    // Never fall back to a byte-0 200 GET, and short-circuit cached CORS-blocked hosts.
+    if (hasRange && !rangeOptional) {
+        if (crossOrigin && rangeBlockedHosts.has(hostKey)) {
+            return { ok: false, res: null, statusCode: STATUS_CORS_RANGE_BLOCKED, error: null };
         }
-        attempts.push({ range: r, icy: ic });
+        try {
+            var rangeRes = await fetch(url, {
+                headers: buildFetchHeaders(hdrPairs, true, false),
+                signal: ac.signal
+            });
+            if (rangeRes.status === 0) {
+                if (crossOrigin && simpleGetSucceededHosts.has(hostKey)) {
+                    addBoundedSet(rangeBlockedHosts, hostKey);
+                    return { ok: false, res: null, statusCode: STATUS_CORS_RANGE_BLOCKED, error: null };
+                }
+                return { ok: false, res: null, statusCode: -5, error: null };
+            }
+            return { ok: true, res: rangeRes };
+        } catch (rangeErr) {
+            if (ac.signal.aborted) throw rangeErr;
+            if (crossOrigin && simpleGetSucceededHosts.has(hostKey)) {
+                addBoundedSet(rangeBlockedHosts, hostKey);
+                return { ok: false, res: null, statusCode: STATUS_CORS_RANGE_BLOCKED, error: rangeErr };
+            }
+            return { ok: false, res: null, statusCode: -5, error: rangeErr };
+        }
     }
+
+    // Case 3: Optional Range (e.g. HLS #EXT-X-BYTERANGE).
+    if (hasRange && rangeOptional) {
+        var optAttempts = (crossOrigin && rangeBlockedHosts.has(hostKey))
+            ? [{ range: false, icy: false }]
+            : [{ range: true, icy: false }, { range: false, icy: false }];
+        var lastOptErr = null;
+        var optRangeFailed = false;
+        for (var rIdx = 0; rIdx < optAttempts.length; rIdx++) {
+            var rOpt = optAttempts[rIdx];
+            try {
+                var rRes = await fetch(url, {
+                    headers: buildFetchHeaders(hdrPairs, rOpt.range, false),
+                    signal: ac.signal
+                });
+                if (rRes.status === 0) {
+                    if (rOpt.range) optRangeFailed = true;
+                    continue;
+                }
+                if (!rOpt.range && hostKey) {
+                    addBoundedSet(simpleGetSucceededHosts, hostKey);
+                    if (optRangeFailed && crossOrigin) {
+                        addBoundedSet(rangeBlockedHosts, hostKey);
+                    }
+                }
+                return { ok: true, res: rRes };
+            } catch (rErr) {
+                if (ac.signal.aborted) throw rErr;
+                if (rOpt.range) optRangeFailed = true;
+                lastOptErr = rErr;
+            }
+        }
+        return { ok: false, res: null, statusCode: -5, error: lastOptErr };
+    }
+
+    // Case 4: Strict Icy-MetaData (post-open live stream ICY metadata upgrade probe).
+    if (!hasRange && hasIcy && icyStrict) {
+        if (crossOrigin && icyBlockedHosts.has(hostKey)) {
+            return { ok: false, res: null, statusCode: STATUS_CORS_ICY_BLOCKED, error: null };
+        }
+        try {
+            var icyRes = await fetch(url, {
+                headers: buildFetchHeaders(hdrPairs, false, true),
+                signal: ac.signal
+            });
+            if (icyRes.status === 0) {
+                if (crossOrigin && simpleGetSucceededHosts.has(hostKey)) {
+                    addBoundedSet(icyBlockedHosts, hostKey);
+                    return { ok: false, res: null, statusCode: STATUS_CORS_ICY_BLOCKED, error: null };
+                }
+                return { ok: false, res: null, statusCode: -5, error: null };
+            }
+            return { ok: true, res: icyRes };
+        } catch (icyErr) {
+            if (ac.signal.aborted) throw icyErr;
+            if (crossOrigin && simpleGetSucceededHosts.has(hostKey)) {
+                addBoundedSet(icyBlockedHosts, hostKey);
+                return { ok: false, res: null, statusCode: STATUS_CORS_ICY_BLOCKED, error: icyErr };
+            }
+            return { ok: false, res: null, statusCode: -5, error: icyErr };
+        }
+    }
+
+    // Case 5: Standard GET (optional initial Icy-MetaData only when allowed & unblocked).
+    var tryIcy = hasIcy && !(crossOrigin && icyBlockedHosts.has(hostKey));
+    var attempts = [];
     if (tryIcy) {
-        pushAttempt(hasRange, true);
+        attempts.push({ range: false, icy: true });
     }
-    if (hasRange) {
-        pushAttempt(true, false);
-    }
-    pushAttempt(false, false);
+    attempts.push({ range: false, icy: false });
 
     var lastErr = null;
     var icyFailed = false;
@@ -252,19 +392,18 @@ async function fetchWithHeaderFallback(url, hdrPairs, ac) {
         var opt = attempts[a];
         try {
             var res = await fetch(url, {
-                headers: buildFetchHeaders(hdrPairs, opt.range, opt.icy),
+                headers: buildFetchHeaders(hdrPairs, false, opt.icy),
                 signal: ac.signal
             });
             if (res.status === 0) {
                 if (opt.icy) icyFailed = true;
                 continue;
             }
-            if (icyFailed && !opt.icy && hostKey) {
-                if (icyBlockedHosts.size >= 256) {
-                    var oldest = icyBlockedHosts.values().next().value;
-                    if (oldest !== undefined) icyBlockedHosts.delete(oldest);
-                }
-                icyBlockedHosts.add(hostKey);
+            if (!opt.range && !opt.icy && hostKey) {
+                addBoundedSet(simpleGetSucceededHosts, hostKey);
+            }
+            if (icyFailed && !opt.icy && crossOrigin && hostKey) {
+                addBoundedSet(icyBlockedHosts, hostKey);
             }
             return { ok: true, res: res };
         } catch (err) {
@@ -273,7 +412,7 @@ async function fetchWithHeaderFallback(url, hdrPairs, ac) {
             lastErr = err;
         }
     }
-    return { ok: false, res: null, error: lastErr };
+    return { ok: false, res: null, statusCode: -5, error: lastErr };
 }
 async function waitRingSpace(entry) {
     var ctrlPtr = entry.ctrlPtr;
@@ -336,13 +475,13 @@ async function pumpStream(d) {
         var chosenRes = attempt.ok ? attempt.res : null;
         if (!chosenRes) {
             var cFail = getCtrl(d.ctrlPtr);
-            Atomics.store(cFail, CTRL_STATUS, -5);
+            Atomics.store(cFail, CTRL_STATUS, attempt.statusCode || -5);
             Atomics.store(cFail, CTRL_STATE, STATE_ERROR);
             wakeRust(d.ctrlPtr);
             return;
         }
 
-        writeResponseHeaders(chosenRes, d.ctrlPtr, d.hdrPtr, d.hdrCap);
+        writeResponseHeaders(chosenRes, url, d.ctrlPtr, d.hdrPtr, d.hdrCap);
         var cHdr = getCtrl(d.ctrlPtr);
         Atomics.store(cHdr, CTRL_STATUS, chosenRes.status);
 
@@ -442,6 +581,8 @@ onmessage = function(ev) {
     var d = ev.data;
     if (!d || !d.mem || netCh) return;
     wasmMem = d.mem;
+    pageOrigin = (typeof d.pageOrigin === 'string') ? d.pageOrigin : '';
+    pageHref = (typeof d.pageHref === 'string') ? d.pageHref : '';
     netCh = new BroadcastChannel(d.channel);
     netCh.onmessage = handleCommand;
     var rArr = new Int32Array(wasmMem.buffer, d.readyPtr, 1);
@@ -466,12 +607,24 @@ pub fn ensure_network_worker() {
         "workerCode, mem, readyPtr, channelName",
         r#"
             try {
+                var pOrigin = (typeof location !== 'undefined' && location.origin && location.origin !== 'null')
+                    ? location.origin
+                    : '';
+                var pHref = (typeof location !== 'undefined' && location.href && location.href.indexOf('blob:') !== 0)
+                    ? location.href
+                    : '';
                 var blob = new Blob([workerCode], { type: 'text/javascript' });
                 var url = URL.createObjectURL(blob);
                 var w = new Worker(url);
                 URL.revokeObjectURL(url);
                 self.__miniaudioNetWorker = w;
-                w.postMessage({ mem: mem, readyPtr: readyPtr, channel: channelName });
+                w.postMessage({
+                    mem: mem,
+                    readyPtr: readyPtr,
+                    channel: channelName,
+                    pageOrigin: pOrigin,
+                    pageHref: pHref
+                });
                 return true;
             } catch (_) {
                 return false;
@@ -811,6 +964,12 @@ impl<S> RequestBuilder<S> {
             abort_shared_stream(&shared);
             drop(shared);
             reap_exited_streams();
+            if status == STATUS_CORS_RANGE_BLOCKED {
+                return Err(Error::Transport(ERR_CORS_RANGE_BLOCKED.to_string()));
+            }
+            if status == STATUS_CORS_ICY_BLOCKED {
+                return Err(Error::Transport(ERR_CORS_ICY_BLOCKED.to_string()));
+            }
             return Err(Error::Transport(format!(
                 "fetch failed for '{}' (code {})",
                 self.url, status

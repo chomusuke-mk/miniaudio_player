@@ -811,6 +811,7 @@ fn tick_music_lifecycle(
             .load(Ordering::Relaxed);
         let q_len = read_unpoisoned(&ply.music_manager.inner.queue).len();
         let loop_m = ply.music_manager.inner.loop_mode.load(Ordering::Relaxed);
+        let is_loop_one = loop_m == 1;
 
         let has_next_track = if q_len > 0 {
             let n = current_idx + 1;
@@ -818,9 +819,14 @@ fn tick_music_lifecycle(
         } else {
             false
         };
+        let has_prewarm_target =
+            has_next_track || (is_loop_one && q_len > 0 && (current_idx as usize) < q_len);
 
-        let should_auto_xfade =
-            has_next_track && auto_ms > 0 && dur > (auto_ms as i64) && (pos + (auto_ms as i64) >= dur);
+        let should_auto_xfade = !is_loop_one
+            && has_next_track
+            && auto_ms > 0
+            && dur > (auto_ms as i64)
+            && (pos + (auto_ms as i64) >= dur);
         let reached_eof = active_deck.track_exhausted.load(Ordering::Acquire)
             || (dur > 0 && pos >= dur && pos > 0);
         let is_eof = !should_auto_xfade && reached_eof;
@@ -830,7 +836,7 @@ fn tick_music_lifecycle(
             .inner
             .standby_ready_id
             .load(Ordering::Relaxed);
-        if has_next_track
+        if has_prewarm_target
             && standby_id < 0
             && !should_auto_xfade
             && !reached_eof
@@ -844,8 +850,12 @@ fn tick_music_lifecycle(
         }
 
         if should_auto_xfade || reached_eof {
-            let next_idx_opt = if loop_m == 1 && is_eof && !should_auto_xfade {
-                Some(current_idx as usize)
+            let next_idx_opt = if is_loop_one {
+                if (current_idx as usize) < q_len {
+                    Some(current_idx as usize)
+                } else {
+                    None
+                }
             } else if has_next_track {
                 let n = current_idx + 1;
                 if (n as usize) < q_len {

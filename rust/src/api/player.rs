@@ -1289,8 +1289,9 @@ impl RustMiniaudioPlayer {
 
     /// Sets the queue loop policy (0: off, 1: one, 2: all).
     pub fn set_loop_mode(&self, mode: i32) {
-        if let Ok(true) = self.coordinator.set_loop_mode(mode) {
-            self.emit_event(RustPlayerEvent::LoopMode(mode));
+        let clamped = mode.clamp(0, 2);
+        if let Ok(true) = self.coordinator.set_loop_mode(clamped) {
+            self.emit_event(RustPlayerEvent::LoopMode(clamped));
         }
     }
 

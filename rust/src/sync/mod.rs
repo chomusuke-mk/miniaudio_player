@@ -329,8 +329,8 @@ pub mod thread {
                                     "  var initP = wasm_bindgen({ module_or_path: d[0], memory: d[1] });\n" +
                                     "  onmessage = async function(ev) {\n" +
                                     "    await initP;\n" +
-                                    "    try { wasm_bindgen.wasm_thread_entry_point(ev.data); }\n" +
-                                    "    finally { postMessage(0); }\n" +
+                                    "    try { wasm_bindgen.wasm_thread_entry_point(ev.data); postMessage(0); }\n" +
+                                    "    catch (err) { postMessage(1); throw err; }\n" +
                                     "  };\n" +
                                     "};";
                                 var blob = new Blob([workerCode], { type: 'text/javascript' });
@@ -339,8 +339,12 @@ pub mod thread {
                                 URL.revokeObjectURL(url);
                                 worker.postMessage([wasmMod, wasmMem]);
                             }
-                            worker.onmessage = function() {
-                                pool.push(worker);
+                            worker.onmessage = function(ev) {
+                                if (ev && ev.data === 0) {
+                                    pool.push(worker);
+                                } else {
+                                    try { worker.terminate(); } catch (_) {}
+                                }
                             };
                             worker.postMessage(ptr);
                             return true;

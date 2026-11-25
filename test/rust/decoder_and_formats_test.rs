@@ -2753,3 +2753,40 @@ fn test_problems2_e11_live_bursty_radio_zero_micro_cut_oscillation() {
     stop.store(true, Ordering::Release);
     let _ = srv.join();
 }
+
+
+#[test]
+fn test_mp4_engine_tracks_reached_eof_flag() {
+    let path = FixtureResolver::resolve("06_Calculated_Motion_aac.m4a");
+    let file = File::open(&path).expect("failed to open 06_Calculated_Motion_aac.m4a");
+    let mut engine = SymphoniaEngine::new(file, Some("m4a")).expect("open M4A engine");
+
+    assert!(engine.is_mp4_stream(), "expected container to be classified as MP4");
+    assert!(!engine.has_reached_eof(), "freshly opened MP4 must not be at EOF");
+
+    let dur = engine.duration_ms().expect("expected M4A duration_ms");
+    assert!(dur > 5_000, "expected duration > 5s, got {}", dur);
+    engine.seek_ms(dur.saturating_sub(500)).expect("seek near EOF");
+    assert!(
+        !engine.has_reached_eof(),
+        "seek_ms must clear reached_eof before decoding tail"
+    );
+
+    let mut pcm = Vec::new();
+    let mut hit_eof = false;
+    for _ in 0..256 {
+        match engine.decode_next_frame(&mut pcm) {
+            Ok(true) => assert!(!engine.has_reached_eof()),
+            Ok(false) => {
+                hit_eof = true;
+                break;
+            }
+            Err(e) => panic!("unexpected MP4 decode error while draining tail: {:?}", e),
+        }
+    }
+    assert!(hit_eof, "expected MP4 engine to reach logical EOF within 256 tail frames");
+    assert!(
+        engine.has_reached_eof(),
+        "expected SymphoniaEngine::has_reached_eof() == true after Ok(false)"
+    );
+}
