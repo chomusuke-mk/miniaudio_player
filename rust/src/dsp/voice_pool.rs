@@ -17,7 +17,7 @@ pub struct SoundBuffer {
 }
 
 impl SoundBuffer {
-    /// Creates a new sound buffer from raw PCM samples, sample rate, and channel count.
+    /// Creates a new sound buffer from raw PCM `samples`, `sample_rate`, and `channels`.
     pub fn new(samples: Vec<f32>, sample_rate: u32, channels: usize) -> Self {
         let ch = channels.max(1);
         let sr = sample_rate.max(8000);
@@ -31,12 +31,18 @@ impl SoundBuffer {
         }
     }
 
-    /// Decodes an audio file in memory (MP3, WAV, FLAC, OGG, AAC) into a `SoundBuffer`.
+    /// Decodes an audio file in memory (`bytes`, e.g., MP3, WAV, FLAC, OGG, AAC) into a `SoundBuffer`.
+    ///
+    /// # Errors
+    /// Returns an error if `bytes` is empty or decoding fails.
     pub fn decode_from_bytes(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_from_owned_bytes(bytes.to_vec(), None)
     }
 
-    /// Zero-copy overload taking ownership of `bytes` directly with an optional extension hint.
+    /// Zero-copy overload taking ownership of `bytes` directly with an optional extension `hint_ext`.
+    ///
+    /// # Errors
+    /// Returns an error if `bytes` is empty, format probing fails, or decoding fails.
     pub fn decode_from_owned_bytes(
         bytes: Vec<u8>,
         hint_ext: Option<&str>,
@@ -45,42 +51,64 @@ impl SoundBuffer {
         use std::io::Cursor;
 
         if bytes.is_empty() {
+            crate::map_log!(1, "[SFX_DECODE] Cannot decode sound buffer from empty byte slice");
             return Err("Cannot decode sound buffer from empty byte slice".to_string());
         }
 
         let (_status, boundary) = StreamClassifier::detect_head_boundary(&bytes, bytes.len() as i64);
         let hint = boundary.container.hint_extension().or(hint_ext);
+        crate::map_log!(
+            4,
+            "[SFX_DECODE] Decoding {} bytes (hint={:?})",
+            bytes.len(),
+            hint
+        );
         let cursor = Cursor::new(bytes);
         Self::decode_from_media_source(cursor, hint)
     }
 
-    /// Decodes any seekable `MediaSource` (memory cursor, disk file, or Android FD slice).
+    /// Decodes any seekable `MediaSource` (`source`) with optional format `hint`.
+    ///
+    /// # Errors
+    /// Returns an error if probing fails, packet decoding errors, or zero PCM frames are decoded.
     pub fn decode_from_media_source<M: symphonia::core::io::MediaSource + 'static>(
         source: M,
         hint: Option<&str>,
     ) -> Result<Self, String> {
         use crate::decoder::symphonia_engine::SymphoniaEngine;
 
-        let mut engine = SymphoniaEngine::new(source, hint)
-            .map_err(|e| format!("Failed to probe audio format: {:?}", e))?;
+        let mut engine = SymphoniaEngine::new(source, hint).map_err(|e| {
+            crate::map_log!(1, "[SFX_DECODE] Failed to probe audio format (hint={:?}): {:?}", hint, e);
+            format!("Failed to probe audio format: {:?}", e)
+        })?;
 
         let sr = engine.sample_rate();
         let ch = engine.channels() as usize;
         let mut pcm = Vec::with_capacity(32768);
         let mut packet_pcm = Vec::with_capacity(4096);
 
-        while engine
-            .decode_next_frame(&mut packet_pcm)
-            .map_err(|e| format!("Decoding error: {:?}", e))?
-        {
+        while engine.decode_next_frame(&mut packet_pcm).map_err(|e| {
+            crate::map_log!(1, "[SFX_DECODE] Decoding error (sr={}, ch={}): {:?}", sr, ch, e);
+            format!("Decoding error: {:?}", e)
+        })? {
             pcm.extend_from_slice(&packet_pcm);
         }
 
         if pcm.is_empty() {
+            crate::map_log!(1, "[SFX_DECODE] Decoded stream contained zero PCM frames (hint={:?})", hint);
             return Err("Decoded audio stream contained zero PCM frames".to_string());
         }
 
-        Ok(Self::new(pcm, sr, ch))
+        let buf = Self::new(pcm, sr, ch);
+        crate::map_log!(
+            4,
+            "[SFX_DECODE] Decoded SFX buffer: sr={} ch={} frames={} duration_ms={}",
+            buf.sample_rate,
+            buf.channels,
+            buf.frame_count(),
+            buf.duration_ms
+        );
+        Ok(buf)
     }
 
     /// Returns the total number of audio frames in the buffer.
@@ -169,7 +197,7 @@ pub enum VoiceStealingPolicy {
     Farthest,
 }
 
-/// Linear-congruential pseudo-random number generator for jitter in `[-1.0, 1.0]`.
+/// Linear-congruential pseudo-random number generator for jitter in `[-1.0, 1.0]` from `seed` and `salt`.
 #[inline]
 pub fn pseudo_random_jitter(seed: u32, salt: u32) -> f32 {
     let mut state = seed.wrapping_mul(1664525).wrapping_add(1013904223 ^ salt);

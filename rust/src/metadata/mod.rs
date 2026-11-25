@@ -12,12 +12,17 @@ use lofty::config::{ParseOptions, ParsingMode};
 use lofty::file::{FileType, TaggedFileExt};
 use lofty::picture::{MimeType as LoftyMimeType, PictureType as LoftyPictureType};
 use lofty::probe::Probe;
-use lofty::tag::{ItemKey,ItemValue, Tag, TagType};
+use lofty::tag::{ItemKey, ItemValue, Tag, TagType};
 
 use crate::api::types::{
     RustAudioChapter, RustAudioMetadata, RustAudioPicture, RustCustomTagField,
     RustExtendedMetadata, RustIcyMetadata, RustId3v2Version, RustMimeType, RustPictureType,
 };
+
+/// Sony Wave64 top-level `"riff"` chunk GUID (`72696666-2e91-cf11-a5d6-28db04c10000`).
+const W64_RIFF_GUID: [u8; 16] = [
+    0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00, 0x00,
+];
 
 /// Lightweight snapshot of metadata, visuals, and chapter cues captured by Symphonia during probing.
 #[derive(Debug, Clone, Default)]
@@ -36,7 +41,7 @@ impl SymphoniaExtractedMeta {
         self.tags.is_empty() && self.visuals.is_empty() && self.chapters.is_empty()
     }
 
-    /// Captures all metadata revisions and chapters from a Symphonia `FormatReader`.
+    /// Captures all metadata revisions, attachments, and chapters from a Symphonia `format` reader.
     pub fn from_format_reader(format: &mut dyn symphonia::core::formats::FormatReader) -> Self {
         let mut out = Self::default();
 
@@ -131,6 +136,7 @@ impl SymphoniaExtractedMeta {
         out
     }
 
+    /// Recursively flattens a Symphonia `ChapterGroup` (`group`) into `chapters`.
     fn ingest_chapter_group(
         chapters: &mut Vec<RustAudioChapter>,
         group: &symphonia::core::meta::ChapterGroup,
@@ -171,6 +177,7 @@ impl SymphoniaExtractedMeta {
         }
     }
 
+    /// Copies container-level and per-track metadata from `rev` into `out`.
     fn ingest_revision(out: &mut Self, rev: &symphonia::core::meta::MetadataRevision) {
         Self::ingest_container(out, &rev.media);
         for pt in &rev.per_track {
@@ -178,6 +185,7 @@ impl SymphoniaExtractedMeta {
         }
     }
 
+    /// Appends tags and embedded artwork from `container` into `out`.
     fn ingest_container(out: &mut Self, container: &symphonia::core::meta::MetadataContainer) {
         use symphonia::core::meta::StandardTag;
         for tag in &container.tags {
@@ -219,8 +227,8 @@ impl SymphoniaExtractedMeta {
 pub struct UniversalMetadataExtractor;
 
 impl UniversalMetadataExtractor {
-    /// Extracts complete [`RustAudioMetadata`] from `metadata_buffer` (`StreamBuffer` in `Sparse` mode),
-    /// merging Symphonia container metadata and live ICY stream metadata when present.
+    /// Extracts complete [`RustAudioMetadata`] from `metadata_buffer` (`StreamBuffer` in `Sparse` mode)
+    /// for `container_format`, merging `symphonia_meta` and `icy_meta` when present.
     pub fn extract(
         metadata_buffer: &std::sync::Arc<crate::buffer::StreamBuffer>,
         container_format: &str,
@@ -343,10 +351,23 @@ impl UniversalMetadataExtractor {
             out.chapters.sort_by_key(|c| c.start_ms);
         }
 
+        crate::map_log!(
+            4,
+            "[META] Extracted metadata: format={} tag_formats={:?} title={:?} artist={:?} pictures={} chapters={} bytes={}",
+            container_format,
+            out.tag_formats,
+            out.title,
+            out.track_artist,
+            out.pictures.len(),
+            out.chapters.len(),
+            out.bytes.len()
+        );
+
         out
     }
 }
 
+/// Attempts to probe and parse tags from seekable `reader` using `lofty`, populating `out` and `consumed_custom_keys`.
 fn try_parse_with_lofty<R: Read + Seek>(
     reader: &mut R,
     out: &mut RustAudioMetadata,
@@ -358,10 +379,6 @@ fn try_parse_with_lofty<R: Read + Seek>(
         if (&header[0..4] == b"RF64" || &header[0..4] == b"RIFX") && &header[8..12] == b"WAVE" {
             return false;
         }
-        const W64_RIFF_GUID: [u8; 16] = [
-            0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00,
-            0x00,
-        ];
         if header == W64_RIFF_GUID {
             return false;
         }
@@ -374,6 +391,7 @@ fn try_parse_with_lofty<R: Read + Seek>(
         .parsing_mode(ParsingMode::Relaxed);
 
     let Ok(probe) = Probe::new(reader).options(options).guess_file_type() else {
+        crate::map_log!(4, "[META] Lofty file type guess failed, using fallback extractors");
         return false;
     };
 
@@ -382,6 +400,7 @@ fn try_parse_with_lofty<R: Read + Seek>(
     }
 
     let Ok(tagged_file) = probe.read() else {
+        crate::map_log!(4, "[META] Lofty probe read failed, using fallback extractors");
         return false;
     };
 
@@ -411,12 +430,14 @@ fn try_parse_with_lofty<R: Read + Seek>(
     true
 }
 
+/// Extracts a text or locator string slice for `key` from `tag`.
 #[inline]
 fn tag_str(tag: &Tag, key: ItemKey) -> Option<&str> {
     tag.get(key)
         .and_then(|item| item.value().text().or_else(|| item.value().locator()))
 }
 
+/// Populates standard, picture, chapter, extended, and custom fields in `out` from `tag`, tracking `consumed_custom_keys`.
 fn ingest_lofty_tag(
     tag: &Tag,
     out: &mut RustAudioMetadata,
@@ -667,6 +688,7 @@ fn ingest_lofty_tag(
     }
 }
 
+/// Parses the leading unsigned integer before an optional `'/'` separator in `s`.
 #[inline]
 fn parse_leading_u32(s: &str) -> Option<u32> {
     let trimmed = s.trim();
@@ -674,12 +696,14 @@ fn parse_leading_u32(s: &str) -> Option<u32> {
     num_part.parse::<u32>().ok()
 }
 
+/// Parses the denominator unsigned integer after `'/'` in `s` (e.g. `"3/12"` -> `Some(12)`).
 #[inline]
 fn parse_slash_total_u32(s: &str) -> Option<u32> {
     let (_, total_part) = s.trim().split_once('/')?;
     total_part.trim().parse::<u32>().ok()
 }
 
+/// Resolves a field from `tag` using `key` first and then `fallbacks`, recording fallback keys in `consumed`.
 fn get_lofty_field(
     tag: &Tag,
     key: ItemKey,
@@ -697,6 +721,7 @@ fn get_lofty_field(
     get_lofty_fallback(tag, fallbacks, consumed)
 }
 
+/// Searches `tag` across `fallbacks` (both mapped `ItemKey`s and format-specific raw items), recording keys in `consumed`.
 fn get_lofty_fallback(
     tag: &Tag,
     fallbacks: &[&str],
@@ -724,6 +749,7 @@ fn get_lofty_fallback(
     None
 }
 
+/// Looks up a format-specific unmapped tag entry matching `key` inside `tag`.
 fn lookup_unmapped_in_tag(tag: &Tag, key: &str) -> Option<String> {
     match tag.tag_type() {
         TagType::Id3v2 => {
@@ -797,6 +823,7 @@ fn lookup_unmapped_in_tag(tag: &Tag, key: &str) -> Option<String> {
     None
 }
 
+/// Extracts unmapped custom key/value pairs from `tag`, also populating ID3v2 version and `CHAP` chapters in `out`.
 fn extract_raw_lofty_items(tag: &Tag, out: &mut RustAudioMetadata) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     match tag.tag_type() {
@@ -925,6 +952,7 @@ fn extract_raw_lofty_items(tag: &Tag, out: &mut RustAudioMetadata) -> Vec<(Strin
     pairs
 }
 
+/// Helper macro setting an optional extended metadata field when unset while marking fallback keys consumed.
 macro_rules! set_ext {
     ($target:expr, $tag:expr, $key:expr, $fallbacks:expr, $consumed:expr) => {
         if $target.is_none() {
@@ -937,6 +965,7 @@ macro_rules! set_ext {
     };
 }
 
+/// Populates the 63 [`RustExtendedMetadata`] fields in `ext` from `tag`, recording keys in `consumed`.
 fn ingest_extended_from_lofty(
     tag: &Tag,
     ext: &mut RustExtendedMetadata,
@@ -1351,6 +1380,7 @@ fn ingest_extended_from_lofty(
 // Special Container Extractors (DSF, RF64, RIFX, W64, BWF)
 // =========================================================================
 
+/// Dispatches seekable container-specific metadata extractors (DSF, RF64/RIFX/RIFF, W64, CAF, MP4 `chpl`, AIFF) over `reader` into `out`, tracking `consumed`.
 fn try_parse_special_containers_seekable<R: Read + Seek>(
     reader: &mut R,
     out: &mut RustAudioMetadata,
@@ -1388,10 +1418,6 @@ fn try_parse_special_containers_seekable<R: Read + Seek>(
     }
 
     // 3. Sony Wave64 (W64)
-    const W64_RIFF_GUID: [u8; 16] = [
-        0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00,
-        0x00,
-    ];
     if n >= 40 && header[0..16] == W64_RIFF_GUID {
         parse_w64_chunks(reader, out, consumed);
         return;
@@ -1418,6 +1444,7 @@ fn try_parse_special_containers_seekable<R: Read + Seek>(
     }
 }
 
+/// Reads an ISO BMFF box header at `pos` from `reader`, returning `(payload_start, next_box_pos, fourcc)`.
 fn read_bmff_box_header<R: Read + Seek>(reader: &mut R, pos: u64) -> Option<(u64, u64, [u8; 4])> {
     if reader.seek(SeekFrom::Start(pos)).is_err() {
         return None;
@@ -1447,6 +1474,7 @@ fn read_bmff_box_header<R: Read + Seek>(reader: &mut R, pos: u64) -> Option<(u64
     }
 }
 
+/// Scans `reader` between byte offsets `start` and `end` for a BMFF child box matching `target`.
 fn find_bmff_child_box<R: Read + Seek>(
     reader: &mut R,
     start: u64,
@@ -1469,6 +1497,7 @@ fn find_bmff_child_box<R: Read + Seek>(
     None
 }
 
+/// Parses Nero `chpl` chapter atoms inside an MP4/M4A `moov/udta` hierarchy from `reader` into `out`.
 fn parse_mp4_chpl_chapters<R: Read + Seek>(reader: &mut R, out: &mut RustAudioMetadata) {
     let Some((moov_start, moov_end)) = find_bmff_child_box(reader, 0, u64::MAX, *b"moov") else {
         return;
@@ -1533,6 +1562,7 @@ fn parse_mp4_chpl_chapters<R: Read + Seek>(reader: &mut R, out: &mut RustAudioMe
     }
 }
 
+/// Parses AIFF/AIFC `ID3 `, `NAME`, `AUTH`, `(c) `, and `ANNO` chunks from `reader` into `out`, tracking `consumed`.
 fn parse_aiff_chunks<R: Read + Seek>(
     reader: &mut R,
     out: &mut RustAudioMetadata,
@@ -1605,6 +1635,7 @@ fn parse_aiff_chunks<R: Read + Seek>(
     }
 }
 
+/// Parses Apple Core Audio Format (`caff`) `info` chunks from `reader` into `out`, tracking `consumed`.
 fn parse_caf_chunks<R: Read + Seek>(
     reader: &mut R,
     out: &mut RustAudioMetadata,
@@ -1651,6 +1682,7 @@ fn parse_caf_chunks<R: Read + Seek>(
     }
 }
 
+/// Decodes null-delimited key/value pairs from a CAF `info` chunk `body` into `out`, tracking `consumed`.
 fn ingest_caf_info_chunk(
     body: &[u8],
     out: &mut RustAudioMetadata,
@@ -1790,6 +1822,7 @@ fn ingest_caf_info_chunk(
     any
 }
 
+/// Wraps raw ID3v2/APEv2/ID3v1 tag bytes (`id3_slice`) in a synthetic MPEG frame so `lofty` can parse tags into `out`, tracking `consumed`.
 fn parse_raw_id3v2_slice(
     id3_slice: &[u8],
     out: &mut RustAudioMetadata,
@@ -1850,6 +1883,7 @@ fn parse_raw_id3v2_slice(
     }
 }
 
+/// Parses RIFF/RF64/RIFX `id3 `, `LIST(INFO)`, and `bext` chunks from `reader` (`is_big_endian`) into `out`, tracking `consumed`.
 fn parse_riff_family_chunks<R: Read + Seek>(
     reader: &mut R,
     is_big_endian: bool,
@@ -1921,6 +1955,7 @@ fn parse_riff_family_chunks<R: Read + Seek>(
     }
 }
 
+/// Parses Sony Wave64 `id3 ` and `list(info)` chunks from `reader` into `out`, tracking `consumed`.
 fn parse_w64_chunks<R: Read + Seek>(
     reader: &mut R,
     out: &mut RustAudioMetadata,
@@ -1985,6 +2020,7 @@ fn parse_w64_chunks<R: Read + Seek>(
     }
 }
 
+/// Parses RIFF `LIST(INFO)` subchunks from `data` (`is_big_endian`) into `out`, tracking `consumed`.
 fn parse_riff_info_subchunks(
     data: &[u8],
     is_big_endian: bool,
@@ -2057,6 +2093,7 @@ fn parse_riff_info_subchunks(
     }
 }
 
+/// Parses Broadcast Wave Format `bext` chunk `bext` fields (description, originator, origination date) into `out`.
 fn parse_bwf_bext_chunk(bext: &[u8], out: &mut RustAudioMetadata) {
     if bext.len() < 348 {
         return;
@@ -2096,6 +2133,7 @@ fn parse_bwf_bext_chunk(bext: &[u8], out: &mut RustAudioMetadata) {
 // Binary ID3v2 Version & CHAP Chapter Extractor + Vorbis CHAPTERxxx
 // =========================================================================
 
+/// Reads an ID3v2 header and any `CHAP` chapter frames from the start of `reader` into `out`.
 fn extract_id3v2_header_and_chapters_from_reader<R: Read + Seek>(
     reader: &mut R,
     out: &mut RustAudioMetadata,
@@ -2134,6 +2172,7 @@ fn extract_id3v2_header_and_chapters_from_reader<R: Read + Seek>(
     }
 }
 
+/// Returns `true` if `w` starts with a well-formed 10-byte ID3v2.2/2.3/2.4 header.
 #[inline]
 fn is_valid_id3v2_header(w: &[u8]) -> bool {
     w.len() >= 10
@@ -2146,6 +2185,7 @@ fn is_valid_id3v2_header(w: &[u8]) -> bool {
         && (w[9] & 0x80) == 0
 }
 
+/// Scans `data` for a valid ID3v2 header and populates `id3v2_version` and `chapters` in `out`.
 fn extract_id3v2_header_and_chapters_from_slice(data: &[u8], out: &mut RustAudioMetadata) {
     if data.len() < 10 {
         return;
@@ -2179,6 +2219,7 @@ fn extract_id3v2_header_and_chapters_from_slice(data: &[u8], out: &mut RustAudio
     }
 }
 
+/// Parses ID3v2.3/2.4 `CHAP` frames from raw ID3v2 tag bytes `data`.
 fn parse_id3v2_chap_frames(data: &[u8]) -> Vec<RustAudioChapter> {
     let mut chapters = Vec::new();
     if data.len() < 10 || &data[0..3] != b"ID3" {
@@ -2287,6 +2328,7 @@ fn parse_id3v2_chap_frames(data: &[u8]) -> Vec<RustAudioChapter> {
     chapters
 }
 
+/// Decodes a single ID3v2 `CHAP` frame payload `data` for ID3v2 major `version` (`3` or `4`).
 fn parse_single_chap_frame(data: &[u8], version: u8) -> Option<RustAudioChapter> {
     let null_pos = data.iter().position(|&b| b == 0)?;
     let time_offset = null_pos + 1;
@@ -2350,6 +2392,7 @@ fn parse_single_chap_frame(data: &[u8], version: u8) -> Option<RustAudioChapter>
     })
 }
 
+/// Decodes an ID3v2 text payload `bytes` according to its text `encoding` byte (`0`..=`3`).
 fn decode_id3_text(encoding: u8, bytes: &[u8]) -> String {
     match encoding {
         0 => bytes
@@ -2400,6 +2443,7 @@ fn decode_id3_text(encoding: u8, bytes: &[u8]) -> String {
     }
 }
 
+/// Decodes a 4-byte ID3v2 28-bit synchsafe integer from `bytes`.
 #[inline]
 fn decode_synchsafe(bytes: &[u8]) -> u32 {
     ((bytes[0] as u32 & 0x7F) << 21)
@@ -2408,6 +2452,7 @@ fn decode_synchsafe(bytes: &[u8]) -> u32 {
         | (bytes[3] as u32 & 0x7F)
 }
 
+/// Extracts `CHAPTERxxx` / `CHAPTERxxxNAME` Vorbis comment chapters from `unmapped_items`, marking keys in `consumed`.
 fn extract_vorbis_chapters(
     unmapped_items: &[(String, String)],
     consumed: &mut HashSet<String>,
@@ -2457,6 +2502,7 @@ fn extract_vorbis_chapters(
     chapters
 }
 
+/// Parses a `HH:MM:SS[.mmm]` Vorbis chapter timestamp `ts` into milliseconds.
 fn parse_vorbis_timestamp(ts: &str) -> Option<u64> {
     let parts: Vec<&str> = ts.trim().split(':').collect();
     if parts.len() != 3 {
@@ -2483,6 +2529,7 @@ fn parse_vorbis_timestamp(ts: &str) -> Option<u64> {
 // Symphonia Metadata Bridge (Matroska / WebM / MKA / CAF / Fallback)
 // =========================================================================
 
+/// Strips scope prefixes (`@`) and iTunes freeform namespace prefixes (`----:com.apple.iTunes:`) from `raw`.
 #[inline]
 fn strip_symphonia_key(raw: &str) -> &str {
     let trimmed = raw.trim();
@@ -2501,6 +2548,7 @@ fn strip_symphonia_key(raw: &str) -> &str {
     }
 }
 
+/// Merges fallback tags, visuals, and chapters from `sym` into `out` for `container_format`, skipping `consumed_custom_keys`.
 fn merge_symphonia_metadata(
     out: &mut RustAudioMetadata,
     sym: &SymphoniaExtractedMeta,
@@ -3191,6 +3239,7 @@ fn merge_symphonia_metadata(
 // Enum & Type Mappers
 // =========================================================================
 
+/// Maps a `lofty` `TagType` (`t`) to a canonical tag format label string.
 fn map_lofty_tag_type(t: TagType) -> &'static str {
     match t {
         TagType::Id3v1 => "ID3v1",
@@ -3204,6 +3253,7 @@ fn map_lofty_tag_type(t: TagType) -> &'static str {
     }
 }
 
+/// Maps a `lofty` `PictureType` (`pt`) to [`RustPictureType`].
 fn map_lofty_picture_type(pt: LoftyPictureType) -> RustPictureType {
     match pt {
         LoftyPictureType::Other => RustPictureType::Other,
@@ -3231,6 +3281,7 @@ fn map_lofty_picture_type(pt: LoftyPictureType) -> RustPictureType {
     }
 }
 
+/// Maps Symphonia's optional `StandardVisualKey` (`vk`) to [`RustPictureType`].
 fn map_symphonia_visual_key(
     vk: Option<symphonia::core::meta::StandardVisualKey>,
 ) -> RustPictureType {
@@ -3260,6 +3311,7 @@ fn map_symphonia_visual_key(
     }
 }
 
+/// Maps a `lofty` `MimeType` (`m`) to [`RustMimeType`].
 fn map_lofty_mime_type(m: &LoftyMimeType) -> RustMimeType {
     match m {
         LoftyMimeType::Png => RustMimeType::Png,
@@ -3272,6 +3324,7 @@ fn map_lofty_mime_type(m: &LoftyMimeType) -> RustMimeType {
     }
 }
 
+/// Parses a MIME type string `s` into [`RustMimeType`] when recognized as a supported image format.
 fn parse_mime_str(s: &str) -> Option<RustMimeType> {
     let lower = s.trim().to_ascii_lowercase();
     if lower.contains("png") {
@@ -3291,7 +3344,7 @@ fn parse_mime_str(s: &str) -> Option<RustMimeType> {
     }
 }
 
-/// Infers image MIME type from magic header bytes when the container omits or mislabels it.
+/// Infers image MIME type from magic header `bytes` when the container omits or mislabels it.
 pub fn sniff_image_mime(bytes: &[u8]) -> Option<RustMimeType> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         Some(RustMimeType::Png)
@@ -3312,7 +3365,7 @@ pub fn sniff_image_mime(bytes: &[u8]) -> Option<RustMimeType> {
     }
 }
 
-/// Parses raw ICY metadata block (`StreamTitle='...';StreamUrl='...';`) into `(title, url)`.
+/// Parses a raw ICY metadata block `raw_icy` (`StreamTitle='...';StreamUrl='...';`) into `(title, url)`.
 pub fn parse_icy_stream_block(raw_icy: &[u8]) -> (Option<String>, Option<String>) {
     let text = String::from_utf8_lossy(raw_icy);
     let trimmed = text.trim_end_matches('\0').trim();
@@ -3348,7 +3401,7 @@ pub fn parse_icy_stream_block(raw_icy: &[u8]) -> (Option<String>, Option<String>
     (title, url)
 }
 
-/// Extracts `(title, track_artist, album)` from an embedded ID3v2 byte container (filtering ad markers).
+/// Extracts `(title, track_artist, album)` from an embedded ID3v2 byte container `raw_id3` (filtering ad markers).
 pub fn extract_basic_id3v2_tags(raw_id3: &[u8]) -> (Option<String>, Option<String>, Option<String>) {
     if raw_id3.len() < 10 || !raw_id3.starts_with(b"ID3") {
         return (None, None, None);

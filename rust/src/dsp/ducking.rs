@@ -24,20 +24,25 @@ pub struct AutoDucker {
     /// Audio sample rate in Hz.
     pub sample_rate: u32,
 
+    /// Current smoothed linear attenuation gain applied to the ducked bus.
     current_gain: f32,
+    /// Target linear attenuation gain (`1.0` when idle, attenuated when sidechain exceeds threshold).
     target_gain: f32,
+    /// Remaining hold period in audio frames before releasing ducking attenuation.
     hold_samples_remaining: usize,
+    /// Most recently measured sidechain RMS level in dBFS.
     last_rms_db: f32,
 }
 
 impl Default for AutoDucker {
+    /// Returns a disabled [`AutoDucker`] configured at 44.1 kHz.
     fn default() -> Self {
         Self::new(44100)
     }
 }
 
 impl AutoDucker {
-    /// Creates a new `AutoDucker` configured for the specified sample rate.
+    /// Creates a new `AutoDucker` configured for the specified `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
         let sr = sample_rate.max(8000);
         Self {
@@ -55,12 +60,13 @@ impl AutoDucker {
         }
     }
 
-    /// Updates the sample rate and recalculates internal envelope timings.
+    /// Updates the `sample_rate` used for envelope timing calculations.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate.max(8000);
     }
 
-    /// Reconfigures auto-ducking dynamics parameters (threshold, attenuation, attack, hold, release).
+    /// Reconfigures auto-ducking dynamics parameters: `enabled`, `ducking_db`, `threshold_db`,
+    /// `attack_ms`, `hold_ms`, and `release_ms`.
     pub fn set_params(
         &mut self,
         enabled: bool,
@@ -93,7 +99,7 @@ impl AutoDucker {
         self.last_rms_db
     }
 
-    /// Evaluates voice signal RMS and computes smoothed frame-by-frame gain envelope into `envelope_out`.
+    /// Evaluates `voice_input` RMS and computes smoothed frame-by-frame gain envelope into `envelope_out`.
     /// Does not directly multiply the audio buffer, enabling multi-microphone min-gain arbitration.
     pub fn compute_gain_envelope(
         &mut self,

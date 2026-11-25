@@ -10,19 +10,30 @@ use symphonia::core::io::MediaSource;
 /// Sony DSF specification idle silence pattern (balanced 0-DC alternating bit pattern).
 const DSF_SILENCE_BYTE: u8 = 0x69;
 
+/// Parsed metadata and layout parameters from a Sony DSF file header.
 struct DsfHeader {
+    /// Number of interleaved audio channels (`1..=8`).
     channels: u32,
+    /// Native 1-bit DSD sampling rate in Hz (for example `2_822_400`).
     raw_sample_rate: u32,
+    /// Target decimated PCM output sample rate in Hz (`44_100`, `48_000`, or `88_200`).
     pcm_sample_rate: u32,
+    /// Integer PDM-to-PCM decimation ratio (`raw_sample_rate / pcm_sample_rate`).
     decimation_factor: usize,
+    /// Size of each channel's interleaved DSD block in bytes.
     block_size_per_channel: usize,
+    /// Byte offset where the `data` chunk payload begins.
     data_start: u64,
+    /// Exclusive byte offset where the `data` chunk payload ends.
     data_end: u64,
+    /// Total number of decimated PCM frames per channel.
     total_pcm_samples_per_channel: u64,
+    /// Total stream duration in milliseconds if computable.
     duration_ms: Option<u64>,
 }
 
 impl DsfHeader {
+    /// Parses the `"DSD "`, `"fmt "`, and `"data"` chunks from `source` starting at offset `0`.
     fn parse(source: &mut dyn MediaSource) -> Option<Self> {
         source.seek(SeekFrom::Start(0)).ok()?;
 
@@ -102,7 +113,7 @@ impl DsfHeader {
     }
 }
 
-/// Zero-order modified Bessel function of the first kind `I_0(x)` for Kaiser window design.
+/// Zero-order modified Bessel function of the first kind `I_0(x)` evaluated at `x` for Kaiser window design.
 #[inline]
 fn bessel_i0(x: f64) -> f64 {
     let mut sum = 1.0f64;
@@ -118,16 +129,20 @@ fn bessel_i0(x: f64) -> f64 {
     sum
 }
 
+/// Shared, immutable FIR filter coefficients and precomputed 8-bit byte lookup tables for DSD decimation.
 struct DsdSharedLuts {
+    /// Symmetric Kaiser-windowed low-pass FIR filter coefficients.
     coeffs: Vec<f32>,
-    /// Forward chronological byte LUT: `rev_lut[k]` weights the `k`-th oldest byte (`0..num_bytes`).
+    /// Forward chronological byte LUT: `rev_byte_lut[k]` weights the `k`-th oldest byte (`0..num_bytes`).
     rev_byte_lut: Vec<[f32; 256]>,
 }
 
+/// Returns or constructs cached [`DsdSharedLuts`] for the given `decimation_factor`.
 fn shared_dsd_luts(decimation_factor: usize) -> std::sync::Arc<DsdSharedLuts> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
 
+    /// Process-wide cache of DSD FIR lookup tables keyed by decimation factor.
     static CACHE: OnceLock<Mutex<HashMap<usize, Arc<DsdSharedLuts>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(guard) = cache.lock() {
@@ -145,6 +160,13 @@ fn shared_dsd_luts(decimation_factor: usize) -> std::sync::Arc<DsdSharedLuts> {
     } else {
         Vec::new()
     };
+    crate::map_log!(
+        4,
+        "[DSF] Built shared FIR decimator LUT: decimation={}x, taps={}, byte_lut={}",
+        decimation_factor,
+        coeffs.len(),
+        !rev_byte_lut.is_empty()
+    );
     let built = Arc::new(DsdSharedLuts {
         coeffs,
         rev_byte_lut,
@@ -165,14 +187,20 @@ fn shared_dsd_luts(decimation_factor: usize) -> std::sync::Arc<DsdSharedLuts> {
 /// (covering DSD64=32, DSD128=64, DSD256=128) so 1024+ tap filtering runs via L2-resident
 /// 4-way unrolled table adds with zero per-block allocations.
 struct DsdFirDecimator {
+    /// PDM-to-PCM decimation ratio.
     decimation_factor: usize,
+    /// Shared filter coefficients and reversed byte lookup tables.
     luts: std::sync::Arc<DsdSharedLuts>,
+    /// Per-channel trailing byte history used by the byte-LUT convolution path.
     hist_bytes: Vec<Vec<u8>>,
+    /// Per-channel trailing +/-1.0 bit history used by the fallback bit-level path.
     hist_bits: Vec<Vec<f32>>,
+    /// Reusable scratch buffer concatenating `hist_bytes` and incoming channel bytes.
     work_bytes: Vec<u8>,
 }
 
 impl DsdFirDecimator {
+    /// Creates a new [`DsdFirDecimator`] for `decimation_factor` and `channels`.
     fn new(decimation_factor: usize, channels: usize) -> Self {
         let luts = shared_dsd_luts(decimation_factor);
         let num_bytes = luts.coeffs.len() / 8;
@@ -196,6 +224,7 @@ impl DsdFirDecimator {
         }
     }
 
+    /// Designs a normalized Kaiser-windowed low-pass FIR kernel scaled for `decimation_factor`.
     fn design_filter(decimation_factor: usize) -> Vec<f32> {
         // Scale tap count with decimation ratio (`1024` taps for DSD64 32x) so stopband reaches
         // <= -100 dB well before the decimated Nyquist frequency, preventing sigma-delta aliasing.
@@ -205,6 +234,7 @@ impl DsdFirDecimator {
         let mut taps = Vec::with_capacity(num_taps);
         let center = (num_taps - 1) as f64 / 2.0;
         let fc = 0.28 / m as f64;
+        /// Kaiser window shape parameter providing >100 dB stopband attenuation.
         const KAISER_BETA: f64 = 10.0;
         let denom = bessel_i0(KAISER_BETA);
 
@@ -228,6 +258,7 @@ impl DsdFirDecimator {
         taps.into_iter().map(|t| (t * inv_sum) as f32).collect()
     }
 
+    /// Precomputes an 8-bit PDM byte contribution lookup table from `coeffs`.
     fn build_byte_lut(coeffs: &[f32]) -> Vec<[f32; 256]> {
         let num_bytes = coeffs.len() / 8;
         let mut lut = vec![[0.0f32; 256]; num_bytes];
@@ -250,6 +281,7 @@ impl DsdFirDecimator {
         lut
     }
 
+    /// Resets per-channel filter delay lines to the DSF idle silence pattern (`0x69`) or zero.
     fn reset(&mut self) {
         for ch_bytes in &mut self.hist_bytes {
             ch_bytes.fill(DSF_SILENCE_BYTE);
@@ -259,6 +291,8 @@ impl DsdFirDecimator {
         }
     }
 
+    /// Decimates one planar DSF `block_bytes` buffer across `channels` (`bspc` bytes per channel),
+    /// appending interleaved PCM samples to `out_pcm` and returning frames produced per channel.
     fn process_block(
         &mut self,
         block_bytes: &[u8],
@@ -272,6 +306,8 @@ impl DsdFirDecimator {
         self.process_block_bits(block_bytes, channels, bspc, out_pcm)
     }
 
+    /// Fast byte-LUT FIR decimation path over `block_bytes` for `channels` (`bspc` bytes each),
+    /// appending interleaved output samples to `out_pcm`.
     fn process_block_lut(
         &mut self,
         block_bytes: &[u8],
@@ -330,6 +366,8 @@ impl DsdFirDecimator {
         pcm_samples_per_block
     }
 
+    /// Bit-level fallback FIR decimation path over `block_bytes` for `channels` (`bspc` bytes each),
+    /// appending interleaved output samples to `out_pcm` when `decimation_factor` is not a multiple of 8.
     fn process_block_bits(
         &mut self,
         block_bytes: &[u8],
@@ -379,6 +417,7 @@ impl DsdFirDecimator {
         pcm_samples_per_block
     }
 
+    /// Unpacks LSB-first 1-bit PDM bytes in `ch_bytes` into `+1.0` / `-1.0` floats in `out_signal`.
     #[inline]
     fn unpack_pdm_bits(ch_bytes: &[u8], out_signal: &mut [f32]) {
         for (byte_idx, &b) in ch_bytes.iter().enumerate() {
@@ -400,24 +439,43 @@ pub enum DsfProbe {
 
 /// Decoder reader parsing and decimating DSD (`.dsf`) 1-bit PDM streams into PCM float audio.
 pub struct DsfReader {
+    /// Underlying seekable DSF media source.
     source: Box<dyn MediaSource>,
+    /// Decimated PCM output sample rate in Hz.
     sample_rate: u32,
+    /// Native 1-bit DSD sampling rate in Hz.
     raw_sample_rate: u32,
+    /// Number of audio channels.
     channels: u32,
+    /// Planar DSD block size per channel in bytes.
     block_size_per_channel: usize,
+    /// Byte offset where DSD payload blocks begin.
     data_start: u64,
+    /// Exclusive byte offset where DSD payload blocks end.
     data_end: u64,
+    /// Expected stream byte cursor before the next block read.
     expected_byte_pos: u64,
+    /// Total decimated PCM frames per channel in the stream.
     total_samples_per_channel: u64,
+    /// Current decimated PCM frame cursor per channel.
     current_sample_pos: u64,
+    /// PDM-to-PCM decimation ratio.
     decimation_factor: usize,
+    /// Total stream duration in milliseconds if known.
     duration_ms: Option<u64>,
+    /// Reusable buffer holding one interleaved-channel DSF block (`block_size_per_channel * channels`).
     block_buffer: Vec<u8>,
+    /// Kaiser-windowed FIR decimator converting 1-bit PDM blocks to `f32` PCM.
     decimator: DsdFirDecimator,
 }
 
 impl DsfReader {
-    /// Attempts to parse the DSF chunk hierarchy and initialize a `DsfReader`.
+    /// Attempts to parse the DSF chunk hierarchy from `source` and initialize a [`DsfReader`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] only if an unrecoverable engine error occurs; non-DSF
+    /// streams return [`DsfProbe::NotMatched`] with `source` rewound to offset `0`.
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<DsfProbe, SymphoniaError> {
         let Some(hdr) = DsfHeader::parse(&mut *source) else {
             let _ = source.seek(SeekFrom::Start(0));
@@ -426,6 +484,17 @@ impl DsfReader {
 
         let total_block_bytes = hdr.block_size_per_channel * hdr.channels as usize;
         let decimator = DsdFirDecimator::new(hdr.decimation_factor, hdr.channels as usize);
+
+        crate::map_log!(
+            3,
+            "[DSF] Opened stream: raw_sr={}Hz, pcm_sr={}Hz, ch={}, decimation={}x, block_bytes={}, dur_ms={:?}",
+            hdr.raw_sample_rate,
+            hdr.pcm_sample_rate,
+            hdr.channels,
+            hdr.decimation_factor,
+            hdr.block_size_per_channel,
+            hdr.duration_ms
+        );
 
         Ok(DsfProbe::Matched(Self {
             source,
@@ -475,7 +544,11 @@ impl DsfReader {
         self.duration_ms
     }
 
-    /// Seeks to the specified position in milliseconds.
+    /// Seeks to the specified `position_ms` in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::IoError`] if seeking the underlying source fails.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_frame = ((position_ms as f64 / 1000.0) * self.sample_rate as f64) as u64;
         let clamped_frame = target_frame.min(self.total_samples_per_channel);
@@ -485,24 +558,41 @@ impl DsfReader {
         let block_stride = (self.block_size_per_channel * self.channels as usize) as u64;
         let target_pos = (self.data_start + block_idx * block_stride).min(self.data_end);
 
-        self.source
-            .seek(SeekFrom::Start(target_pos))
-            .map_err(SymphoniaError::IoError)?;
+        self.source.seek(SeekFrom::Start(target_pos)).map_err(|e| {
+            crate::map_log!(1, "[DSF] Seek to {}ms (byte {}) failed: {}", position_ms, target_pos, e);
+            SymphoniaError::IoError(e)
+        })?;
 
         self.expected_byte_pos = target_pos;
         self.current_sample_pos =
             (block_idx * self.block_size_per_channel as u64 * 8) / self.decimation_factor as u64;
         self.decimator.reset();
+        crate::map_log!(
+            4,
+            "[DSF] Seek to {}ms -> block={}, byte={}, sample_pos={}",
+            position_ms,
+            block_idx,
+            target_pos,
+            self.current_sample_pos
+        );
         Ok(())
     }
 
-    /// Decodes and decimates the next block of DSD frames into normalized float PCM.
+    /// Decodes and decimates the next block of DSD frames into `out_pcm` after clearing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::IoError`] on non-EOF stream seek or read failures.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
         self.decode_next_frame_append(out_pcm)
     }
 
     /// Decodes and decimates the next block of DSD frames, appending directly to `out_pcm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::IoError`] on non-EOF stream seek or read failures.
     pub fn decode_next_frame_append(
         &mut self,
         out_pcm: &mut Vec<f32>,
@@ -514,7 +604,15 @@ impl DsfReader {
         let cur_pos = self
             .source
             .seek(SeekFrom::Start(self.expected_byte_pos))
-            .map_err(SymphoniaError::IoError)?;
+            .map_err(|e| {
+                crate::map_log!(
+                    1,
+                    "[DSF] Seek to expected byte {} failed: {}",
+                    self.expected_byte_pos,
+                    e
+                );
+                SymphoniaError::IoError(e)
+            })?;
         if cur_pos >= self.data_end {
             return Ok(false);
         }
@@ -530,6 +628,7 @@ impl DsfReader {
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
             Err(e) => {
+                crate::map_log!(1, "[DSF] Block read error at byte {}: {}", cur_pos, e);
                 let _ = self.source.seek(SeekFrom::Start(self.expected_byte_pos));
                 return Err(SymphoniaError::IoError(e));
             }

@@ -12,19 +12,29 @@ use crate::dsp::ducking::AutoDucker;
 
 /// Concrete active capture hardware node instance.
 pub struct ActiveInputNode {
+    /// Requested logical device identifier (`"AUTO"` or OS endpoint ID).
     pub device_id: String,
+    /// Resolved physical OS capture device identifier.
     pub resolved_id: String,
+    /// Per-input volume, ducking, and monitoring configuration.
     pub config: RustAudioInputConfig,
+    /// Underlying hardware capture device node.
     pub capture_node: Box<DeviceCaptureNode>,
+    /// Lock-free SPSC ring buffer consumer receiving captured PCM frames.
     pub consumer: rtrb::Consumer<f32>,
+    /// Sidechain auto-ducker envelope processor for this input node.
     pub ducker: AutoDucker,
+    /// Preallocated mono scratch buffer holding the drained live-edge audio frames.
     pub scratch_buffer: Vec<f32>,
 }
 
 /// Pre-opened physical capture changes staged off `map-engine-clock`.
 pub struct PreparedInputs {
+    /// Desired declarative input configurations from the caller.
     pub desired_inputs: Vec<RustAudioInput>,
+    /// Target `(device_id, resolved_id, config)` entries to retain or update.
     pub updates: Vec<(String, String, RustAudioInputConfig)>,
+    /// Newly opened capture nodes ready to be swapped into `active_inputs`.
     pub new_nodes: Vec<ActiveInputNode>,
 }
 
@@ -45,8 +55,8 @@ pub struct InputManager {
 }
 
 impl ActiveInputNode {
-    /// Drains capture audio frames into `self.scratch_buffer`, discarding stale buffered
-    /// frames in O(1) when capture jitter exceeds ~3 audio periods to stay on the live edge.
+    /// Drains up to `frame_count` capture audio frames into `self.scratch_buffer`, discarding stale
+    /// buffered frames in O(1) when capture jitter exceeds ~3 audio periods to stay on the live edge.
     fn drain_live_edge_to_scratch(&mut self, frame_count: usize) {
         if self.scratch_buffer.len() < frame_count {
             self.scratch_buffer.resize(frame_count, 0.0);
@@ -105,7 +115,8 @@ impl ActiveInputNode {
     }
 }
 
-/// Mixes mono frame slice `src[..frame_count]` evenly across all interleaved channels in `dst`.
+/// Mixes mono frame slice `src[..frame_count]` evenly across all `channels` interleaved in `dst`
+/// scaled by `gain`.
 #[inline]
 fn mix_mono_frames_into_interleaved(
     src: &[f32],
@@ -130,8 +141,9 @@ impl InputManager {
     /// Default preallocated scratch buffer size in frames to avoid RT heap reallocations.
     const DEFAULT_SCRATCH_FRAMES: usize = 8192;
 
-    /// Creates a new `InputManager` with the specified sample rate and channel count.
+    /// Creates a new `InputManager` with the specified `sample_rate` and `channels` count.
     pub fn new(sample_rate: u32, channels: usize) -> Self {
+        crate::map_log!(4, "[INPUT] Initialized InputManager (sr={}, ch={})", sample_rate, channels);
         Self {
             active_inputs: Vec::new(),
             inputs: Vec::new(),
@@ -146,28 +158,45 @@ impl InputManager {
     // Multi-Input Management Commands
     // =========================================================================
 
-    /// Resolves a requested device ID ("AUTO" or specific ID) to a physical OS capture device endpoint ID.
+    /// Resolves a requested `device_id` (`"AUTO"` or specific ID) to a physical OS capture device endpoint ID.
     pub fn resolve_physical_input_id(device_id: &str) -> Option<String> {
         if device_id == "AUTO" || device_id == "auto" || device_id.is_empty() {
-            if let Ok(devs) = crate::bridge::ffi::safe_enumerate_capture_devices() {
-                let mut found = None;
-                for d in &devs {
-                    if d.is_default != 0 && d.is_auto == 0 {
-                        found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
-                        break;
-                    }
-                }
-                if found.is_none() {
+            match crate::bridge::ffi::safe_enumerate_capture_devices() {
+                Ok(devs) => {
+                    let mut found = None;
                     for d in &devs {
-                        if d.is_auto == 0 {
+                        if d.is_default != 0 && d.is_auto == 0 {
                             found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
                             break;
                         }
                     }
+                    if found.is_none() {
+                        for d in &devs {
+                            if d.is_auto == 0 {
+                                found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
+                                break;
+                            }
+                        }
+                    }
+                    if found.is_none() {
+                        crate::map_log!(
+                            2,
+                            "[INPUT] No physical capture device found while resolving '{}'",
+                            device_id
+                        );
+                    }
+                    found
                 }
-                return found;
+                Err(code) => {
+                    crate::map_log!(
+                        2,
+                        "[INPUT] Failed to enumerate capture devices for '{}' (code={})",
+                        device_id,
+                        code
+                    );
+                    None
+                }
             }
-            None
         } else {
             Some(device_id.to_string())
         }
@@ -181,6 +210,7 @@ impl InputManager {
             .collect()
     }
 
+    /// Applies the ducking configuration from `config` (or disabled defaults) to `ducker`.
     fn apply_ducker_params(ducker: &mut AutoDucker, config: &RustAudioInputConfig) {
         if let Some(ref d) = config.ducking {
             ducker.set_params(
@@ -196,6 +226,8 @@ impl InputManager {
         }
     }
 
+    /// Deduplicates and resolves requested `inputs` to physical endpoint IDs, optionally using
+    /// `pre_resolved_auto_id` to avoid redundant device enumeration.
     fn resolve_effective_configs(
         inputs: &[RustAudioInput],
         pre_resolved_auto_id: Option<String>,
@@ -234,11 +266,22 @@ impl InputManager {
         effective_configs
     }
 
+    /// Opens and starts a physical capture device node for `inp` at `sample_rate` using `target_resolved_id`.
+    ///
+    /// # Errors
+    /// Returns an error string if creating the underlying [`DeviceCaptureNode`] fails.
     fn open_physical_input_node(
         sample_rate: u32,
         inp: &RustAudioInput,
         target_resolved_id: &str,
     ) -> Result<ActiveInputNode, String> {
+        crate::map_log!(
+            3,
+            "[INPUT] Opening physical capture node '{}' (resolved='{}', sr={})",
+            inp.device_id,
+            target_resolved_id,
+            sample_rate
+        );
         let c_dev = if target_resolved_id == "AUTO" {
             None
         } else {
@@ -246,10 +289,26 @@ impl InputManager {
         };
 
         let (capture_node, consumer) =
-            DeviceCaptureNode::new(sample_rate, 1, 512, c_dev.as_deref())
-                .map_err(|e| format!("Failed to create capture device: code {}", e))?;
+            DeviceCaptureNode::new(sample_rate, 1, 512, c_dev.as_deref()).map_err(|e| {
+                crate::map_log!(
+                    1,
+                    "[INPUT] Failed to create capture device '{}' (resolved='{}', code={})",
+                    inp.device_id,
+                    target_resolved_id,
+                    e
+                );
+                format!("Failed to create capture device: code {}", e)
+            })?;
 
-        let _ = capture_node.start();
+        if let Err(code) = capture_node.start() {
+            crate::map_log!(
+                2,
+                "[INPUT] Failed to start capture node '{}' (resolved='{}', code={})",
+                inp.device_id,
+                target_resolved_id,
+                code
+            );
+        }
 
         let mut ducker = AutoDucker::new(sample_rate);
         Self::apply_ducker_params(&mut ducker, &inp.config);
@@ -265,13 +324,23 @@ impl InputManager {
         })
     }
 
-    /// Resolves and opens newly requested capture hardware devices off `map-engine-clock`.
+    /// Resolves and opens newly requested capture hardware devices in `inputs` off `map-engine-clock`,
+    /// reusing any endpoints already present in `existing_open` at `sample_rate` with optional `pre_resolved_auto_id`.
+    ///
+    /// # Errors
+    /// Returns an error string if opening any newly required capture device fails.
     pub fn prepare_inputs_off_rt(
         sample_rate: u32,
         existing_open: &[(String, String)],
         inputs: Vec<RustAudioInput>,
         pre_resolved_auto_id: Option<String>,
     ) -> Result<PreparedInputs, String> {
+        crate::map_log!(
+            3,
+            "[INPUT] Preparing {} requested inputs off-RT (existing_open={})",
+            inputs.len(),
+            existing_open.len()
+        );
         let effective_configs = Self::resolve_effective_configs(&inputs, pre_resolved_auto_id);
         let mut updates = Vec::with_capacity(effective_configs.len());
         let mut new_nodes = Vec::new();
@@ -299,6 +368,13 @@ impl InputManager {
             }
         }
 
+        crate::map_log!(
+            4,
+            "[INPUT] Prepared inputs batch (updates={}, new_nodes={})",
+            updates.len(),
+            new_nodes.len()
+        );
+
         Ok(PreparedInputs {
             desired_inputs: inputs,
             updates,
@@ -306,7 +382,7 @@ impl InputManager {
         })
     }
 
-    /// Swaps pre-opened capture nodes into `active_inputs` in O(N), returning evicted nodes
+    /// Swaps pre-opened capture nodes from `batch` into `active_inputs` in O(N), returning evicted nodes
     /// so OS device teardown runs on caller / `map-reaper`.
     pub fn apply_prepared_inputs(&mut self, batch: PreparedInputs) -> Vec<ActiveInputNode> {
         self.inputs = batch.desired_inputs;
@@ -344,10 +420,20 @@ impl InputManager {
         }
 
         self.active_inputs = kept;
+        crate::map_log!(
+            3,
+            "[INPUT] Applied prepared inputs (active={}, evicted={})",
+            self.active_inputs.len(),
+            evicted.len()
+        );
         evicted
     }
 
-    /// Configures runtime parameters for an active capture node without reopening hardware.
+    /// Configures runtime parameters (`config`) for an active capture node identified by `device_id`
+    /// without reopening hardware.
+    ///
+    /// # Errors
+    /// Returns an error string if no configured or active input matches `device_id`.
     pub fn configure_input(
         &mut self,
         device_id: String,
@@ -364,10 +450,24 @@ impl InputManager {
         {
             node.config = config.clone();
             Self::apply_ducker_params(&mut node.ducker, &config);
+            crate::map_log!(
+                3,
+                "[INPUT] Configured active input '{}' (vol={}, monitor_direct={}, ducking={})",
+                device_id,
+                config.volume,
+                config.monitor_direct,
+                config.ducking.as_ref().is_some_and(|d| d.enabled)
+            );
             Ok(())
         } else if self.inputs.iter().any(|n| n.device_id == device_id) {
+            crate::map_log!(
+                3,
+                "[INPUT] Updated desired config for pending input '{}'",
+                device_id
+            );
             Ok(())
         } else {
+            crate::map_log!(2, "[INPUT] configure_input: device_id '{}' not found", device_id);
             Err(format!(
                 "Input with device_id {} not found",
                 device_id

@@ -1,4 +1,8 @@
 //! Central thread-safe player coordinator integrating decoding, DSP, buffering, and device output.
+//!
+//! Coordinates background decoding (`DecoderWorker`), dual streaming decks (`StreamingDeck`),
+//! HLS/ICY/HTTP range streaming, seek recovery, PCM adaptation (`PcmAdaptationPipeline`),
+//! lock-free crossfading (`CrossfadeAtomic`), and dual-deck queue management (`DualSource`).
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
@@ -49,6 +53,7 @@ pub const STATE_PLAYING: i32 = PlaybackState::Playing.as_i32();
 /// Deck playback state: playback is paused.
 pub const STATE_PAUSED: i32 = PlaybackState::Paused.as_i32();
 
+/// Maps a numeric encoding format code (`encoding_format`) to a lowercase file extension hint.
 fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
     match encoding_format {
         1 => Some("wav"),
@@ -69,6 +74,7 @@ fn encoding_format_to_extension(encoding_format: i32) -> Option<&'static str> {
     }
 }
 
+/// Maps a lowercase extension `hint` string to its numeric encoding format code.
 fn extension_hint_to_encoding_format(hint: &str) -> i32 {
     match hint {
         "wav" => 1,
@@ -89,6 +95,8 @@ fn extension_hint_to_encoding_format(hint: &str) -> i32 {
     }
 }
 
+/// Extracts the trailing metadata bytes and starting offset from `tail_slice` (starting at
+/// `tail_offset`) given the detected `container` format and `audio_end` boundary.
 fn extract_tail_metadata_slice(
     container: ContainerFormat,
     tail_slice: &[u8],
@@ -108,27 +116,44 @@ fn extract_tail_metadata_slice(
     }
 }
 
+/// Container-specific VBR seek-anchor probe strategy used by [`spawn_vbr_probe_thread`].
 #[derive(Clone, Copy)]
 enum VbrProbeKind {
+    /// Ogg Vorbis/Opus page probe.
     Ogg {
+        /// Bitstream serial number of the primary Ogg logical stream.
         serial: u32,
+        /// Audio sample rate in Hz.
         sample_rate: u32,
+        /// Opus/Vorbis pre-skip sample count.
         pre_skip: u64,
+        /// Optional byte offset to scan forward for the first audio page.
         find_first_audio_from: Option<u64>,
     },
+    /// Raw FLAC frame header probe.
     Flac {
+        /// Stream sample rate in Hz.
         sample_rate: u32,
+        /// Minimum block size in samples.
         min_bs: u16,
+        /// Maximum block size in samples.
         max_bs: u16,
     },
+    /// Matroska/WebM Cluster timestamp probe.
     MkvCluster {
+        /// Matroska `TimecodeScale` in nanoseconds per tick.
         timecode_scale_ns: u64,
     },
+    /// WavPack block header probe.
     WavPack {
+        /// Stream sample rate in Hz.
         sample_rate: u32,
     },
 }
 
+/// Spawns a background worker that probes sparse HTTP byte ranges via `fetcher` to populate
+/// VBR byte-to-time anchors on `session` across `[session_audio_start, session_audio_end)`
+/// capped by `dur_cap` for the specified `kind`, stopping early if `abort_arc` is signalled.
 fn spawn_vbr_probe_thread(
     session: StreamSession,
     fetcher: Arc<dyn Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync>,
@@ -142,7 +167,14 @@ fn spawn_vbr_probe_thread(
     if span <= 65_536 {
         return;
     }
-    let _ = thread::Builder::new()
+    crate::map_log!(
+        4,
+        "[VBR_PROBE] spawning background probe (audio_start={}, audio_end={}, dur_cap={}ms)",
+        session_audio_start,
+        session_audio_end,
+        dur_cap
+    );
+    if let Err(e) = thread::Builder::new()
         .name("miniaudio-vbr-probe".to_string())
         .spawn(move || {
             let mut offsets: Vec<u64> = match kind {
@@ -315,10 +347,12 @@ fn spawn_vbr_probe_thread(
             }
 
             if abort_arc.load(Ordering::Acquire) {
+                crate::map_log!(4, "[VBR_PROBE] aborted before merge");
                 return;
             }
             let f_pts = std::mem::take(&mut *lock_unpoisoned(&flac_pts_acc));
             if !f_pts.is_empty() {
+                crate::map_log!(4, "[VBR_PROBE] recorded {} FLAC seek points", f_pts.len());
                 session.record_flac_seek_points(&f_pts);
             }
             let mut raw_pts = std::mem::take(&mut *lock_unpoisoned(&results));
@@ -334,14 +368,22 @@ fn spawn_vbr_probe_thread(
                     }
                 }
                 if !monotonic.is_empty() {
+                    crate::map_log!(
+                        4,
+                        "[VBR_PROBE] merged {} monotonic byte-time anchors",
+                        monotonic.len()
+                    );
                     session.merge_byte_time_anchors(monotonic);
                 }
             }
-        });
+        }) {
+        crate::map_log!(2, "[VBR_PROBE] failed to spawn probe thread: {:?}", e);
+    }
 }
 
-/// Probes trailing metadata tags starting with the final 64 KB and expanding up to 4 MB when
-/// trailing APEv2 / Lyrics3 / ID3v2 footer tags exceed 64 KB (e.g. embedded cover art).
+/// Probes trailing metadata tags for `container` within `[audio_start, total_size)` using `fetch_range`,
+/// starting with the final 64 KB and expanding up to 4 MB when trailing APEv2 / Lyrics3 / ID3v2
+/// footer tags exceed 64 KB (e.g. embedded cover art).
 fn resolve_tail_metadata_with_fetcher<F>(
     container: ContainerFormat,
     total_size: i64,
@@ -351,6 +393,7 @@ fn resolve_tail_metadata_with_fetcher<F>(
 where
     F: FnMut(i64, i64) -> Option<Vec<u8>>,
 {
+    /// Maximum tail scan window (4 MB) when locating oversized trailing metadata tags.
     const MAX_TAIL_META_SCAN: i64 = 4 * 1024 * 1024;
     let floor = audio_start.max(0);
     let probe_len = 65536i64.min(total_size - floor);
@@ -402,11 +445,19 @@ where
         && audio_end >= tail_offset
     {
         let extracted = extract_tail_metadata_slice(container, &buf, tail_offset, audio_end);
+        crate::map_log!(
+            4,
+            "[TAIL_META] resolved tail boundary container={:?} audio_end={} extracted_bytes={}",
+            container,
+            audio_end,
+            extracted.as_ref().map_or(0, |(v, _)| v.len())
+        );
         return (extracted, Some(audio_end));
     }
     (None, None)
 }
 
+/// Infers a numeric encoding format code from the request `url` extension or HTTP `content_type`.
 fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
     if let Some(hint) = StreamClassifier::extract_extension_hint(url) {
         let code = extension_hint_to_encoding_format(hint);
@@ -442,6 +493,7 @@ fn infer_network_encoding_format(url: &str, content_type: Option<&str>) -> i32 {
     }
 }
 
+/// Builds the default HTTP client agent for ongoing audio and range streaming.
 fn build_network_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
@@ -465,6 +517,7 @@ fn build_network_probe_agent() -> ureq::Agent {
         .into()
 }
 
+/// Attaches optional custom HTTP `headers` onto a `ureq` request builder `req`.
 fn apply_http_headers(
     mut req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
     headers: Option<&[crate::api::types::RustHttpHeader]>,
@@ -477,6 +530,7 @@ fn apply_http_headers(
     req
 }
 
+/// Reads a UTF-8 header `name` value from an HTTP response `res`.
 fn response_header_str<'a>(
     res: &'a ureq::http::Response<ureq::Body>,
     name: &str,
@@ -484,6 +538,7 @@ fn response_header_str<'a>(
     res.headers().get(name).and_then(|v| v.to_str().ok())
 }
 
+/// Extracts the final resolved URI from HTTP response `res`, falling back to `fallback_url`.
 fn response_final_url(
     res: &ureq::http::Response<ureq::Body>,
     fallback_url: &str,
@@ -504,6 +559,8 @@ fn response_final_url(
     }
 }
 
+/// Parses Shoutcast/Icecast ICY response headers (`icy-metaint`, `icy-name`, `icy-description`,
+/// `icy-genre`, `icy-url`, `icy-br`) from HTTP response `res`.
 fn parse_icy_response_headers(
     res: &ureq::http::Response<ureq::Body>,
 ) -> (usize, Option<crate::api::types::RustIcyMetadata>) {
@@ -549,6 +606,7 @@ fn parse_icy_response_headers(
     (icy_metaint, meta)
 }
 
+/// Builds a short-timeout HTTP agent for companion HLS metadata polling and ICY probes.
 fn build_metadata_probe_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .user_agent("miniaudio_player/3.1 (Flutter Audio Engine; +https://pub.dev)")
@@ -560,7 +618,8 @@ fn build_metadata_probe_agent() -> ureq::Agent {
         .into()
 }
 
-/// Returns whether initial HTTP open should include `Icy-MetaData: 1`.
+/// Returns whether initial HTTP open should include `Icy-MetaData: 1` given optional caller
+/// `headers`, `explicit_icy` (`icy://` scheme), and target platform flag `is_wasm`.
 ///
 /// Native targets preserve the unconditional `Icy-MetaData: 1` header unless the
 /// caller explicitly provided it. On `wasm32`, only explicit `icy://` sources
@@ -586,7 +645,8 @@ pub fn should_send_initial_icy_header(
     }
 }
 
-/// Determines `(allow_tail_probe, allow_zero_byte_probe)` for initial network open.
+/// Determines `(allow_tail_probe, allow_zero_byte_probe)` for initial network open from
+/// `range_supported` and `range_explicitly_none`.
 ///
 /// Single simple `Range: bytes=<start>-<end>` requests are CORS-safelisted under the
 /// W3C Fetch Standard (zero `OPTIONS` preflight in modern browsers), while `Accept-Ranges`
@@ -604,13 +664,18 @@ pub fn should_probe_network_tail_and_range(
     }
 }
 
+/// Classification of an HTTP `Range` request failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RangeFetchError {
+    /// Server returned an unexpected non-206 HTTP status code.
     Status(u16),
+    /// Browser CORS policy blocked the `Range` preflight or response.
     CorsRangeBlocked,
+    /// Transient transport, I/O, or parameter failure.
     Transient,
 }
 
+/// Returns `true` when `err` represents a browser CORS `Range` rejection on `wasm32`.
 #[inline]
 fn is_cors_range_blocked_err(err: &ureq::Error) -> bool {
     #[cfg(target_arch = "wasm32")]
@@ -628,6 +693,7 @@ fn is_cors_range_blocked_err(err: &ureq::Error) -> bool {
     }
 }
 
+/// Returns `true` when `s` looks like an opaque hexadecimal/UUID stream identifier rather than a station name.
 fn is_opaque_stream_id(s: &str) -> bool {
     let t = s.trim();
     t.len() >= 16
@@ -635,6 +701,7 @@ fn is_opaque_stream_id(s: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() || b == b'-' || b == b'_')
 }
 
+/// Encodes a 28-bit unsigned integer `v` as a 4-byte ID3v2 synchsafe big-endian integer.
 #[inline]
 fn encode_synchsafe_u32(v: u32) -> [u8; 4] {
     [
@@ -645,6 +712,7 @@ fn encode_synchsafe_u32(v: u32) -> [u8; 4] {
     ]
 }
 
+/// Copies the longest valid UTF-8 prefix of `s` that fits inside `dst`.
 fn copy_utf8_prefix_max(dst: &mut [u8], s: &str) {
     let mut end = s.len().min(dst.len());
     while end > 0 && !s.is_char_boundary(end) {
@@ -653,6 +721,7 @@ fn copy_utf8_prefix_max(dst: &mut [u8], s: &str) {
     dst[..end].copy_from_slice(&s.as_bytes()[..end]);
 }
 
+/// Appends a UTF-8 ID3v2.4 text frame with 4-byte `id` and `text` payload onto `frames`.
 fn append_id3v24_text_frame(frames: &mut Vec<u8>, id: &[u8; 4], text: &str) {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -665,6 +734,7 @@ fn append_id3v24_text_frame(frames: &mut Vec<u8>, id: &[u8; 4], text: &str) {
     frames.extend_from_slice(trimmed.as_bytes());
 }
 
+/// Synthesizes an in-memory ID3v2.4 + ID3v1 tag container from live `title`, `artist`, and `album` strings.
 fn synthesize_live_id3_container(
     title: Option<&str>,
     artist: Option<&str>,
@@ -716,6 +786,7 @@ fn synthesize_live_id3_container(
     Some(id3)
 }
 
+/// Parses a `raw_icy` Shoutcast metadata block and optional `station_name` into a synthetic ID3 container.
 fn synthesize_icy_id3_container(raw_icy: &[u8], station_name: Option<&str>) -> Option<Vec<u8>> {
     let (stream_title, _) = crate::metadata::parse_icy_stream_block(raw_icy);
     let st = stream_title?;
@@ -730,16 +801,26 @@ fn synthesize_icy_id3_container(raw_icy: &[u8], station_name: Option<&str>) -> O
     synthesize_live_id3_container(Some(trimmed), None, station_name)
 }
 
+/// Streaming reader wrapper that strips interleaved Shoutcast/Icecast metadata blocks at `metaint`
+/// byte intervals and forwards parsed track metadata into `session_slot` and `icy_metadata`.
 struct IcyDemuxReader {
+    /// Underlying HTTP body reader.
     inner: Box<dyn Read + Send>,
+    /// Interval in audio bytes between inline ICY metadata frames.
     metaint: usize,
+    /// Remaining audio bytes before the next ICY metadata length byte.
     bytes_until_meta: usize,
+    /// Shared slot populated with the active [`StreamSession`] once constructed.
     session_slot: Arc<Mutex<Option<StreamSession>>>,
+    /// Last synthesized ICY ID3 container bytes for deduplication.
     latest_icy: Arc<Mutex<Option<Vec<u8>>>>,
+    /// Shared ICY metadata state exposed to [`StreamingDeck`].
     icy_metadata: Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
 }
 
 impl IcyDemuxReader {
+    /// Creates a new [`IcyDemuxReader`] wrapping `inner` with ICY interval `metaint` and shared
+    /// metadata sinks `session_slot`, `latest_icy`, and `icy_metadata`.
     fn new(
         inner: Box<dyn Read + Send>,
         metaint: usize,
@@ -757,6 +838,7 @@ impl IcyDemuxReader {
         }
     }
 
+    /// Reads exactly `buf.len()` bytes from the underlying reader, returning `Ok(false)` on clean EOF.
     fn read_exact_bytes(&mut self, mut buf: &mut [u8]) -> std::io::Result<bool> {
         while !buf.is_empty() {
             match self.inner.read(buf) {
@@ -818,7 +900,7 @@ impl Read for IcyDemuxReader {
                     if changed {
                         crate::map_log!(
                             3,
-                            "ICY Metadata parsed (length={} bytes)",
+                            "[ICY] Metadata parsed (length={} bytes)",
                             synthesized.len()
                         );
                         if let Ok(guard) = self.session_slot.lock() {
@@ -839,12 +921,17 @@ impl Read for IcyDemuxReader {
     }
 }
 
+/// Demuxed audio payload and optional leading ID3 metadata extracted from an HLS segment.
 struct HlsSegmentPayload {
+    /// Elementary audio stream bytes ready for the decoder session buffer.
     audio_bytes: Vec<u8>,
+    /// Numeric encoding format hint (`5` = AAC/ADTS, `3` = MP3, etc.).
     format_code: i32,
+    /// Optional ID3v2 tag bytes stripped from the segment head or TS timed metadata PID.
     id3_bytes: Option<Vec<u8>>,
 }
 
+/// Splits contiguous leading ID3v2 tags from `raw`, returning `(Some(id3), audio)` if present.
 fn split_leading_id3v2(raw: Vec<u8>) -> (Option<Vec<u8>>, Vec<u8>) {
     let mut offset = 0usize;
     while offset + 10 <= raw.len() {
@@ -876,6 +963,8 @@ fn split_leading_id3v2(raw: Vec<u8>) -> (Option<Vec<u8>>, Vec<u8>) {
     }
 }
 
+/// Combines `#EXTINF` title metadata from `raw_extinf_title` with embedded `segment_id3_bytes`
+/// into `(title, artist, album)`.
 fn resolve_hls_segment_tags(
     raw_extinf_title: Option<&str>,
     segment_id3_bytes: Option<&[u8]>,
@@ -898,6 +987,7 @@ fn resolve_hls_segment_tags(
     }
 }
 
+/// Formats optional `title` and `artist` strings into an ICY-style `"Artist - Title"` display string.
 fn format_icy_stream_title(title: Option<&str>, artist: Option<&str>) -> Option<String> {
     match (title.map(str::trim).filter(|s| !s.is_empty()), artist.map(str::trim).filter(|s| !s.is_empty())) {
         (Some(t), Some(a)) => Some(format!("{} - {}", a, t)),
@@ -907,6 +997,8 @@ fn format_icy_stream_title(title: Option<&str>, artist: Option<&str>) -> Option<
     }
 }
 
+/// Updates `icy_metadata`, optional `latest_icy` deduplication cache, and `session` synthetic
+/// ID3 metadata from live `title`, `artist`, `album`, and `station_url` fields.
 fn update_live_metadata_state(
     icy_metadata: &Arc<RwLock<Option<crate::api::types::RustIcyMetadata>>>,
     session: Option<&StreamSession>,
@@ -960,6 +1052,8 @@ fn update_live_metadata_state(
     false
 }
 
+/// Demuxes an MPEG-TS segment or strips leading ID3 tags from `raw_bytes`, inferring format from
+/// `seg_url`, `content_type`, and frame sync bytes.
 fn demux_or_wrap_hls_segment(
     seg_url: &str,
     content_type: Option<&str>,
@@ -1002,6 +1096,7 @@ fn demux_or_wrap_hls_segment(
     })
 }
 
+/// Reads an entire local HLS segment file at `path` or an optional `(length, offset)` byte slice.
 #[cfg(not(target_arch = "wasm32"))]
 fn read_local_segment_bytes(path: &str, byte_range: Option<(u64, u64)>) -> Option<Vec<u8>> {
     if let Some((length, offset)) = byte_range {
@@ -1025,6 +1120,8 @@ fn read_local_segment_bytes(path: &str, byte_range: Option<(u64, u64)>) -> Optio
     }
 }
 
+/// Fetches and demuxes an HTTP HLS segment at `seg_url` using `agent`, optional `headers`, and
+/// optional `(length, offset)` `byte_range`.
 fn fetch_hls_segment_payload(
     agent: &ureq::Agent,
     seg_url: &str,
@@ -1044,7 +1141,13 @@ fn fetch_hls_segment_payload(
             req = req.header(crate::net::wasm_ureq_protocol::HDR_RANGE_OPTIONAL, "1");
         }
     }
-    let res = req.call().ok()?;
+    let res = match req.call() {
+        Ok(r) => r,
+        Err(e) => {
+            crate::map_log!(4, "[HLS] segment fetch failed for {}: {}", seg_url, e);
+            return None;
+        }
+    };
     let status = res.status().as_u16();
     let content_type = response_header_str(&res, "content-type").map(|s| s.to_string());
     let raw_bytes = if let Some((length, offset)) = byte_range {
@@ -1073,11 +1176,14 @@ fn fetch_hls_segment_payload(
     demux_or_wrap_hls_segment(seg_url, content_type.as_deref(), raw_bytes)
 }
 
+/// Fetches an `.m3u8` playlist from `url` via `agent` and optional `headers`, returning
+/// `(bytes, final_url)` or an optional HTTP status code on failure.
 fn fetch_playlist_bytes_with_status(
     agent: &ureq::Agent,
     url: &str,
     headers: Option<&[crate::api::types::RustHttpHeader]>,
 ) -> Result<(Vec<u8>, String), Option<u16>> {
+    /// Hard size cap (2 MB) for downloaded M3U8 playlist manifests.
     const MAX_PLAYLIST_BYTES: u64 = 2 * 1024 * 1024;
     let req = apply_http_headers(agent.get(url), headers);
     let res = req.call().map_err(|e| match e {
@@ -1097,23 +1203,33 @@ fn fetch_playlist_bytes_with_status(
     Ok((bytes, final_url))
 }
 
+/// Transport backend used by HLS playlist opening and segment streaming.
 #[derive(Clone)]
 enum HlsFetchBackend {
+    /// Remote HTTP/HTTPS transport backed by a `ureq::Agent`.
     Network {
+        /// Shared HTTP agent instance.
         agent: Arc<ureq::Agent>,
+        /// Optional custom HTTP request headers.
         headers: Option<Vec<crate::api::types::RustHttpHeader>>,
     },
+    /// Native local filesystem HLS playback.
     #[cfg(not(target_arch = "wasm32"))]
     LocalFile,
+    /// Web Origin Private File System (OPFS) HLS playback.
     #[cfg(target_arch = "wasm32")]
     Opfs,
+    /// Dart-resolved custom URI/content-provider backend.
     DartResolved {
+        /// Registry bridging synchronous Rust resolution calls to Dart.
         resolver: Arc<DartResolveRegistry>,
+        /// Optional HTTP request headers forwarded to the Dart resolver.
         headers: Option<Vec<crate::api::types::RustHttpHeader>>,
     },
 }
 
 impl HlsFetchBackend {
+    /// Clones this backend for long-lived background streaming with a dedicated streaming HTTP agent.
     fn to_streaming_backend(&self) -> Self {
         match self {
             Self::Network { headers, .. } => Self::Network {
@@ -1131,6 +1247,7 @@ impl HlsFetchBackend {
         }
     }
 
+    /// Returns `true` if this backend fetches playlists and segments over remote HTTP.
     fn is_remote_http(&self) -> bool {
         match self {
             Self::Network { .. } => true,
@@ -1142,45 +1259,79 @@ impl HlsFetchBackend {
         }
     }
 
+    /// Fetches playlist bytes from `url`, returning `(bytes, resolved_url)` or a `MAP_ERROR_*` code.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MAP_ERROR_FILE_NOT_FOUND`, `MAP_ERROR_ACCESS_DENIED`, `MAP_ERROR_DECODE_FAILED`,
+    /// or `MAP_ERROR_UNSUPPORTED` if the playlist cannot be retrieved.
     fn fetch_playlist_resolved(&self, url: &str) -> Result<(Vec<u8>, String), i32> {
         match self {
             Self::Network { agent, headers } => {
                 match fetch_playlist_bytes_with_status(agent, url, headers.as_deref()) {
                     Ok(res) => Ok(res),
-                    Err(Some(code)) => Err(if code == 404 {
-                        MAP_ERROR_FILE_NOT_FOUND
-                    } else if code == 401 || code == 403 {
-                        MAP_ERROR_ACCESS_DENIED
-                    } else {
-                        MAP_ERROR_DECODE_FAILED
-                    }),
-                    Err(None) => Err(MAP_ERROR_DECODE_FAILED),
+                    Err(Some(code)) => {
+                        crate::map_log!(2, "[HLS] playlist fetch HTTP {} for {}", code, url);
+                        Err(if code == 404 {
+                            MAP_ERROR_FILE_NOT_FOUND
+                        } else if code == 401 || code == 403 {
+                            MAP_ERROR_ACCESS_DENIED
+                        } else {
+                            MAP_ERROR_DECODE_FAILED
+                        })
+                    }
+                    Err(None) => {
+                        crate::map_log!(2, "[HLS] playlist fetch failed for {}", url);
+                        Err(MAP_ERROR_DECODE_FAILED)
+                    }
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
             Self::LocalFile => std::fs::read(url)
                 .map(|b| (b, url.to_string()))
-                .map_err(|_| MAP_ERROR_FILE_NOT_FOUND),
+                .map_err(|e| {
+                    crate::map_log!(2, "[HLS] local playlist read failed for {}: {}", url, e);
+                    MAP_ERROR_FILE_NOT_FOUND
+                }),
             #[cfg(target_arch = "wasm32")]
             Self::Opfs => {
-                let parsed = crate::opfs::parse_opfs_path_strict(url).map_err(|(code, _)| code)?;
+                let parsed = crate::opfs::parse_opfs_path_strict(url).map_err(|(code, msg)| {
+                    crate::map_log!(2, "[HLS] OPFS playlist path invalid '{}': {}", url, msg);
+                    code
+                })?;
                 crate::opfs::opfs_read_all_bytes(&parsed.canonical, 16 * 1024 * 1024)
                     .map(|b| (b, parsed.canonical))
-                    .map_err(|(code, _)| code)
+                    .map_err(|(code, msg)| {
+                        crate::map_log!(2, "[HLS] OPFS playlist read failed '{}': {}", url, msg);
+                        code
+                    })
             }
             Self::DartResolved { resolver, headers } => {
                 let resolved = resolver
                     .resolve(url, headers.as_deref(), None)
-                    .map_err(|f| f.code)?;
+                    .map_err(|f| {
+                        crate::map_log!(2, "[HLS] Dart playlist resolve failed '{}': {}", url, f.message);
+                        f.code
+                    })?;
                 Self::read_resolved_bytes(resolved).map(|b| (b, url.to_string()))
             }
         }
     }
 
+    /// Fetches raw playlist bytes from `url`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any `MAP_ERROR_*` code from [`Self::fetch_playlist_resolved`].
     fn fetch_playlist(&self, url: &str) -> Result<Vec<u8>, i32> {
         self.fetch_playlist_resolved(url).map(|(b, _)| b)
     }
 
+    /// Materializes a [`ResolvedCoreSource`] `resolved` into an owned byte buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `MAP_ERROR_*` code if the resolved source cannot be read or is a streaming source.
     fn read_resolved_bytes(resolved: ResolvedCoreSource) -> Result<Vec<u8>, i32> {
         match resolved {
             ResolvedCoreSource::Bytes { data, .. } => Ok(data),
@@ -1219,6 +1370,7 @@ impl HlsFetchBackend {
         }
     }
 
+    /// Fetches and demuxes a single HLS segment from `seg_url` with optional `(length, offset)` `byte_range`.
     fn fetch_segment_payload(
         &self,
         seg_url: &str,
@@ -1252,6 +1404,7 @@ impl HlsFetchBackend {
         }
     }
 
+    /// Fetches elementary audio bytes and format code for `seg_url` and optional `byte_range`.
     fn fetch_segment_audio(
         &self,
         seg_url: &str,
@@ -1262,6 +1415,8 @@ impl HlsFetchBackend {
     }
 }
 
+/// Streams `audio_bytes` into `session` in bounded chunks while checking `abort`, `dec_running`,
+/// and optional `vod_epoch` staleness.
 fn feed_hls_audio_chunked(
     session: &StreamSession,
     audio_bytes: &[u8],
@@ -1269,6 +1424,7 @@ fn feed_hls_audio_chunked(
     dec_running: &AtomicBool,
     vod_epoch: Option<(&crate::buffer::HlsVodState, u64)>,
 ) -> bool {
+    /// Maximum chunk size (32 KB) fed per `StreamSession::feed_chunk` iteration.
     const FEED_CHUNK_BYTES: usize = 32768;
     let is_cancelled = || {
         abort.load(Ordering::Acquire)
@@ -1292,6 +1448,7 @@ fn feed_hls_audio_chunked(
     !abort.load(Ordering::Acquire) && dec_running.load(Ordering::Acquire)
 }
 
+/// Sleeps for `duration` in 50 ms slices, returning `false` early if `abort` or `!dec_running` triggers.
 fn sleep_interruptible(duration: Duration, abort: &AtomicBool, dec_running: &AtomicBool) -> bool {
     let deadline = MonotonicInstant::now() + duration;
     loop {
@@ -1306,6 +1463,8 @@ fn sleep_interruptible(duration: Duration, abort: &AtomicBool, dec_running: &Ato
     }
 }
 
+/// Demand-driven HLS VOD segment feeder loop reading from `backend` into `session` according to
+/// `vod` actions until `abort_stream` or `!decoder_running`.
 fn run_hls_vod_streamer(
     session: StreamSession,
     abort_stream: Arc<AtomicBool>,
@@ -1316,13 +1475,25 @@ fn run_hls_vod_streamer(
     use crate::buffer::VodAction;
     let a_start = vod.audio_start_offset();
     let total_dur = vod.total_duration_ms();
+    crate::map_log!(
+        3,
+        "[HLS_VOD] streamer started (audio_start={}, total_dur={}ms)",
+        a_start,
+        total_dur
+    );
 
     while !abort_stream.load(Ordering::Acquire) && decoder_running.load(Ordering::Acquire) {
         if let Some((seg_idx, epoch, seg_start_ms)) = vod.take_pending_jump() {
+            crate::map_log!(
+                4,
+                "[HLS_VOD] jump accepted seg_idx={} epoch={} start_ms={}",
+                seg_idx,
+                epoch,
+                seg_start_ms
+            );
             session.flush(a_start);
             session.reset_hls_vod_window(a_start, seg_start_ms, total_dur);
             vod.mark_jump_accepted(epoch);
-            let _ = seg_idx;
             continue;
         }
 
@@ -1340,6 +1511,12 @@ fn run_hls_vod_streamer(
                     Some(fetched)
                 });
                 let Some(audio_bytes) = bytes_opt else {
+                    crate::map_log!(
+                        2,
+                        "[HLS_VOD] segment {} fetch failed ({}), retrying",
+                        seg_idx,
+                        seg.url
+                    );
                     thread::sleep(Duration::from_millis(40));
                     continue;
                 };
@@ -1372,6 +1549,7 @@ fn run_hls_vod_streamer(
                 current_epoch,
             } => {
                 if !already_marked {
+                    crate::map_log!(4, "[HLS_VOD] reached EOF (epoch={})", current_epoch);
                     session.mark_eof();
                     vod.mark_eof_sent(current_epoch);
                 }
@@ -1382,8 +1560,14 @@ fn run_hls_vod_streamer(
             }
         }
     }
+    crate::map_log!(4, "[HLS_VOD] streamer exiting");
 }
 
+/// Spawns the background HLS streamer thread for either VOD (`vod_state` = `Some`) or live
+/// playlist polling (`tracker`, `pending_targets`, `initial_cum_bytes`, `initial_cum_ms`),
+/// feeding `session` via `backend` and updating `icy_metadata` for `source_url` until
+/// `abort_stream` or `!decoder_running`.
+#[allow(clippy::too_many_arguments)]
 fn spawn_hls_streamer_thread(
     session: StreamSession,
     abort_stream: Arc<AtomicBool>,
@@ -1398,15 +1582,17 @@ fn spawn_hls_streamer_thread(
     source_url: String,
 ) {
     let max_unchanged: u32 = if backend.is_remote_http() { 12 } else { 3 };
+    /// Maximum consecutive playlist reload failures before marking live HLS EOF.
     const MAX_RELOAD_ERRORS: u32 = 5;
 
-    let _ = thread::Builder::new()
+    if let Err(e) = thread::Builder::new()
         .name("miniaudio-hls-streamer".to_string())
         .spawn(move || {
             if let Some(vod) = vod_state {
                 run_hls_vod_streamer(session, abort_stream, decoder_running, backend, vod);
                 return;
             }
+            crate::map_log!(3, "[HLS] live streamer started for {}", source_url);
             let mut consecutive_unchanged = 0u32;
             let mut consecutive_errors = 0u32;
             let mut last_reload_had_new = true;
@@ -1449,10 +1635,13 @@ fn spawn_hls_streamer_thread(
                         ) {
                             return;
                         }
+                    } else {
+                        crate::map_log!(2, "[HLS] live segment fetch skipped: {}", target.url);
                     }
                 }
 
                 if !tracker.is_live() {
+                    crate::map_log!(3, "[HLS] playlist ended (#EXT-X-ENDLIST); marking EOF");
                     session.mark_eof();
                     return;
                 }
@@ -1483,13 +1672,14 @@ fn spawn_hls_streamer_thread(
                                     last_reload_had_new = false;
                                     consecutive_unchanged += 1;
                                     if !tracker.is_live() {
+                                        crate::map_log!(3, "[HLS] playlist reached ENDLIST; marking EOF");
                                         session.mark_eof();
                                         return;
                                     }
                                     if consecutive_unchanged >= max_unchanged {
                                         crate::map_log!(
                                             2,
-                                            "HLS live playlist unchanged for {} polls; marking EOF",
+                                            "[HLS] live playlist unchanged for {} polls; marking EOF",
                                             consecutive_unchanged
                                         );
                                         session.mark_eof();
@@ -1516,22 +1706,29 @@ fn spawn_hls_streamer_thread(
                 if consecutive_errors >= MAX_RELOAD_ERRORS {
                     crate::map_log!(
                         1,
-                        "HLS live manifest reload failed {} times; marking EOF",
+                        "[HLS] live manifest reload failed {} times; marking EOF",
                         consecutive_errors
                     );
                     session.mark_eof();
                     return;
                 }
             }
-        });
+        }) {
+        crate::map_log!(1, "[HLS] failed to spawn streamer thread: {:?}", e);
+    }
 }
 
+/// Companion HLS playlist endpoints used to poll `#EXTINF` track metadata for live radio streams.
 struct CompanionHlsState {
+    /// Optional master playlist URL used to refresh expiring media playlist tokens.
     master_url: Option<String>,
+    /// Active media playlist URL polled for segment `#EXTINF` metadata.
     media_url: String,
+    /// Target segment duration in seconds governing poll cadence.
     target_duration_secs: f64,
 }
 
+/// Scans `segments` in reverse order and returns the newest valid `#EXTINF` metadata entry.
 fn extract_newest_hls_extinf_meta(
     segments: &[crate::hls::SegmentInfo],
 ) -> Option<crate::hls::HlsExtinfMetadata> {
@@ -1541,6 +1738,8 @@ fn extract_newest_hls_extinf_meta(
         .find_map(|seg| seg.title.as_deref().and_then(crate::hls::parse_hls_extinf_metadata))
 }
 
+/// Probes `candidate_urls` via `agent` and optional `headers` (respecting `cancel`) to discover a
+/// valid companion HLS playlist state and initial `#EXTINF` metadata.
 fn resolve_companion_hls_state(
     agent: &ureq::Agent,
     candidate_urls: &[String],
@@ -1607,6 +1806,8 @@ fn resolve_companion_hls_state(
     None
 }
 
+/// Spawns a background poller updating `icy_metadata` and `session` from a companion HLS playlist
+/// described by `state` using optional `headers` for `source_url` until `abort_stream` or `!decoder_running`.
 fn spawn_hls_metadata_sidecar_poller(
     session: StreamSession,
     abort_stream: Arc<AtomicBool>,
@@ -1616,8 +1817,15 @@ fn spawn_hls_metadata_sidecar_poller(
     headers: Option<Vec<crate::api::types::RustHttpHeader>>,
     source_url: String,
 ) {
+    /// Maximum consecutive poll errors before shutting down the companion metadata poller.
     const MAX_ERRORS: u32 = 10;
-    let _ = thread::Builder::new()
+    crate::map_log!(
+        4,
+        "[HLS_META] companion metadata poller started for {} (media={})",
+        source_url,
+        state.media_url
+    );
+    if let Err(e) = thread::Builder::new()
         .name("miniaudio-hls-meta-poller".to_string())
         .spawn(move || {
             let agent = build_metadata_probe_agent();
@@ -1684,6 +1892,11 @@ fn spawn_hls_metadata_sidecar_poller(
                                 headers.as_deref(),
                                 None,
                             ) {
+                                crate::map_log!(
+                                    4,
+                                    "[HLS_META] refreshed companion master playlist -> {}",
+                                    new_state.media_url
+                                );
                                 state = new_state;
                                 consecutive_errors = 0;
                                 if let Some(meta) = meta_opt {
@@ -1704,7 +1917,7 @@ fn spawn_hls_metadata_sidecar_poller(
                     if consecutive_errors >= MAX_ERRORS {
                         crate::map_log!(
                             2,
-                            "HLS companion metadata poller stopped after {} consecutive errors for {}",
+                            "[HLS_META] companion metadata poller stopped after {} consecutive errors for {}",
                             consecutive_errors,
                             source_url
                         );
@@ -1712,9 +1925,17 @@ fn spawn_hls_metadata_sidecar_poller(
                     }
                 }
             }
-        });
+        }) {
+        crate::map_log!(2, "[HLS_META] failed to spawn metadata poller: {:?}", e);
+    }
 }
 
+/// Fetches an HTTP byte range `[start, end_inclusive]` from `url` using `agent` and optional `headers`.
+///
+/// # Errors
+///
+/// Returns [`RangeFetchError::CorsRangeBlocked`], [`RangeFetchError::Status`], or
+/// [`RangeFetchError::Transient`] if the server does not return a valid `206 Partial Content` slice.
 fn fetch_range_bytes_status(
     agent: &ureq::Agent,
     url: &str,
@@ -1753,6 +1974,8 @@ fn fetch_range_bytes_status(
     Ok(buf)
 }
 
+/// Fetches an exact byte range `[start, end_inclusive]` from `url` via `agent` and `headers`,
+/// returning `None` unless the returned byte count equals `end_inclusive - start + 1`.
 fn fetch_range_bytes(
     agent: &ureq::Agent,
     url: &str,
@@ -1766,6 +1989,8 @@ fn fetch_range_bytes(
         .filter(|buf| buf.len() == expected)
 }
 
+/// Prefetches the initial container header and audio bytes from `reader` (bounded by `content_length`,
+/// `cancel`, and optional `live_icy` metadata waiting), returning `(bytes, was_aborted, reached_eof)`.
 fn prefetch_initial_stream_bytes_with_live_icy(
     reader: &mut impl Read,
     content_length: i64,
@@ -1864,14 +2089,21 @@ fn prefetch_initial_stream_bytes_with_live_icy(
     (initial_data, false, reached_eof)
 }
 
+/// Outcome of forward-draining an HTTP response reader to a target byte offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DrainToOffsetResult {
+    /// Successfully drained up to `target_offset`.
     Reached,
+    /// Interrupted because a seek flush or shutdown preempted the drain.
     Preempted,
+    /// Underlying HTTP stream ended before reaching `target_offset`.
     Eof,
+    /// Unrecoverable read error occurred while draining.
     Error,
 }
 
+/// Reads and discards bytes from `reader` using scratch `chunk` until `*stream_pos` reaches
+/// `target_offset`, noting drain progress on `session` and aborting early if `preempted()` returns `true`.
 fn drain_http_reader_to_offset(
     reader: &mut dyn Read,
     chunk: &mut [u8],
@@ -1898,6 +2130,9 @@ fn drain_http_reader_to_offset(
     DrainToOffsetResult::Reached
 }
 
+/// Spawns the background network streaming thread feeding `reader` bytes from `url` (with
+/// `headers`, `content_length`, and `is_live`) into `session` until `abort_stream` or
+/// `!decoder_running`, handling HTTP `Range` repositions and non-Range drain/reopen fallback.
 #[allow(clippy::too_many_arguments)]
 fn spawn_network_streamer_thread(
     mut reader: Box<dyn Read + Send>,
@@ -1909,8 +2144,8 @@ fn spawn_network_streamer_thread(
     content_length: i64,
     is_live: bool,
 ) {
-    crate::map_log!(3, "Network streamer thread started");
-    let _ = thread::Builder::new()
+    crate::map_log!(3, "[NET_STREAM] thread started (is_live={}, content_length={})", is_live, content_length);
+    if let Err(e) = thread::Builder::new()
         .name("miniaudio-net-streamer".to_string())
         .spawn(move || {
             session.body.set_push_streaming(true);
@@ -1978,18 +2213,27 @@ fn spawn_network_streamer_thread(
                                 .header("Range", &range_hdr);
                             match req.call() {
                                 Ok(res) if res.status().as_u16() == 206 => {
+                                    crate::map_log!(4, "[NET_STREAM] Range repositioned to {}", order.offset);
                                     reader = Box::new(res.into_body().into_reader());
                                     stream_pos = order.offset;
                                     range_seek_failures = 0;
                                 }
                                 Err(ref err) if is_cors_range_blocked_err(err) => {
+                                    crate::map_log!(2, "[NET_STREAM] CORS blocked Range seek; falling back to non-Range mode");
                                     session.set_supports_range(false);
                                     session.enable_full_file_prefetch_if_fits();
                                     continue;
                                 }
                                 _ => {
                                     range_seek_failures += 1;
+                                    crate::map_log!(
+                                        2,
+                                        "[NET_STREAM] Range seek failed (attempt {}/5, offset={})",
+                                        range_seek_failures,
+                                        order.offset
+                                    );
                                     if range_seek_failures >= 5 {
+                                        crate::map_log!(1, "[NET_STREAM] aborting stream after 5 Range seek failures");
                                         session.mark_eof();
                                         session.body.set_push_streaming(false);
                                         break;
@@ -2040,6 +2284,7 @@ fn spawn_network_streamer_thread(
                         }
 
                         if need_reopen {
+                            crate::map_log!(4, "[NET_STREAM] non-Range reopen from 0 -> target={}", order.offset);
                             let agent = build_network_agent();
                             let req = apply_http_headers(agent.get(&url), headers.as_deref());
                             match req.call() {
@@ -2071,6 +2316,7 @@ fn spawn_network_streamer_thread(
                                             stream_pos = u64::MAX;
                                             range_seek_failures += 1;
                                             if range_seek_failures >= 3 {
+                                                crate::map_log!(1, "[NET_STREAM] non-Range drain failed 3 times; marking EOF");
                                                 session.mark_eof();
                                                 session.body.set_push_streaming(false);
                                             } else {
@@ -2083,6 +2329,11 @@ fn spawn_network_streamer_thread(
                                 _ => {
                                     if !reposition_preempted() {
                                         range_seek_failures += 1;
+                                        crate::map_log!(
+                                            2,
+                                            "[NET_STREAM] non-Range reopen failed (attempt {}/3)",
+                                            range_seek_failures
+                                        );
                                         if range_seek_failures >= 3 {
                                             session.mark_eof();
                                             session.body.set_push_streaming(false);
@@ -2125,6 +2376,13 @@ fn spawn_network_streamer_thread(
                                 && session.supports_range()
                             {
                                 range_retries += 1;
+                                crate::map_log!(
+                                    2,
+                                    "[NET_STREAM] premature EOF at {}/{}; retrying via Range ({}/3)",
+                                    current_end,
+                                    target_end,
+                                    range_retries
+                                );
                                 let range_hdr = format!("bytes={}-", current_end);
                                 let agent = build_network_agent();
                                 let req =
@@ -2142,7 +2400,7 @@ fn spawn_network_streamer_thread(
                                     _ => {}
                                 }
                             }
-                            crate::map_log!(3, "Network streamer reached EOF");
+                            crate::map_log!(3, "[NET_STREAM] reached EOF");
                             session.mark_eof();
                             session.body.set_push_streaming(false);
                             if is_live {
@@ -2210,6 +2468,14 @@ fn spawn_network_streamer_thread(
                                 && session.supports_range()
                             {
                                 range_retries += 1;
+                                crate::map_log!(
+                                    2,
+                                    "[NET_STREAM] read error at {}/{}; retrying via Range ({}/3): {:?}",
+                                    current_end,
+                                    target_end,
+                                    range_retries,
+                                    e
+                                );
                                 let range_hdr = format!("bytes={}-", current_end);
                                 let agent = build_network_agent();
                                 let req =
@@ -2227,7 +2493,7 @@ fn spawn_network_streamer_thread(
                                     _ => {}
                                 }
                             }
-                            crate::map_log!(1, "Network streamer read error: {:?}", e);
+                            crate::map_log!(1, "[NET_STREAM] read error: {:?}", e);
                             session.body.set_push_streaming(false);
                             return;
                         }
@@ -2235,7 +2501,7 @@ fn spawn_network_streamer_thread(
                 }
 
                 if order.reaches_eof && session.range_end() >= order.offset + order.length as u64 {
-                    crate::map_log!(3, "Network streamer completed audio payload up to audio_end");
+                    crate::map_log!(3, "[NET_STREAM] completed audio payload up to audio_end");
                     session.mark_eof();
                     session.body.set_push_streaming(false);
                     if is_live {
@@ -2245,23 +2511,34 @@ fn spawn_network_streamer_thread(
                 }
             }
             session.body.set_push_streaming(false);
-        });
+        }) {
+        crate::map_log!(1, "[NET_STREAM] failed to spawn network streamer thread: {:?}", e);
+    }
 }
 
 /// Deterministic black-box PCM adaptation pipeline:
 /// `SilenceDetector` -> `ChannelMatrix` -> `RubatoResampler` -> pending PCM staging buffer.
 struct PcmAdaptationPipeline {
+    /// Leading/trailing silence trimmer.
     silence_detector: SilenceDetector,
+    /// Channel upmix/downmix matrix adapting track channels to device channels.
     channel_matrix: ChannelMatrix,
+    /// Polyphase resampler adapting track sample rate to hardware device sample rate.
     resampler: RubatoResampler,
+    /// Scratch buffer receiving silence-filtered interleaved PCM.
     active_buf: Vec<f32>,
+    /// Scratch buffer receiving channel-matrixed interleaved PCM.
     matrix_buf: Vec<f32>,
+    /// Scratch buffer receiving resampled interleaved PCM.
     resampler_out: Vec<f32>,
+    /// Staged output samples awaiting lock-free push into `AudioProducer`.
     pending_pcm: Vec<f32>,
+    /// Read cursor inside `pending_pcm` for partial ring-buffer drains.
     pending_offset: usize,
 }
 
 impl PcmAdaptationPipeline {
+    /// Creates a new adaptation pipeline converting `(track_sr, track_ch)` to `(dev_sr, dev_ch)`.
     fn new(track_sr: u32, track_ch: usize, dev_sr: u32, dev_ch: usize) -> Self {
         let sr = track_sr.max(8000);
         let ch = track_ch.clamp(1, 16);
@@ -2283,6 +2560,7 @@ impl PcmAdaptationPipeline {
         }
     }
 
+    /// Synchronizes the silence detector's sample rate `sr` and channel count `ch` when format changes.
     fn sync_silence_format(&mut self, sr: u32, ch: usize) {
         if sr > 0
             && ch > 0
@@ -2293,6 +2571,7 @@ impl PcmAdaptationPipeline {
         }
     }
 
+    /// Resets staged buffers, resampler state, and optionally the accumulated saved-silence counter (`reset_saved_ms`).
     fn reset(&mut self, reset_saved_ms: bool) {
         self.silence_detector.reset(reset_saved_ms);
         self.pending_pcm.clear();
@@ -2300,12 +2579,14 @@ impl PcmAdaptationPipeline {
         self.resampler.reset();
     }
 
+    /// Discards staged PCM samples and resets the resampler without resetting silence statistics.
     fn clear_pending_and_resampler(&mut self) {
         self.pending_pcm.clear();
         self.pending_offset = 0;
         self.resampler.reset();
     }
 
+    /// Flushes remaining resampler delay samples into `pending_pcm` at EOF when `pending_pcm` is empty.
     fn flush_resampler_into_pending(&mut self) {
         if self.pending_pcm.is_empty() {
             let _ = self.resampler.flush(&mut self.pending_pcm);
@@ -2339,8 +2620,9 @@ impl PcmAdaptationPipeline {
         }
     }
 
-    /// Processes a decoded interleaved frame buffer through silence trimming, channel matrixing,
-    /// and high-precision resampling, staging the result in `pending_pcm`.
+    /// Processes a decoded interleaved `frame_buf` from `(track_sr, track_ch)` to `(dev_sr, dev_ch)`
+    /// through silence trimming (configured by `silence_cfg`), channel matrixing, and high-precision
+    /// resampling, staging the result in `pending_pcm`.
     /// Returns the total `saved_ms` accumulated by the silence detector.
     fn process_frame(
         &mut self,
@@ -2392,15 +2674,20 @@ impl PcmAdaptationPipeline {
     }
 }
 
+/// Factory closure reopening a local/in-memory [`symphonia::core::io::MediaSource`] after EOF or seek recovery.
 type ReopenSourceFn =
     Arc<dyn Fn() -> Option<Box<dyn symphonia::core::io::MediaSource>> + Send + Sync>;
 
+/// Seekable `MediaSource` backed by a shared reference-counted memory slice.
 struct SharedMemSource {
+    /// Immutable backing audio bytes.
     data: Arc<[u8]>,
+    /// Current byte cursor offset within `data`.
     pos: usize,
 }
 
 impl SharedMemSource {
+    /// Creates a new [`SharedMemSource`] positioned at byte 0 of `data`.
     fn new(data: Arc<[u8]>) -> Self {
         Self { data, pos: 0 }
     }
@@ -2447,9 +2734,9 @@ impl symphonia::core::io::MediaSource for SharedMemSource {
     }
 }
 
-/// Returns `true` when ISO-BMFF `head` (and optional `tail`) contain everything needed by
-/// `IsoMp4Reader::try_new` (`ftyp`, `moov`, and the `mdat` header) so reopening the demuxer
-/// after EOF completes from RAM without issuing HTTP `Range` or blocking reads.
+/// Returns `true` when ISO-BMFF `head` (and optional `tail`) in `session` contain everything
+/// needed by `IsoMp4Reader::try_new` (`ftyp`, `moov`, and the `mdat` header) so reopening the
+/// demuxer after EOF completes from RAM without issuing HTTP `Range` or blocking reads.
 fn mp4_head_is_reopenable_without_range(session: &StreamSession) -> bool {
     let head = session.head_bytes_copy();
     let mut p: usize = 0;
@@ -2511,54 +2798,94 @@ fn mp4_head_is_reopenable_without_range(session: &StreamSession) -> bool {
 /// Background decoding worker orchestrating decoder lifecycle, stream re-init,
 /// seek synchronization, PCM adaptation, and ring-buffer feeding.
 struct DecoderWorker {
+    /// Loop termination flag cleared when [`StreamingDeck::destroy`] tears down the deck.
     running: Arc<AtomicBool>,
+    /// Condition variable used to sleep cleanly when stopped, paused, or ring-full.
     wake: Arc<(Mutex<bool>, Condvar)>,
+    /// Shared deck playback state (`STATE_STOPPED`, `STATE_PLAYING`, `STATE_PAUSED`).
     state: Arc<AtomicI32>,
+    /// Active [`SymphoniaEngine`] protected for seek/reopen coordination.
     engine_arc: Arc<Mutex<Option<SymphoniaEngine>>>,
+    /// Indicates whether a valid decoder engine is currently loaded.
     engine_loaded: Arc<AtomicBool>,
+    /// Lock-free SPSC ring producer feeding adapted PCM frames to [`AudioRenderer`].
     producer_arc: Arc<Mutex<Option<AudioProducer>>>,
+    /// Pending seek generation token (`-1` when idle).
     seek_req: Arc<AtomicI64>,
+    /// Packed `(generation << 40) | target_ms` atomic seek mailbox.
     seek_packed: Arc<AtomicU64>,
+    /// Monotonic source-open generation counter used to discard superseded seeks.
     open_gen: Arc<AtomicU64>,
+    /// Shared playback position in milliseconds.
     pos_ms: Arc<AtomicI64>,
+    /// Shared playback position in rendered audio frames.
     pos_frames: Arc<AtomicI64>,
+    /// Shared track duration in milliseconds.
     dur_ms: Arc<AtomicI64>,
+    /// Decoded track sample rate in Hz.
     sr_arc: Arc<AtomicU32>,
+    /// Decoded track channel count.
     ch_arc: Arc<AtomicU32>,
+    /// Target hardware device output sample rate in Hz.
     dev_sr_arc: Arc<AtomicU32>,
+    /// Target hardware device output channel count.
     dev_ch_arc: Arc<AtomicU32>,
+    /// Wait-free seqlock delivering dynamic silence-trimming configuration.
     silence_cfg_arc: Arc<CachePaddedSeqlock<SilenceConfig>>,
+    /// Cumulative milliseconds trimmed by silence detection.
     silence_saved_arc: Arc<AtomicI64>,
+    /// True when the active source is a buffered [`StreamSession`].
     is_stream_arc: Arc<AtomicBool>,
+    /// True when streaming at the live edge of an unbounded broadcast.
     at_live_edge_arc: Arc<AtomicBool>,
+    /// Optional active [`StreamSession`] backing network or HLS streams.
     session_arc: Arc<RwLock<Option<StreamSession>>>,
+    /// Signals that the decoder has reached end-of-stream and flushed the resampler.
     decoder_eof_arc: Arc<AtomicBool>,
+    /// Telemetry event dispatcher forwarding updates to Dart.
     tele: Arc<TelemetryDispatcher>,
+    /// Signals that playback has exhausted all buffered PCM.
     track_exhausted: Arc<AtomicBool>,
+    /// Indicates whether playback is currently stalled waiting for stream data.
     is_buffering: Arc<AtomicBool>,
+    /// Lock-free seqlock holding the latest FFT visualizer snapshot.
     visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
+    /// Enables periodic telemetry forwarding of visualizer snapshots.
     visualizer_enabled: Arc<AtomicBool>,
+    /// Seek/open flush generation counter requested by the control plane.
     flush_generation: Arc<AtomicU64>,
+    /// Flush generation counter acknowledged by [`AudioRenderer`].
     flush_acknowledged: Arc<AtomicU64>,
+    /// Peterson-style guard flag indicating `DecoderWorker` is pushing into `producer_arc`.
     in_rtrb_push: Arc<AtomicBool>,
+    /// Flag requesting re-initialization of a flushed live stream once bytes arrive.
     stream_reinit_needed: Arc<AtomicBool>,
+    /// Optional factory to reopen local file or memory sources on post-EOF seek recovery.
     reopen_local_fn: Arc<Mutex<Option<ReopenSourceFn>>>,
 
+    /// Per-worker PCM adaptation pipeline (silence trim, channel matrix, resampler).
     pipeline: PcmAdaptationPipeline,
+    /// Reusable scratch buffer for decoded PCM frames.
     frame_buf: Vec<f32>,
+    /// Last position timestamp (ms) published via telemetry to throttle ~30 Hz updates.
     last_tele_pos: i64,
+    /// Timestamp of the last forwarded visualizer telemetry snapshot.
     last_vis_instant: MonotonicInstant,
+    /// Cached previous visualizer snapshot for change-only telemetry emission.
     last_vis: VisualizerData,
+    /// `(open_gen, flush_generation)` key preventing repeated MP4 NoPendingAtom recovery loops.
     last_desync_recovery_key: Option<(u64, u64)>,
 }
 
 impl DecoderWorker {
+    /// Blocks on the decoder wake condition variable for up to `timeout_ms` milliseconds.
     fn wait_for_wake(&self, timeout_ms: u64) {
         let (lock, cvar) = &*self.wake;
         let guard = lock_unpoisoned(lock);
         let _ = wait_timeout_unpoisoned(cvar, guard, Duration::from_millis(timeout_ms));
     }
 
+    /// Returns the number of free sample slots available in the `rtrb` audio producer.
     fn available_producer_slots(&self) -> usize {
         self.producer_arc
             .lock()
@@ -2567,6 +2894,7 @@ impl DecoderWorker {
             .unwrap_or(0)
     }
 
+    /// Returns `true` if the `rtrb` audio ring buffer contains no unread samples.
     fn is_producer_empty(&self) -> bool {
         self.producer_arc
             .lock()
@@ -2575,6 +2903,8 @@ impl DecoderWorker {
             .unwrap_or(true)
     }
 
+    /// Reopens a fresh [`SymphoniaEngine`] using `recover_hint` from either the active
+    /// [`StreamSession`] or `reopen_local_fn` (used after EOF or demuxer desync).
     fn try_reopen_fresh_engine(&self, recover_hint: Option<&'static str>) -> Option<SymphoniaEngine> {
         if self.is_stream_arc.load(Ordering::Relaxed) {
             let guard = self.session_arc.read().ok()?;
@@ -2592,6 +2922,13 @@ impl DecoderWorker {
             let reader = session.create_reader();
             let res = SymphoniaEngine::new_with_options(reader, recover_hint, allow_scan).ok();
             session.set_decoding_audio(true);
+            if res.is_none() {
+                crate::map_log!(
+                    4,
+                    "[DECODER] stream fresh reopen failed (hint={:?})",
+                    recover_hint
+                );
+            }
             return res;
         }
 
@@ -2604,6 +2941,8 @@ impl DecoderWorker {
         SymphoniaEngine::from_boxed_with_options(reader, recover_hint, true).ok()
     }
 
+    /// Reopens a fresh [`SymphoniaEngine`] with `recover_hint` and seeks it to `restore_ms`,
+    /// returning `(engine, actual_ms)` on success.
     fn try_reopen_for_seek_recovery(
         &self,
         recover_hint: Option<&'static str>,
@@ -2644,6 +2983,7 @@ impl DecoderWorker {
         Some((new_eng, actual_ms))
     }
 
+    /// Synchronizes silence detector format and `at_live_edge_arc` from current stream state.
     fn poll_renderer_flags(&mut self) {
         let cur_sr = self.sr_arc.load(Ordering::Relaxed);
         let cur_ch = self.ch_arc.load(Ordering::Relaxed) as usize;
@@ -2662,6 +3002,12 @@ impl DecoderWorker {
         }
     }
 
+    /// Executes a segment-level seek to `target_seek` ms on an HLS VOD `session` using `vod`
+    /// state, updating `eng_lock` while aborting early if `is_superseded()` returns `true`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if the target segment is invalid, superseded, or fails to reopen.
     fn try_hls_vod_seek<F: Fn() -> bool>(
         &self,
         session: &StreamSession,
@@ -2699,6 +3045,13 @@ impl DecoderWorker {
                     new_eng.set_anchor_ms(actual);
                     *eng_lock = Some(new_eng);
                     vod.update_cursor_ms(actual as i64);
+                    crate::map_log!(
+                        4,
+                        "[DECODER] HLS VOD RAM fast-seek target={}ms -> actual={}ms (seg={})",
+                        target_seek,
+                        actual,
+                        target_seg
+                    );
                     return Ok((actual, false));
                 }
             }
@@ -2732,9 +3085,18 @@ impl DecoderWorker {
         new_eng.set_anchor_ms(actual);
         *eng_lock = Some(new_eng);
         vod.update_cursor_ms(actual as i64);
+        crate::map_log!(
+            4,
+            "[DECODER] HLS VOD segment-jump seek target={}ms -> actual={}ms (seg={})",
+            target_seek,
+            actual,
+            target_seg
+        );
         Ok((actual, true))
     }
 
+    /// Reads at least `min_bytes` into `out` starting at byte offset `start` on a non-Range
+    /// `session`, cancelling early if `is_superseded()` returns `true`.
     fn read_blocking_window_non_range<F: Fn() -> bool>(
         session: &StreamSession,
         start: u64,
@@ -2782,6 +3144,8 @@ impl DecoderWorker {
         got
     }
 
+    /// Attempts a direct Ogg page-window seek to `target_seek` ms on `session` without full
+    /// bisection, replacing `eng_lock` and aborting if `is_superseded()` returns `true`.
     fn try_ogg_direct_seek<F: Fn() -> bool>(
         &self,
         session: &StreamSession,
@@ -3046,9 +3410,19 @@ impl DecoderWorker {
         }
         new_eng.set_anchor_ms(effective_ms);
         *eng_lock = Some(new_eng);
+        crate::map_log!(
+            4,
+            "[DECODER] Ogg direct seek target={}ms -> actual={}ms (pg_off={}, in_ram={})",
+            target_seek,
+            effective_ms,
+            pg.offset,
+            in_ram
+        );
         Some(effective_ms)
     }
 
+    /// Attempts a direct Matroska/WebM Cluster-window seek to `target_seek` ms on `session`,
+    /// replacing `eng_lock` and aborting if `is_superseded()` returns `true`.
     fn try_mkv_direct_seek<F: Fn() -> bool>(
         &self,
         session: &StreamSession,
@@ -3059,21 +3433,17 @@ impl DecoderWorker {
         if target_seek <= 0 {
             return None;
         }
-        let (is_mkv, ext_hint) = {
+        let ext_hint = {
             let e = (*eng_lock).as_ref()?;
             if !e.is_mkv_or_webm() {
                 return None;
             }
-            let ext = if e.container_format() == "WebM" {
+            if e.container_format() == "WebM" {
                 "webm"
             } else {
                 "mkv"
-            };
-            (true, ext)
+            }
         };
-        if !is_mkv {
-            return None;
-        }
 
         let head_bytes = session.head_bytes_copy();
         let (_, scale_ns, first_cluster_opt) = ByteTimeMap::parse_mkv_stream_info(&head_bytes)?;
@@ -3252,9 +3622,18 @@ impl DecoderWorker {
         }
         new_eng.set_anchor_ms(effective_ms);
         *eng_lock = Some(new_eng);
+        crate::map_log!(
+            4,
+            "[DECODER] MKV/WebM direct seek target={}ms -> actual={}ms (cluster_off={})",
+            target_seek,
+            effective_ms,
+            cl_off
+        );
         Some(effective_ms)
     }
 
+    /// Attempts a direct AAC ADTS frame-sync seek to `target_seek` ms on `session`, replacing
+    /// `eng_lock` and aborting if `is_superseded()` returns `true`.
     fn try_adts_direct_seek<F: Fn() -> bool>(
         &self,
         session: &StreamSession,
@@ -3329,9 +3708,16 @@ impl DecoderWorker {
         let mut new_eng = opened.ok()?;
         new_eng.set_anchor_ms(target_seek as u64);
         *eng_lock = Some(new_eng);
+        crate::map_log!(
+            4,
+            "[DECODER] ADTS direct seek target={}ms (sync_off={})",
+            target_seek,
+            sync_off
+        );
         Some(target_seek as u64)
     }
 
+    /// Positions `session` circular buffer cursor at `offset` if already in RAM, or reanchors it.
     #[inline]
     fn position_body_for_direct_seek(session: &StreamSession, offset: u64) {
         let (r_start, r_end, _) = session.body_metrics();
@@ -3342,6 +3728,7 @@ impl DecoderWorker {
         }
     }
 
+    /// Restores `session` circular buffer cursor after advancing a windowed demuxer past `base_offset`.
     #[inline]
     fn resume_body_after_direct_advance(session: &StreamSession, base_offset: u64) {
         let (now_r_start, now_r_end, _) = session.body_metrics();
@@ -3353,6 +3740,8 @@ impl DecoderWorker {
         }
     }
 
+    /// Attempts a direct MP3 frame-sync seek to `target_seek` ms on a non-Range `session`,
+    /// replacing `eng_lock` and aborting if `is_superseded()` returns `true`.
     fn try_mp3_direct_seek<F: Fn() -> bool>(
         &self,
         session: &StreamSession,
@@ -3421,9 +3810,17 @@ impl DecoderWorker {
         let mut new_eng = opened.ok()?;
         new_eng.set_anchor_ms(target_seek as u64);
         *eng_lock = Some(new_eng);
+        crate::map_log!(
+            4,
+            "[DECODER] MP3 direct seek target={}ms (sync_off={})",
+            target_seek,
+            sync_off
+        );
         Some(target_seek as u64)
     }
 
+    /// Attempts a direct FLAC frame-window seek to `target_seek` ms on a non-Range `session`,
+    /// replacing `eng_lock` and aborting if `is_superseded()` returns `true`.
     fn try_flac_direct_seek<F: Fn() -> bool>(
         &self,
         session: &StreamSession,
@@ -3623,9 +4020,18 @@ impl DecoderWorker {
         Self::resume_body_after_direct_advance(session, chosen_off);
         new_eng.set_anchor_ms(actual_ms);
         *eng_lock = Some(new_eng);
+        crate::map_log!(
+            4,
+            "[DECODER] FLAC direct seek target={}ms -> actual={}ms (off={})",
+            target_seek,
+            actual_ms,
+            chosen_off
+        );
         Some(actual_ms)
     }
 
+    /// Scans cached RAM bytes in `session` around `target_seek` ms for WavPack block headers
+    /// and injects them as seek checkpoints into `eng`.
     fn seed_wavpack_ram_checkpoints(session: &StreamSession, eng: &mut SymphoniaEngine, target_seek: i64) {
         if !eng.is_wavpack_stream() {
             return;
@@ -3680,12 +4086,18 @@ impl DecoderWorker {
                 || self.seek_req.load(Ordering::Acquire) != gen
                 || self.open_gen.load(Ordering::Acquire) != start_open_gen
         };
-        crate::map_log!(4, "DecoderWorker executing seek to {}ms (gen={})", target_seek, gen);
+        crate::map_log!(4, "[DECODER] executing seek to {}ms (gen={})", target_seek, gen);
 
         let cur_dev_sr = self.dev_sr_arc.load(Ordering::Relaxed).max(8000) as i64;
         let dur = self.dur_ms.load(Ordering::Relaxed);
         if dur > 0 && target_seek >= dur {
             if !is_superseded() {
+                crate::map_log!(
+                    4,
+                    "[DECODER] seek target {}ms >= duration {}ms; marking exhausted",
+                    target_seek,
+                    dur
+                );
                 self.decoder_eof_arc.store(true, Ordering::Relaxed);
                 self.track_exhausted.store(true, Ordering::Release);
                 self.pos_ms.store(dur, Ordering::Relaxed);
@@ -3922,7 +4334,7 @@ impl DecoderWorker {
                         }
                         crate::map_log!(
                             3,
-                            "DecoderWorker proactively reopened MP4 demuxer after EOF before seek_ms({})",
+                            "[DECODER] proactively reopened MP4 demuxer after EOF before seek_ms({})",
                             target_seek
                         );
                     }
@@ -3992,7 +4404,7 @@ impl DecoderWorker {
                         actual_seek_ms_opt = Some(resolved_actual);
                         crate::map_log!(
                             3,
-                            "DecoderWorker seek_ms({}) succeeded (actual={}ms)",
+                            "[DECODER] seek_ms({}) succeeded (actual={}ms)",
                             target_seek,
                             resolved_actual
                         );
@@ -4036,14 +4448,14 @@ impl DecoderWorker {
                                     committed_seek_ms = restore_ms as i64;
                                     crate::map_log!(
                                         2,
-                                        "DecoderWorker recovered ADTS OutOfRange seek_ms({}) -> restored {}ms",
+                                        "[DECODER] recovered ADTS OutOfRange seek_ms({}) -> restored {}ms",
                                         target_seek,
                                         restore_ms
                                     );
                                 } else {
                                     crate::map_log!(
                                         3,
-                                        "DecoderWorker recovered post-EOF seek_ms({}) via demuxer re-init",
+                                        "[DECODER] recovered post-EOF seek_ms({}) via demuxer re-init",
                                         target_seek
                                     );
                                 }
@@ -4052,7 +4464,7 @@ impl DecoderWorker {
                         if !recovered {
                             crate::map_log!(
                                 1,
-                                "DecoderWorker seek_ms({}) failed: {:?}",
+                                "[DECODER] seek_ms({}) failed: {:?}",
                                 target_seek,
                                 e
                             );
@@ -4283,6 +4695,8 @@ impl DecoderWorker {
             .is_err()
     }
 
+    /// Reads `len` bytes starting at `offset` from `session` (using RAM cache when `cached_only`
+    /// or probe cache otherwise) and scans FLAC frame headers using `sr`, `min_bs`, `max_bs`, and `dur_ms`.
     fn scan_flac_frames_at(
         session: &StreamSession,
         offset: u64,
@@ -4308,6 +4722,8 @@ impl DecoderWorker {
         ByteTimeMap::scan_flac_frames_in_slice(&buf[..got], offset, sr, min_bs, max_bs, dur_ms)
     }
 
+    /// Probes FLAC frame anchors around `target_seek_ms` on `session` (cancelling if
+    /// `is_superseded()` returns `true`) and synthesizes a patched FLAC `SEEKTABLE` engine in `eng_lock`.
     fn prepare_patched_flac_seek<F: Fn() -> bool>(
         eng_lock: &mut Option<SymphoniaEngine>,
         session: &StreamSession,
@@ -4576,12 +4992,20 @@ impl DecoderWorker {
             self.stream_reinit_needed.store(false, Ordering::Release);
             self.decoder_eof_arc.store(false, Ordering::Relaxed);
             self.pipeline.clear_pending_and_resampler();
+            crate::map_log!(
+                3,
+                "[DECODER] reinitialized flushed stream engine (sr={}, ch={})",
+                new_sr,
+                new_ch
+            );
             true
         } else {
+            crate::map_log!(4, "[DECODER] flushed stream reinit pending valid container header");
             false
         }
     }
 
+    /// Posts throttled position (~30 Hz) and visualizer telemetry events to Dart.
     fn dispatch_periodic_telemetry(&mut self) {
         let cur_pos = self.pos_ms.load(Ordering::Relaxed);
         if cur_pos != self.last_tele_pos
@@ -4609,6 +5033,7 @@ impl DecoderWorker {
         }
     }
 
+    /// Returns `true` when the `rtrb` ring buffer holds enough buffered PCM to exit rebuffering.
     fn has_rebuffer_cushion(&self) -> bool {
         let Ok(guard) = self.producer_arc.lock() else {
             return false;
@@ -4635,21 +5060,25 @@ impl DecoderWorker {
         used >= required
     }
 
+    /// Clears `is_buffering` once the ring buffer reaches the required rebuffer cushion.
     fn check_buffering_recovery(&self) {
         if self.is_buffering.load(Ordering::Acquire) && self.has_rebuffer_cushion() {
             self.set_buffering(false);
         }
     }
 
+    /// Atomically updates `is_buffering` to `buffering` and emits an `IsBuffering` telemetry event on change.
     fn set_buffering(&self, buffering: bool) {
         let prev = self.is_buffering.swap(buffering, Ordering::AcqRel);
         if prev != buffering {
-            crate::map_log!(4, "DecoderWorker is_buffering changed: {} -> {}", prev, buffering);
+            crate::map_log!(4, "[DECODER] is_buffering changed: {} -> {}", prev, buffering);
             self.tele
                 .post_event(EventType::IsBuffering, MapEventData { is_buffering: buffering as i32 });
         }
     }
 
+    /// Handles decoder end-of-stream, distinguishing transient stream starvation from true EOF
+    /// and flushing residual resampler samples into the ring buffer.
     fn handle_eof(&mut self) {
         if self.is_stream_arc.load(Ordering::Relaxed) {
             let io_truncated = self
@@ -4679,7 +5108,7 @@ impl DecoderWorker {
         }
 
         if !self.decoder_eof_arc.swap(true, Ordering::SeqCst) {
-            crate::map_log!(3, "DecoderWorker reached EOF");
+            crate::map_log!(3, "[DECODER] reached EOF");
         }
 
         self.pipeline.flush_resampler_into_pending();
@@ -4693,6 +5122,8 @@ impl DecoderWorker {
         thread::sleep(Duration::from_millis(20));
     }
 
+    /// Decodes one frame batch from `engine_arc`, handles transient I/O stalls or MP4 desync
+    /// recovery, adapts PCM via `pipeline`, and drains staged samples into `producer_arc`.
     fn decode_and_process_step(&mut self) {
         let mut decoded_ok = false;
         let mut eof_reached = false;
@@ -4756,7 +5187,7 @@ impl DecoderWorker {
                         } else if is_mp4_no_pending_atom {
                             recover_mp4_desync = true;
                         } else {
-                            crate::map_log!(1, "DecoderWorker decode error: {}", err);
+                            crate::map_log!(1, "[DECODER] decode error: {}", err);
                             eof_reached = true;
                         }
                     }
@@ -4807,7 +5238,7 @@ impl DecoderWorker {
                     }
                     crate::map_log!(
                         2,
-                        "DecoderWorker recovered MP4 NoPendingAtom desync at {}ms",
+                        "[DECODER] recovered MP4 NoPendingAtom desync at {}ms",
                         resume_ms
                     );
                     drop(probe_guard);
@@ -4815,7 +5246,7 @@ impl DecoderWorker {
                 }
                 drop(probe_guard);
             }
-            crate::map_log!(1, "DecoderWorker fatal MP4 NoPendingAtom desync at EOF/stream");
+            crate::map_log!(1, "[DECODER] fatal MP4 NoPendingAtom desync at EOF/stream");
             eof_reached = true;
         }
 
@@ -4853,11 +5284,13 @@ impl DecoderWorker {
 
             let _drained = self.try_drain_pending();
             self.check_buffering_recovery();
-        } else if !eof_reached {
+        } else {
             self.wait_for_wake(5);
         }
     }
 
+    /// Drains staged PCM samples into `producer_arc` using a Peterson handshake with
+    /// `dispatch_seek_to_decoder` so stale pre-seek audio cannot race a ring flush.
     #[inline]
     fn try_drain_pending(&mut self) -> bool {
         // Peterson handshake with `dispatch_seek_to_decoder`: publish `in_rtrb_push`
@@ -4876,7 +5309,9 @@ impl DecoderWorker {
         drained
     }
 
+    /// Main background worker loop executing until `running` is cleared.
     fn run(&mut self) {
+        crate::map_log!(4, "[DECODER] worker loop started");
         while self.running.load(Ordering::Relaxed) {
             self.poll_renderer_flags();
 
@@ -4940,6 +5375,7 @@ impl DecoderWorker {
 
             self.decode_and_process_step();
         }
+        crate::map_log!(4, "[DECODER] worker loop exited");
     }
 }
 
@@ -5059,26 +5495,45 @@ pub struct StreamingDeck {
     pub mono_enabled: Arc<AtomicBool>,
     /// 3D stereo widening spatializer flag.
     pub spatializer_enabled: Arc<AtomicBool>,
+    /// Stereo 3D widening width multiplier stored as `f32` bits.
     pub spatializer_width: Arc<AtomicU32>,
+    /// Headphone crossfeed filter configuration.
     pub crossfeed_config: CrossfeedConfig,
+    /// Algorithmic reverb configuration.
     pub reverb_config: ReverbConfig,
+    /// Enables the per-deck soft brickwall limiter.
     pub limiter_enabled: Arc<AtomicBool>,
 
+    /// Active [`SymphoniaEngine`] protected for seek, reopen, and offline analysis access.
     pub engine: Arc<Mutex<Option<SymphoniaEngine>>>,
+    /// Indicates whether a decoded engine is currently loaded.
     pub engine_loaded: Arc<AtomicBool>,
+    /// Pending seek generation token (`-1` when no seek is queued).
     pub seek_request_ms: Arc<AtomicI64>,
+    /// Monotonic counter generating non-zero 24-bit seek generation tags.
     pub seek_counter: Arc<AtomicU64>,
+    /// Packed `(generation << 40) | target_ms` seek mailbox shared with [`DecoderWorker`].
     pub seek_packed: Arc<AtomicU64>,
+    /// Monotonic epoch incremented on seek/stop/open to reject stale seek completions.
     pub seek_epoch: Arc<AtomicU64>,
+    /// Signals that the background decoder reached end-of-stream.
     pub decoder_eof: Arc<AtomicBool>,
+    /// Signals that a flushed live stream must re-initialize its demuxer on new data.
     pub stream_reinit_needed: Arc<AtomicBool>,
+    /// Optional factory closure reopening local file/memory sources on post-EOF seek recovery.
     reopen_local_fn: Arc<Mutex<Option<ReopenSourceFn>>>,
+    /// Abort flag shared with the active network/HLS streaming thread.
     pub network_streamer_abort: Arc<AtomicBool>,
 
+    /// Controls lifetime of the background [`DecoderWorker`] thread.
     pub decoder_running: Arc<AtomicBool>,
+    /// Condition variable waking the background [`DecoderWorker`] thread.
     pub decoder_wake: Arc<(Mutex<bool>, Condvar)>,
+    /// Join handle for the background [`DecoderWorker`] thread, if spawned.
     pub decoder_thread: Option<JoinHandle<()>>,
+    /// Monotonic counter incremented on every source open to invalidate stale async opens/seeks.
     pub open_generation: Arc<AtomicU64>,
+    /// True when this deck was created via [`Self::new_analysis_deck`] without hardware output.
     pub is_analysis: bool,
 }
 
@@ -5087,6 +5542,12 @@ unsafe impl Send for StreamingDeck {}
 unsafe impl Sync for StreamingDeck {}
 
 impl StreamingDeck {
+    /// Creates a live playback deck targeting `target_sample_rate`, `target_channels`, and
+    /// `period_size` frames, spawning its background [`DecoderWorker`] thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns a negative `MAP_ERROR_*` code if initialization fails.
     pub fn new_deck(
         target_sample_rate: u32,
         target_channels: u32,
@@ -5100,8 +5561,13 @@ impl StreamingDeck {
         )
     }
 
-    /// Creates a headless deck without hardware audio output and without the real-time decoder loop,
-    /// ideal for unconstrained, maximum-speed offline CPU analysis.
+    /// Creates a headless deck targeting `target_sample_rate` and `target_channels` without
+    /// hardware audio output and without the real-time decoder loop, ideal for unconstrained,
+    /// maximum-speed offline CPU analysis.
+    ///
+    /// # Errors
+    ///
+    /// Returns a negative `MAP_ERROR_*` code if initialization fails.
     pub fn new_analysis_deck(
         target_sample_rate: u32,
         target_channels: u32,
@@ -5147,7 +5613,11 @@ impl StreamingDeck {
         (meta_buf, container_format, sym_meta, icy_meta)
     }
 
-    /// Pulls the next decoded PCM frame batch from `SymphoniaEngine` at unconstrained CPU speed.
+    /// Pulls the next decoded PCM frame batch from `SymphoniaEngine` into `out_buf` at unconstrained CPU speed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a formatted error string if decoding the next frame fails.
     pub fn decode_next_analysis_frame(&mut self, out_buf: &mut Vec<f32>) -> Result<bool, String> {
         let mut eng_lock = lock_unpoisoned(&self.engine);
         if let Some(ref mut eng) = *eng_lock {
@@ -5158,6 +5628,9 @@ impl StreamingDeck {
         }
     }
 
+    /// Internal constructor shared by [`Self::new_deck`] and [`Self::new_analysis_deck`],
+    /// configuring `target_sample_rate`, `target_channels`, `period_size`, and whether to spawn
+    /// the background decoder loop (`run_decoder_loop`).
     fn new_internal(
         target_sample_rate: u32,
         target_channels: u32,
@@ -5215,6 +5688,7 @@ impl StreamingDeck {
 
         let silence_config = Arc::new(CachePaddedSeqlock::new(SilenceConfig::default()));
 
+        /// Monotonic global counter assigning unique `deck_id` identifiers across all decks.
         static DECK_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
         let deck_id = DECK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
@@ -5398,13 +5872,22 @@ impl StreamingDeck {
             is_analysis: !run_decoder_loop,
         });
 
+        crate::map_log!(
+            3,
+            "[DECK] initialized deck_id={} (sr={}, ch={}, period={}, analysis={})",
+            deck_id,
+            sr,
+            ch,
+            period,
+            !run_decoder_loop
+        );
         if run_decoder_loop {
             coordinator.start_decoder_loop();
         }
         Ok(coordinator)
     }
 
-    /// Sends a real-time thread-safe control command to the audio renderer.
+    /// Sends a real-time thread-safe control `cmd` to the audio renderer.
     pub fn send_dsp_command(&self, cmd: DspCommand) {
         if let Ok(mut guard) = self.cmd_producer.lock() {
             if let Some(ref mut prod) = *guard {
@@ -5413,6 +5896,7 @@ impl StreamingDeck {
         }
     }
 
+    /// Spawns the background `map-decoder` thread driving [`DecoderWorker::run`].
     fn start_decoder_loop(&mut self) {
         let cur_sr = self.sample_rate.load(Ordering::Relaxed).max(8000);
         let cur_ch = (self.channels.load(Ordering::Relaxed) as usize).clamp(1, 16);
@@ -5463,26 +5947,38 @@ impl StreamingDeck {
             last_desync_recovery_key: None,
         };
 
-        self.decoder_thread = thread::Builder::new()
+        match thread::Builder::new()
             .name("map-decoder".to_string())
             .spawn(move || worker.run())
-            .ok();
+        {
+            Ok(handle) => {
+                crate::map_log!(4, "[DECK] deck_id={} spawned decoder worker", self.deck_id);
+                self.decoder_thread = Some(handle);
+            }
+            Err(e) => {
+                crate::map_log!(
+                    1,
+                    "[DECK] deck_id={} failed to spawn decoder worker: {:?}",
+                    self.deck_id,
+                    e
+                );
+            }
+        }
     }
 
-
-
+    /// Posts an `Error` telemetry event for `err_code` and returns `err_code`.
     fn mark_open_error(&self, err_code: i32) -> i32 {
         self.telemetry
             .post_event(EventType::Error, MapEventData { error_code: err_code });
         err_code
     }
 
-    /// Records a descriptive human-readable error message alongside `err_code`.
+    /// Records a descriptive human-readable error `message` alongside `err_code`.
     pub fn mark_open_error_with_message(&self, err_code: i32, message: &str) -> i32 {
         if let Ok(mut guard) = self.last_open_error_message.write() {
             *guard = Some(format!("{} (code: {})", message, err_code));
         }
-        crate::map_log!(1, "Source open error [{}]: {}", err_code, message);
+        crate::map_log!(1, "[DECK] source open error [{}]: {}", err_code, message);
         self.mark_open_error(err_code)
     }
 
@@ -5494,7 +5990,9 @@ impl StreamingDeck {
             .and_then(|mut g| g.take())
     }
 
+    /// Resets deck decoder, stream session, metadata, and counters prior to opening a new source.
     pub fn begin_open(&mut self) -> i32 {
+        crate::map_log!(4, "[DECK] begin_open deck_id={}", self.deck_id);
         let _ = self.stop();
         self.open_generation.fetch_add(1, Ordering::AcqRel);
         self.seek_epoch.fetch_add(1, Ordering::AcqRel);
@@ -5556,6 +6054,8 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Opens an audio `source` URI or filesystem path using optional HTTP `headers` and
+    /// cooperative `cancel` token, dispatching to network or local/OPFS handlers.
     pub fn open_source_with_cancel(
         &mut self,
         source: &str,
@@ -5566,7 +6066,7 @@ impl StreamingDeck {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
         let trimmed = source.trim();
-        crate::map_log!(3, "open_source: source={}", trimmed);
+        crate::map_log!(3, "[DECK] open_source: source={}", trimmed);
         if trimmed.starts_with("http://")
             || trimmed.starts_with("https://")
             || trimmed.starts_with("icy://")
@@ -5589,6 +6089,8 @@ impl StreamingDeck {
         }
     }
 
+    /// Parses `m3u8_bytes` from `url` via `backend` (respecting `cancel`), opening either an
+    /// in-memory VOD assembly (when `vod_use_memory` is `true` and non-live) or a streaming HLS session.
     fn open_hls_playlist_bytes(
         &mut self,
         url: &str,
@@ -5600,11 +6102,11 @@ impl StreamingDeck {
         if cancel.is_some_and(|c| c.is_cancelled()) {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
-        crate::map_log!(3, "open_hls_playlist: url={}", url);
+        crate::map_log!(3, "[HLS] open_hls_playlist: url={}", url);
         let parsed = match crate::hls::M3u8Parser::parse(m3u8_bytes) {
             Ok(p) => p,
             Err(_) => {
-                crate::map_log!(1, "open_hls_playlist failed: invalid m3u8 playlist");
+                crate::map_log!(1, "[HLS] open_hls_playlist failed: invalid m3u8 playlist");
                 return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
             }
         };
@@ -5613,11 +6115,11 @@ impl StreamingDeck {
             crate::hls::ParsedHlsPlaylist::Master { variants } => {
                 crate::map_log!(
                     4,
-                    "open_hls_playlist: Master playlist with {} variants",
+                    "[HLS] Master playlist with {} variants",
                     variants.len()
                 );
                 let Some(first_var) = variants.first() else {
-                    crate::map_log!(1, "open_hls_playlist failed: no variants in master playlist");
+                    crate::map_log!(1, "[HLS] open_hls_playlist failed: no variants in master playlist");
                     return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
                 };
                 if cancel.is_some_and(|c| c.is_cancelled()) {
@@ -5633,7 +6135,7 @@ impl StreamingDeck {
                             }
                             crate::map_log!(
                                 1,
-                                "open_hls_playlist failed to fetch media playlist from {}",
+                                "[HLS] open_hls_playlist failed to fetch media playlist from {}",
                                 media_url
                             );
                             return self.mark_open_error(code);
@@ -5647,7 +6149,7 @@ impl StreamingDeck {
                     Err(_) => {
                         crate::map_log!(
                             1,
-                            "open_hls_playlist failed: invalid variant media playlist"
+                            "[HLS] open_hls_playlist failed: invalid variant media playlist"
                         );
                         return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
                     }
@@ -5669,7 +6171,7 @@ impl StreamingDeck {
 
         crate::map_log!(
             3,
-            "open_hls_playlist: Media playlist parsed (segments={}, is_live={}, duration={:.2}s)",
+            "[HLS] Media playlist parsed (segments={}, is_live={}, duration={:.2}s)",
             segments.len(),
             is_live,
             total_duration_seconds
@@ -5694,8 +6196,10 @@ impl StreamingDeck {
                 let seg_url = crate::hls::resolve_hls_uri(&base_media_url, &seg.uri);
                 let Some(payload) = backend.fetch_segment_payload(&seg_url, seg.byte_range) else {
                     if combined_audio.is_empty() {
+                        crate::map_log!(1, "[HLS] initial VOD segment fetch failed: {}", seg_url);
                         return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
                     }
+                    crate::map_log!(2, "[HLS] VOD segment {} fetch failed ({}); stopping assembly", idx, seg_url);
                     break;
                 };
                 if hint_ext.is_none() {
@@ -5737,6 +6241,7 @@ impl StreamingDeck {
             if cancel.is_some_and(|c| c.is_cancelled()) {
                 return self.mark_open_error(MAP_ERROR_ABORTED);
             }
+            crate::map_log!(1, "[HLS] failed to fetch first segment: {}", first_seg_url);
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         };
         let first_audio = first_payload.audio_bytes;
@@ -5863,7 +6368,7 @@ impl StreamingDeck {
         if is_live && self.is_analysis {
             crate::map_log!(
                 3,
-                "open_hls_playlist: livestream detected on analysis deck; skipping background HLS streamer thread for {}",
+                "[HLS] livestream detected on analysis deck; skipping background streamer thread for {}",
                 url
             );
             return MAP_SUCCESS;
@@ -5900,6 +6405,8 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Finishes reading an HTTP HLS playlist from `reader` starting with `m3u8_bytes` and opens
+    /// it via `agent`, `url`, `headers`, and `cancel`.
     fn open_hls_network_with_cancel(
         &mut self,
         agent: ureq::Agent,
@@ -5923,6 +6430,8 @@ impl StreamingDeck {
         self.open_hls_playlist_bytes(url, &m3u8_bytes, cancel, &backend, false)
     }
 
+    /// Opens an HTTP/HTTPS network audio stream or HLS playlist at `url` with optional `headers`
+    /// and cooperative `cancel` token.
     pub fn open_network_with_cancel(
         &mut self,
         url: &str,
@@ -5932,6 +6441,8 @@ impl StreamingDeck {
         self.open_network_with_options(url, headers, cancel, false)
     }
 
+    /// Internal network stream opener supporting `url`, optional `headers`, `cancel`, and
+    /// `explicit_icy` (`icy://` scheme hint).
     fn open_network_with_options(
         &mut self,
         url: &str,
@@ -5944,7 +6455,7 @@ impl StreamingDeck {
         }
         let _ = self.begin_open();
         self.open_generation.fetch_add(1, Ordering::AcqRel);
-        crate::map_log!(3, "open_network: connecting to url={}", url);
+        crate::map_log!(3, "[DECK] open_network: connecting to url={}", url);
 
         let agent = if cancel.is_some() {
             build_network_probe_agent()
@@ -5959,7 +6470,7 @@ impl StreamingDeck {
         let res = match req.call() {
             Ok(r) => r,
             Err(ureq::Error::StatusCode(code)) => {
-                crate::map_log!(1, "open_network failed: HTTP status {} for {}", code, url);
+                crate::map_log!(1, "[DECK] open_network failed: HTTP status {} for {}", code, url);
                 let err = if code == 404 {
                     MAP_ERROR_FILE_NOT_FOUND
                 } else if code == 401 || code == 403 {
@@ -5973,7 +6484,7 @@ impl StreamingDeck {
                 if cancel.is_some_and(|c| c.is_cancelled()) {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
-                crate::map_log!(1, "open_network failed: connection error for {}: {}", url, err);
+                crate::map_log!(1, "[DECK] open_network failed: connection error for {}: {}", url, err);
                 return self.mark_open_error(MAP_ERROR_FILE_NOT_FOUND);
             }
         };
@@ -6002,7 +6513,7 @@ impl StreamingDeck {
         let encoding_format = infer_network_encoding_format(url, content_type.as_deref());
         crate::map_log!(
             4,
-            "open_network response: content_length={}, content_type={:?}, icy_metaint={}",
+            "[DECK] open_network response: content_length={}, content_type={:?}, icy_metaint={}",
             content_length,
             content_type,
             icy_metaint
@@ -6038,7 +6549,7 @@ impl StreamingDeck {
             return self.mark_open_error(MAP_ERROR_ABORTED);
         }
         if initial_data.is_empty() {
-            crate::map_log!(1, "open_network failed: empty initial stream bytes from {}", url);
+            crate::map_log!(1, "[DECK] open_network failed: empty initial stream bytes from {}", url);
             return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
         }
 
@@ -6089,10 +6600,12 @@ impl StreamingDeck {
                     }
                     Ok(_) => None,
                     Err(RangeFetchError::CorsRangeBlocked) => {
+                        crate::map_log!(2, "[DECK] CORS blocked initial Range probe for {}", url);
                         range_rejected = true;
                         None
                     }
                     Err(RangeFetchError::Status(status)) if status != 416 => {
+                        crate::map_log!(4, "[DECK] Range probe rejected with HTTP {} for {}", status, url);
                         range_rejected = true;
                         None
                     }
@@ -6220,6 +6733,11 @@ impl StreamingDeck {
                         }
                     }
                     if up_metaint > 0 {
+                        crate::map_log!(
+                            4,
+                            "[DECK] wasm strict ICY upgrade succeeded (metaint={})",
+                            up_metaint
+                        );
                         let mut up_reader: Box<dyn Read + Send> = Box::new(IcyDemuxReader::new(
                             Box::new(up_res.into_body().into_reader()),
                             up_metaint,
@@ -6353,7 +6871,7 @@ impl StreamingDeck {
                     session.mark_eof();
                     crate::map_log!(
                         3,
-                        "open_network: livestream detected on analysis deck; skipping background network streamer thread for {}",
+                        "[DECK] livestream detected on analysis deck; skipping background network streamer thread for {}",
                         url
                     );
                     return;
@@ -6394,15 +6912,18 @@ impl StreamingDeck {
 
         crate::map_log!(
             3,
-            "Network stream opened: {} (content_length={}, is_live={})",
+            "[DECK] Network stream opened: {} (content_length={}, is_live={}, range_supported={})",
             url,
             effective_content_length,
-            is_live
+            is_live,
+            range_supported
         );
 
         MAP_SUCCESS
     }
 
+    /// Reads the leading container header and optional trailing metadata slice from seekable
+    /// `reader` (of length `total_size` bytes), returning `(head_bytes, tail_data, boundary)`.
     fn extract_seekable_head_and_tail<R: Read + Seek>(
         reader: &mut R,
         total_size: i64,
@@ -6515,10 +7036,11 @@ impl StreamingDeck {
         (initial_buf, tail_out, boundary)
     }
 
+    /// Opens a local filesystem audio file (or Web OPFS file/HLS playlist on `wasm32`) at `path`.
     pub fn open_file(&mut self, path: &str) -> i32 {
         let _ = self.begin_open();
         self.open_generation.fetch_add(1, Ordering::AcqRel);
-        crate::map_log!(3, "open_file: path={}", path);
+        crate::map_log!(3, "[DECK] open_file: path={}", path);
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -6542,7 +7064,7 @@ impl StreamingDeck {
             if parsed.had_opfs_prefix {
                 crate::map_log!(
                     3,
-                    "The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
+                    "[DECK] The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
                      absolute paths resolve automatically to OPFS ('{}')",
                     path,
                     parsed.canonical
@@ -6555,6 +7077,7 @@ impl StreamingDeck {
                     crate::opfs::opfs_read_all_bytes(&canonical, 16 * 1024 * 1024)
                 {
                     if crate::hls::M3u8Parser::is_m3u8(&m3u8_bytes) {
+                        crate::map_log!(4, "[DECK] detected OPFS HLS playlist: {}", canonical);
                         let backend = HlsFetchBackend::Opfs;
                         return self.open_hls_playlist_bytes(
                             &canonical,
@@ -6603,6 +7126,7 @@ impl StreamingDeck {
             if path.to_ascii_lowercase().ends_with(".m3u8") {
                 if let Ok(m3u8_bytes) = std::fs::read(path) {
                     if crate::hls::M3u8Parser::is_m3u8(&m3u8_bytes) {
+                        crate::map_log!(4, "[DECK] detected local HLS playlist: {}", path);
                         let backend = HlsFetchBackend::LocalFile;
                         return self.open_hls_playlist_bytes(
                             path,
@@ -6647,8 +7171,9 @@ impl StreamingDeck {
         }
     }
 
-    /// Shared opener for any seekable [`symphonia::core::io::MediaSource`] (local files,
-    /// Android `content://`/`android.resource://` FDs, or Web OPFS sources) using $O(1)$ RAM.
+    /// Shared opener for any seekable [`symphonia::core::io::MediaSource`] `source` (local files,
+    /// Android `content://`/`android.resource://` FDs, or Web OPFS sources) using $O(1)$ RAM,
+    /// using optional `ext_hint` and diagnostic `label`.
     pub fn open_seekable_media_source<S: symphonia::core::io::MediaSource + 'static>(
         &mut self,
         mut source: S,
@@ -6663,7 +7188,7 @@ impl StreamingDeck {
         let effective_hint = boundary.container.hint_extension().or(ext_hint);
         crate::map_log!(
             4,
-            "open_seekable_media_source sniffed: source={}, container={:?}, effective_hint={:?}, size={}",
+            "[DECK] open_seekable_media_source sniffed: source={}, container={:?}, effective_hint={:?}, size={}",
             label,
             boundary.container,
             effective_hint,
@@ -6692,26 +7217,28 @@ impl StreamingDeck {
         *write_unpoisoned(&self.stream_session) = Some(session);
 
         self.init_engine(eng, false, file_size, &initial_buf);
-        crate::map_log!(3, "open_seekable_media_source successfully opened: {}", label);
+        crate::map_log!(3, "[DECK] open_seekable_media_source opened: {}", label);
         MAP_SUCCESS
     }
 
+    /// Opens an in-memory audio byte slice `data` with optional container extension `hint_ext`.
     pub fn open_memory_with_hint(&mut self, data: &[u8], hint_ext: Option<&str>) -> i32 {
         self.open_memory_owned_with_hint(data.to_vec(), hint_ext)
     }
 
-    /// Zero-copy memory decoder transferring ownership of `data` directly to `Cursor<Vec<u8>>`.
+    /// Zero-copy memory decoder transferring ownership of `data` directly to a shared
+    /// [`SharedMemSource`], using optional `hint_ext`.
     pub fn open_memory_owned_with_hint(&mut self, data: Vec<u8>, hint_ext: Option<&str>) -> i32 {
         let _ = self.begin_open();
         self.open_generation.fetch_add(1, Ordering::AcqRel);
-        crate::map_log!(3, "open_memory_owned: size={}, hint={:?}", data.len(), hint_ext);
+        crate::map_log!(3, "[DECK] open_memory_owned: size={}, hint={:?}", data.len(), hint_ext);
 
         let total_size = data.len() as i64;
         let (_status, boundary) = StreamClassifier::detect_head_boundary(&data, total_size);
         let effective_hint = boundary.container.hint_extension().or(hint_ext);
         crate::map_log!(
             4,
-            "open_memory sniffed: container={:?}, effective_hint={:?}",
+            "[DECK] open_memory sniffed: container={:?}, effective_hint={:?}",
             boundary.container,
             effective_hint
         );
@@ -6761,7 +7288,7 @@ impl StreamingDeck {
         let eng = match SymphoniaEngine::new(cursor, effective_hint) {
             Ok(e) => e,
             Err(e) => {
-                crate::map_log!(1, "open_memory failed: decode error: {:?}", e);
+                crate::map_log!(1, "[DECK] open_memory failed: decode error: {:?}", e);
                 return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
             }
         };
@@ -6774,30 +7301,13 @@ impl StreamingDeck {
         *write_unpoisoned(&self.stream_session) = Some(session);
 
         self.init_engine(eng, false, total_len, &preview_buf);
-        crate::map_log!(3, "open_memory_owned successfully opened: size={}", total_len);
+        crate::map_log!(3, "[DECK] open_memory_owned opened: size={}", total_len);
         MAP_SUCCESS
     }
 
-    pub fn open_stream_ex(
-        &mut self,
-        initial_data: &[u8],
-        tail_data: Option<&[u8]>,
-        total_size: i64,
-        is_live: bool,
-        buffer_capacity_bytes: usize,
-        encoding_format: i32,
-    ) -> i32 {
-        self.open_stream_ex_with_setup(
-            initial_data,
-            tail_data,
-            total_size,
-            is_live,
-            buffer_capacity_bytes,
-            encoding_format,
-            |_, _, _, _, _| {},
-        )
-    }
-
+    /// Opens a progressive or live [`StreamSession`] seeded with `initial_data`, optional
+    /// `tail_data`, `total_size`, `is_live`, `buffer_capacity_bytes`, and `encoding_format`,
+    /// invoking `on_session_ready` before creating the [`SymphoniaEngine`].
     #[allow(clippy::too_many_arguments)]
     pub fn open_stream_ex_with_setup<F>(
         &mut self,
@@ -6827,7 +7337,7 @@ impl StreamingDeck {
         };
         crate::map_log!(
             3,
-            "open_stream_ex: initial_bytes={}, total_size={}, is_live={}, ring_cap={}",
+            "[DECK] open_stream_ex_with_setup: initial_bytes={}, total_size={}, is_live={}, ring_cap={}",
             initial_data.len(),
             total_size,
             is_live,
@@ -6870,7 +7380,7 @@ impl StreamingDeck {
                     session.abort();
                     crate::map_log!(
                         1,
-                        "open_stream_ex failed: SymphoniaEngine::new failed for hint={:?}: {:?}",
+                        "[DECK] open_stream_ex_with_setup failed: SymphoniaEngine::new failed for hint={:?}: {:?}",
                         hint,
                         e
                     );
@@ -6883,10 +7393,12 @@ impl StreamingDeck {
         let tot = session.total_size().unwrap_or(0);
         *write_unpoisoned(&self.stream_session) = Some(session);
         self.init_engine(eng, true, tot, initial_data);
-        crate::map_log!(3, "open_stream_ex successfully opened (hint={:?})", hint);
+        crate::map_log!(3, "[DECK] open_stream_ex_with_setup opened (hint={:?})", hint);
         MAP_SUCCESS
     }
 
+    /// Opens a custom Dart byte `source` controlled via `handle`, with optional `total_size`,
+    /// `is_seekable` flag, and cooperative `cancel` token.
     pub fn open_custom_source_with_cancel(
         &mut self,
         source: CustomDartByteSource,
@@ -6905,6 +7417,8 @@ impl StreamingDeck {
         )
     }
 
+    /// Opens a custom Dart byte `source` controlled via `handle`, with optional `total_size`,
+    /// `is_seekable` flag, container extension `hint_ext`, and cooperative `cancel` token.
     pub fn open_custom_source_with_hint_cancel(
         &mut self,
         source: CustomDartByteSource,
@@ -6922,7 +7436,7 @@ impl StreamingDeck {
         self.open_generation.fetch_add(1, Ordering::AcqRel);
         crate::map_log!(
             3,
-            "open_custom_source: total_size={:?}, is_seekable={}, hint={:?}",
+            "[DECK] open_custom_source: total_size={:?}, is_seekable={}, hint={:?}",
             total_size,
             is_seekable,
             hint_ext
@@ -6943,7 +7457,7 @@ impl StreamingDeck {
                 if cancel.is_some_and(|c| c.is_cancelled()) {
                     return self.mark_open_error(MAP_ERROR_ABORTED);
                 }
-                crate::map_log!(1, "open_custom_source failed: SymphoniaEngine::new failed: {:?}", e);
+                crate::map_log!(1, "[DECK] open_custom_source failed: SymphoniaEngine::new failed: {:?}", e);
                 return self.mark_open_error(MAP_ERROR_DECODE_FAILED);
             }
         };
@@ -6955,10 +7469,13 @@ impl StreamingDeck {
         }
 
         self.init_engine(eng, !is_seekable, total_size.unwrap_or(0), &[]);
-        crate::map_log!(3, "open_custom_source successfully opened");
+        crate::map_log!(3, "[DECK] open_custom_source opened");
         MAP_SUCCESS
     }
 
+    /// Commits a newly probed [`SymphoniaEngine`] `eng` onto this deck, populating audio metadata,
+    /// bitrate, byte-to-time anchors from `initial_data` and `total_bytes`, VBR probing (when
+    /// `is_stream` is `true` and non-live), and initial telemetry events.
     fn init_engine(
         &mut self,
         eng: SymphoniaEngine,
@@ -7382,6 +7899,18 @@ impl StreamingDeck {
         ));
 
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
+        crate::map_log!(
+            3,
+            "[DECK] deck_id={} engine ready: codec={}, container={}, sr={}Hz, ch={}, dur={}ms, bitrate={}bps, is_live={}",
+            self.deck_id,
+            codec_str,
+            container_str,
+            sr,
+            ch,
+            dur,
+            bitrate,
+            is_live
+        );
         self.telemetry
             .post_event(EventType::Duration, MapEventData { duration_ms: dur });
         self.telemetry
@@ -7410,11 +7939,7 @@ impl StreamingDeck {
         cvar.notify_all();
     }
 
-    #[inline]
-    pub fn is_analysis(&self) -> bool {
-        self.is_analysis
-    }
-
+    /// Returns `true` if the active source is an unbounded live stream.
     pub fn is_live_stream(&self) -> bool {
         if self
             .stream_session
@@ -7427,6 +7952,7 @@ impl StreamingDeck {
         self.is_stream.load(Ordering::Acquire) && self.duration_ms.load(Ordering::Acquire) <= 0
     }
 
+    /// Encodes `position_ms` with a monotonic 24-bit generation tag and posts it to `seek_packed`.
     #[inline]
     fn enqueue_seek(&self, position_ms: i64) -> u64 {
         let clamped = (position_ms.max(0) as u64) & 0xFF_FFFF_FFFF;
@@ -7440,12 +7966,14 @@ impl StreamingDeck {
         gen
     }
 
+    /// Clears any queued seek request without waking the decoder.
     #[inline]
     fn clear_pending_seek(&self) {
         self.seek_packed.store(0, Ordering::Release);
         self.seek_request_ms.store(-1, Ordering::Release);
     }
 
+    /// Spins briefly until [`DecoderWorker::try_drain_pending`] exits its `rtrb` write critical section.
     #[inline]
     fn wait_rtrb_push_idle(&self) {
         let mut spins = 0u32;
@@ -7455,6 +7983,7 @@ impl StreamingDeck {
         }
     }
 
+    /// Completes playback immediately at `dur` ms when a seek targets at or past track duration.
     fn complete_at_duration(&mut self, dur: i64) {
         self.seek_epoch.fetch_add(1, Ordering::AcqRel);
         self.decoder_eof.store(true, Ordering::Relaxed);
@@ -7484,6 +8013,7 @@ impl StreamingDeck {
             .post_event(EventType::Position, MapEventData { position_ms: dur });
     }
 
+    /// Dispatches a seek to `position_ms` onto [`DecoderWorker`], flushing the renderer ring buffer.
     fn dispatch_seek_to_decoder(&mut self, position_ms: i64) {
         self.seek_epoch.fetch_add(1, Ordering::AcqRel);
         let dur = self.duration_ms.load(Ordering::Relaxed);
@@ -7523,6 +8053,8 @@ impl StreamingDeck {
         cvar.notify_all();
     }
 
+    /// Writes the current buffered playback range `[start_ms, end_ms]` and `is_buffering`
+    /// flag into `out_range`, returning `MAP_SUCCESS`.
     pub fn get_buffered_range(&self, out_range: &mut MiniaudioBufferedRange) -> i32 {
         let duration = self.duration_ms.load(Ordering::Relaxed);
         if self.is_stream.load(Ordering::Relaxed) {
@@ -7541,6 +8073,7 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Returns the monotonic metadata version counter from the active [`StreamSession`], or `0`.
     pub fn get_meta_bytes_version(&self) -> u32 {
         if let Some(ref session) = *read_unpoisoned(&self.stream_session) {
             session.meta_version()
@@ -7654,6 +8187,7 @@ impl StreamingDeck {
         }
     }
 
+    /// Returns `true` if `m` contains at least one populated tag, picture, chapter, or ICY field.
     fn has_any_parsed_fields(m: &crate::api::types::RustAudioMetadata) -> bool {
         m.title.is_some()
             || m.track_artist.is_some()
@@ -7675,9 +8209,10 @@ impl StreamingDeck {
             || m.icy.is_some()
     }
 
+    /// Transitions the deck into `STATE_PLAYING`, clearing aborts/EOF and waking [`DecoderWorker`].
     pub fn play(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
-        crate::map_log!(3, "play() called (current_state={})", cur);
+        crate::map_log!(3, "[DECK] deck_id={} play() (current_state={})", self.deck_id, cur);
 
         if let Ok(guard) = self.stream_session.read() {
             if let Some(ref session) = *guard {
@@ -7703,9 +8238,10 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Transitions the deck into `STATE_PAUSED` and notifies telemetry listeners.
     pub fn pause(&mut self) -> i32 {
         let cur = self.state.load(Ordering::Relaxed);
-        crate::map_log!(3, "pause() called (current_state={})", cur);
+        crate::map_log!(3, "[DECK] deck_id={} pause() (current_state={})", self.deck_id, cur);
 
         self.state.store(STATE_PAUSED, Ordering::Release);
         self.telemetry
@@ -7723,8 +8259,9 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Stops playback, aborts active stream/custom-source I/O, flushes the ring buffer, and resets position to `0`.
     pub fn stop(&mut self) -> i32 {
-        crate::map_log!(3, "stop() called");
+        crate::map_log!(3, "[DECK] deck_id={} stop()", self.deck_id);
 
         self.seek_epoch.fetch_add(1, Ordering::AcqRel);
         self.network_streamer_abort.store(true, Ordering::Release);
@@ -7778,7 +8315,7 @@ impl StreamingDeck {
 
     /// Case 2 termination: track reached end, stopping streamer/buffer while keeping seek position.
     pub fn finish_at_end(&mut self) {
-        crate::map_log!(3, "finish_at_end() called");
+        crate::map_log!(3, "[DECK] deck_id={} finish_at_end()", self.deck_id);
         self.network_streamer_abort.store(true, Ordering::Release);
         if let Ok(guard) = self.stream_session.read() {
             if let Some(ref session) = *guard {
@@ -7801,8 +8338,9 @@ impl StreamingDeck {
         );
     }
 
+    /// Seeks the deck to `position_ms` milliseconds (no-op on unbounded live streams).
     pub fn seek(&mut self, position_ms: i64) -> i32 {
-        crate::map_log!(4, "seek(position_ms={})", position_ms);
+        crate::map_log!(4, "[DECK] deck_id={} seek(position_ms={})", self.deck_id, position_ms);
         if self.is_live_stream() {
             return MAP_SUCCESS;
         }
@@ -7811,9 +8349,10 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Sets the deck output `volume` multiplier (clamped to `>= 0.0`).
     pub fn set_volume(&mut self, volume: f32) -> i32 {
         let vol = volume.max(0.0);
-        crate::map_log!(4, "set_volume(volume={})", vol);
+        crate::map_log!(4, "[DECK] set_volume(volume={})", vol);
         self.volume.store(vol.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetVolume(vol));
         self.telemetry
@@ -7821,11 +8360,13 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Sets the playback speed `rate` multiplier; returns `MAP_ERROR_INVALID_ARGS` if non-finite or `<= 0.0`.
     pub fn set_rate(&mut self, rate: f32) -> i32 {
         if !rate.is_finite() || rate <= 0.0 {
+            crate::map_log!(2, "[DECK] rejected invalid rate={}", rate);
             return MAP_ERROR_INVALID_ARGS;
         }
-        crate::map_log!(4, "set_rate(rate={})", rate);
+        crate::map_log!(4, "[DECK] set_rate(rate={})", rate);
         self.rate.store(rate.to_bits(), Ordering::Relaxed);
         if let Ok(guard) = self.stream_session.read() {
             if let Some(ref session) = *guard {
@@ -7837,19 +8378,22 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Sets the playback `pitch` multiplier; returns `MAP_ERROR_INVALID_ARGS` if non-finite or `<= 0.0`.
     pub fn set_pitch(&mut self, pitch: f32) -> i32 {
         if !pitch.is_finite() || pitch <= 0.0 {
+            crate::map_log!(2, "[DECK] rejected invalid pitch={}", pitch);
             return MAP_ERROR_INVALID_ARGS;
         }
-        crate::map_log!(4, "set_pitch(pitch={})", pitch);
+        crate::map_log!(4, "[DECK] set_pitch(pitch={})", pitch);
         self.pitch.store(pitch.to_bits(), Ordering::Relaxed);
         self.telemetry
             .post_event(EventType::Pitch, MapEventData { pitch });
         MAP_SUCCESS
     }
 
+    /// Updates the target hardware period size in `frames` and posts a `BufferSize` telemetry event.
     pub fn set_buffer_size(&mut self, frames: u32) -> i32 {
-        crate::map_log!(4, "set_buffer_size(frames={})", frames);
+        crate::map_log!(4, "[DECK] set_buffer_size(frames={})", frames);
         self.period_size_in_frames.store(frames, Ordering::Relaxed);
         self.telemetry.post_event(
             EventType::BufferSize,
@@ -7860,15 +8404,17 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Configures whether playback pauses automatically on device change (`enabled != 0`).
     pub fn set_pause_on_device_change(&mut self, enabled: i32) -> i32 {
-        crate::map_log!(4, "set_pause_on_device_change(enabled={})", enabled != 0);
+        crate::map_log!(4, "[DECK] set_pause_on_device_change(enabled={})", enabled != 0);
         self.pause_on_device_change
             .store(enabled != 0, Ordering::Relaxed);
         MAP_SUCCESS
     }
 
+    /// Applies full graphic equalizer `params` to the deck and emits an `Equalizer` telemetry event.
     pub fn set_equalizer(&mut self, params: &EqualizerParams) -> i32 {
-        crate::map_log!(4, "set_equalizer updated");
+        crate::map_log!(4, "[DECK] set_equalizer updated");
         self.eq_params = *params;
         self.send_dsp_command(DspCommand::SetEqualizerParams(*params));
         self.telemetry
@@ -7876,8 +8422,9 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Updates a single equalizer `band` gain to `gain_db`.
     pub fn set_equalizer_band(&mut self, band: u32, gain_db: f32) -> i32 {
-        crate::map_log!(4, "set_equalizer_band(band={}, gain_db={})", band, gain_db);
+        crate::map_log!(4, "[DECK] set_equalizer_band(band={}, gain_db={})", band, gain_db);
         self.eq_params.set_band(band as usize, gain_db);
         self.send_dsp_command(DspCommand::SetEqualizerBand {
             band: band as usize,
@@ -7886,10 +8433,11 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Enables ReplayGain normalization with `gain_db`, `peak`, and `prevent_clipping` flag.
     pub fn set_replay_gain(&mut self, gain_db: f32, peak: f32, prevent_clipping: i32) -> i32 {
         crate::map_log!(
             4,
-            "set_replay_gain(gain_db={}, peak={}, prevent_clipping={})",
+            "[DECK] set_replay_gain(gain_db={}, peak={}, prevent_clipping={})",
             gain_db,
             peak,
             prevent_clipping != 0
@@ -7907,17 +8455,7 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
-    pub fn clear_replay_gain(&mut self) -> i32 {
-        crate::map_log!(4, "clear_replay_gain()");
-        let rg = ReplayGainConfig::default();
-        self.replay_gain = rg;
-        self.send_dsp_command(DspCommand::SetReplayGain(rg));
-        self.telemetry
-            .post_event(EventType::ReplayGain, MapEventData { replay_gain: rg });
-        MAP_SUCCESS
-    }
-
-    /// Updates this deck's cached ReplayGain config and pushes it to the RT renderer
+    /// Updates this deck's cached ReplayGain config `rg` and pushes it to the RT renderer
     /// without mutating telemetry or neighboring decks.
     pub fn apply_replay_gain_config_silent(&mut self, rg: ReplayGainConfig) {
         if self.replay_gain != rg {
@@ -7926,7 +8464,7 @@ impl StreamingDeck {
         }
     }
 
-    /// Records the queue item identity and per-track ReplayGain metadata loaded on this deck.
+    /// Records the queue `item` identity and per-track ReplayGain metadata loaded on this deck.
     #[inline]
     pub fn set_queue_item_assignment(&mut self, item: &AudioSourceCore) {
         self.queue_item_id = Some(item.id);
@@ -7941,8 +8479,9 @@ impl StreamingDeck {
         self.apply_replay_gain_config_silent(ReplayGainConfig::default());
     }
 
+    /// Sets the equalizer `preamp_db` gain in decibels.
     pub fn set_preamp(&mut self, preamp_db: f32) -> i32 {
-        crate::map_log!(4, "set_preamp(preamp_db={})", preamp_db);
+        crate::map_log!(4, "[DECK] set_preamp(preamp_db={})", preamp_db);
         self.preamp_db.store(preamp_db.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetPreamp(preamp_db));
         self.telemetry
@@ -7950,8 +8489,9 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Sets the stereo balance `pan` position (`-1.0` left to `+1.0` right).
     pub fn set_balance(&mut self, pan: f32) -> i32 {
-        crate::map_log!(4, "set_balance(pan={})", pan);
+        crate::map_log!(4, "[DECK] set_balance(pan={})", pan);
         self.balance.store(pan.to_bits(), Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetBalance(pan));
         self.telemetry
@@ -7959,8 +8499,9 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Enables or disables stereo-to-mono downmix (`enabled != 0`).
     pub fn set_mono(&mut self, enabled: i32) -> i32 {
-        crate::map_log!(4, "set_mono(enabled={})", enabled != 0);
+        crate::map_log!(4, "[DECK] set_mono(enabled={})", enabled != 0);
         let mono = enabled != 0;
         self.mono_enabled.store(mono, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetMono(mono));
@@ -7973,10 +8514,11 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Configures headphone crossfeed DSP with `config`.
     pub fn set_crossfeed(&mut self, config: CrossfeedConfig) -> i32 {
         crate::map_log!(
             4,
-            "set_crossfeed(enabled={}, cutoff={}, feed={})",
+            "[DECK] set_crossfeed(enabled={}, cutoff={}, feed={})",
             config.enabled,
             config.cutoff_hz,
             config.feed_db
@@ -7992,8 +8534,9 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Enables or disables stereo 3D widening spatializer (`enabled != 0`) with `width`.
     pub fn set_spatializer(&mut self, enabled: i32, width: f32) -> i32 {
-        crate::map_log!(4, "set_spatializer(enabled={}, width={})", enabled != 0, width);
+        crate::map_log!(4, "[DECK] set_spatializer(enabled={}, width={})", enabled != 0, width);
         let en = enabled != 0;
         self.spatializer_enabled.store(en, Ordering::Relaxed);
         self.spatializer_width
@@ -8008,6 +8551,7 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Configures Freeverb algorithmic reverb (`enabled != 0`, `room_size`, `damping`, `width`, `wet`, `dry`).
     pub fn set_reverb(
         &mut self,
         enabled: i32,
@@ -8019,7 +8563,7 @@ impl StreamingDeck {
     ) -> i32 {
         crate::map_log!(
             4,
-            "set_reverb(enabled={}, room_size={}, damping={}, width={}, wet={}, dry={})",
+            "[DECK] set_reverb(enabled={}, room_size={}, damping={}, width={}, wet={}, dry={})",
             enabled != 0,
             room_size,
             damping,
@@ -8042,8 +8586,9 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Enables or disables the deck soft brickwall limiter (`enabled != 0`).
     pub fn set_limiter(&mut self, enabled: i32) -> i32 {
-        crate::map_log!(4, "set_limiter(enabled={})", enabled != 0);
+        crate::map_log!(4, "[DECK] set_limiter(enabled={})", enabled != 0);
         let en = enabled != 0;
         self.limiter_enabled.store(en, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetLimiter(en));
@@ -8056,10 +8601,11 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Updates dynamic silence detection/trimming `config` via wait-free seqlock.
     pub fn set_silence_config(&mut self, config: &SilenceConfig) -> i32 {
         crate::map_log!(
             4,
-            "set_silence_config(mode={:?}, threshold_db={})",
+            "[DECK] set_silence_config(mode={:?}, threshold_db={})",
             config.mode,
             config.threshold_db
         );
@@ -8073,9 +8619,10 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Enables or disables per-deck FFT visualizer computation (`enabled != 0`).
     pub fn set_visualizer_enabled(&mut self, enabled: i32) -> i32 {
         let en = enabled != 0;
-        crate::map_log!(4, "set_visualizer_enabled(enabled={})", en);
+        crate::map_log!(4, "[DECK] set_visualizer_enabled(enabled={})", en);
         self.visualizer_enabled.store(en, Ordering::Relaxed);
         self.send_dsp_command(DspCommand::SetVisualizerEnabled(en));
         if !en {
@@ -8097,11 +8644,13 @@ impl StreamingDeck {
         MAP_SUCCESS
     }
 
+    /// Copies the latest wait-free [`VisualizerData`] snapshot into `out`.
     pub fn get_visualizer_data(&self, out: &mut VisualizerData) -> i32 {
         *out = self.visualizer_seqlock.read();
         MAP_SUCCESS
     }
 
+    /// Acknowledges any pending ring-buffer flush on `renderer` from the control thread when stopped/seeking.
     #[inline]
     fn acknowledge_renderer_flush(&mut self) {
         if let Some(ref mut renderer) = self.renderer {
@@ -8121,8 +8670,9 @@ impl StreamingDeck {
         samples / ch
     }
 
-    /// Waits briefly until the background `DecoderWorker` populates an initial PCM cushion
-    /// (or reaches EOF, cancellation, or timeout), avoiding cold-start dropouts when `play()` commits.
+    /// Waits briefly (up to `max_wait`, or until `cancel` triggers) until the background
+    /// `DecoderWorker` populates an initial PCM cushion of `min_frames` (or reaches EOF),
+    /// avoiding cold-start dropouts when `play()` commits.
     pub fn wait_for_initial_pcm(
         &self,
         min_frames: usize,
@@ -8142,6 +8692,8 @@ impl StreamingDeck {
         }
     }
 
+    /// Real-time audio callback entry point rendering `frame_count` interleaved PCM frames into
+    /// `output_frames`. Lock-free and allocation-free.
     #[inline]
     pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
         if !output_frames.is_null() && frame_count > 0 {
@@ -8151,7 +8703,9 @@ impl StreamingDeck {
         }
     }
 
+    /// Stops playback, aborts active I/O, joins the background decoder worker thread, and drops the renderer.
     pub fn destroy(&mut self) {
+        crate::map_log!(3, "[DECK] destroying deck_id={}", self.deck_id);
         let _ = self.stop();
         self.network_streamer_abort.store(true, Ordering::Release);
         if let Ok(guard) = self.stream_session.read() {
@@ -8202,7 +8756,7 @@ pub struct AudioSourceCore {
 }
 
 /// Resolves an effective [`ReplayGainConfig`] from global policy (`mode`, `default_gain`)
-/// and optional per-track ReplayGain parts `(gain_db, peak)`.
+/// and optional per-track ReplayGain parts (`item_gain_db`, `item_peak`).
 pub fn resolve_replay_gain_parts(
     mode: u32,
     default_gain: (f32, f32),
@@ -8241,7 +8795,8 @@ pub fn resolve_replay_gain_parts(
     }
 }
 
-/// Resolves an effective [`ReplayGainConfig`] for an optional queued item.
+/// Resolves an effective [`ReplayGainConfig`] from global `mode` and `default_gain` for an
+/// optional queued `item`.
 #[inline]
 pub fn resolve_replay_gain(
     mode: u32,
@@ -8287,7 +8842,8 @@ impl Default for CrossfadeAtomic {
 }
 
 impl CrossfadeAtomic {
-    /// Commences an atomic crossfade transition from `from_deck` to `to_deck`.
+    /// Commences an atomic crossfade `transition` from `from_deck` to `to_deck` over
+    /// `total_frames` frames using the given `curve`.
     #[inline]
     pub fn begin(&self, from_deck: i32, to_deck: i32, total_frames: u64, curve: i32, transition: QueueTransition) {
         self.from_deck.store(from_deck, Ordering::Relaxed);
@@ -8317,7 +8873,8 @@ impl CrossfadeAtomic {
         QueueTransition::from_i32(self.transition.load(Ordering::Relaxed))
     }
 
-    /// Computes instantaneous volume gains for (from_deck, to_deck) at a given normalized progress.
+    /// Computes instantaneous `(gain_from, gain_to)` mix weights for the given `curve` (`0` = equal-power,
+    /// `1` = linear) at normalized `progress` in `[0.0, 1.0]`.
     #[inline]
     pub fn compute_gains(curve: i32, progress: f32) -> (f32, f32) {
         let p = progress.clamp(0.0, 1.0);
@@ -8329,17 +8886,21 @@ impl CrossfadeAtomic {
         }
     }
 
-    /// Advances the frame counter and computes the current volume gains for (Deck A, Deck B).
-    #[inline]
     /// Returns the instantaneous `(gain_a, gain_b)` mix weights without advancing the fade frame counter.
+    #[inline]
     pub fn current_gains(&self) -> (f32, f32) {
         self.gains_step(0, false)
     }
 
+    /// Advances the fade counter by `frame_count` frames and returns `(gain_a, gain_b)` mix weights.
+    #[inline]
     pub fn advance_and_get_gains(&self, frame_count: u64) -> (f32, f32) {
         self.gains_step(frame_count, true)
     }
 
+    /// Shared lock-free gain computation helper optionally advancing `current_frame` by `frame_count`
+    /// when `advance` is `true`, transitioning back to `Idle` once `total_frames` is reached.
+    #[inline]
     fn gains_step(&self, frame_count: u64, advance: bool) -> (f32, f32) {
         let cur = if advance {
             self.current_frame.fetch_add(frame_count, Ordering::Relaxed)
@@ -8416,10 +8977,15 @@ pub struct DualSource {
     /// Monotonic track ID of the target track in an active crossfade (-1 when none).
     pub crossfade_target_id: Arc<AtomicI64>,
 
+    /// Output sample rate in Hz shared across both decks.
     pub sample_rate: u32,
+    /// Output channel count shared across both decks.
     pub channels: u32,
+    /// Hardware period size in audio frames.
     pub period_size: u32,
+    /// Optional factory constructing custom Dart byte stream sources.
     pub custom_source_factory: Option<CustomSourceFactory>,
+    /// Optional registry bridging asynchronous source resolution to Dart.
     pub dart_resolver: Option<Arc<DartResolveRegistry>>,
     /// Track ID currently decoded and paused in the standby deck (`-1` if none/invalidated).
     pub standby_ready_id: Arc<AtomicI64>,
@@ -8444,6 +9010,12 @@ unsafe impl Send for DualSource {}
 unsafe impl Sync for DualSource {}
 
 impl DualSource {
+    /// Creates a new [`DualSource`] coordinator with Deck A and Deck B configured for
+    /// `sample_rate`, `channels`, and `period_size`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a negative `MAP_ERROR_*` code if either underlying [`StreamingDeck`] fails to initialize.
     pub fn new(sample_rate: u32, channels: u32, period_size: u32) -> Result<Self, i32> {
         let sr = if sample_rate > 0 { sample_rate } else { 44100 };
         let ch = if channels > 0 { channels } else { 2 };
@@ -8451,6 +9023,13 @@ impl DualSource {
 
         let deck_a = StreamingDeck::new_deck(sr, ch, period)?;
         let deck_b = StreamingDeck::new_deck(sr, ch, period)?;
+        crate::map_log!(
+            3,
+            "[DUAL_SOURCE] initialized (sr={}, ch={}, period={})",
+            sr,
+            ch,
+            period
+        );
 
         Ok(Self {
             deck_a,
@@ -8557,6 +9136,7 @@ impl DualSource {
         }
     }
 
+    /// Opens an [`AudioSourceCore`] `item` onto `deck` using optional `custom_factory` and `cancel`.
     pub fn open_deck_source_with_cancel(
         deck: &mut StreamingDeck,
         item: &AudioSourceCore,
@@ -8566,9 +9146,9 @@ impl DualSource {
         Self::open_deck_with_pre_resolved(deck, item, None, custom_factory, None, cancel)
     }
 
-    /// Opens an [`AudioSourceCore`] onto `deck`, using `pre_resolved` if supplied
+    /// Opens an [`AudioSourceCore`] `item` onto `deck`, using `pre_resolved` if supplied
     /// (static analysis), querying `dart_resolver` when `item.resolve_in_dart`
-    /// is set, or opening directly via path/HTTP/`data:`/`custom:`.
+    /// is set, or opening directly via path/HTTP/`data:`/`custom:` with `custom_factory` and `cancel`.
     pub fn open_deck_with_pre_resolved(
         deck: &mut StreamingDeck,
         item: &AudioSourceCore,
@@ -8581,6 +9161,14 @@ impl DualSource {
             deck.clear_queue_item_assignment();
             return MAP_ERROR_ABORTED;
         }
+        crate::map_log!(
+            4,
+            "[DUAL_SOURCE] opening item id={} deck_id={} resolve_in_dart={} source={}",
+            item.id,
+            deck.deck_id,
+            item.resolve_in_dart,
+            item.source
+        );
         let res = if item.source.starts_with("custom:") || item.source.starts_with("custom://") {
             let id_str = item
                 .source
@@ -8607,6 +9195,7 @@ impl DualSource {
                 let (source, handle) = factory(stream_id, total_size);
                 deck.open_custom_source_with_cancel(source, handle, total_size, true, cancel)
             } else {
+                crate::map_log!(1, "[DUAL_SOURCE] missing CustomSourceFactory for {}", item.source);
                 MAP_ERROR_UNSUPPORTED
             }
         } else if let Some(ref data) = item.data_bytes {
@@ -8667,6 +9256,8 @@ impl DualSource {
         res
     }
 
+    /// Dispatches an already-resolved [`ResolvedCoreSource`] `resolved` onto `deck` for
+    /// `source_uri`, optional HTTP `headers`, `custom_factory`, `dart_resolver`, and `cancel`.
     fn open_resolved_core_source(
         deck: &mut StreamingDeck,
         source_uri: &str,
@@ -8837,7 +9428,9 @@ impl DualSource {
         }
     }
 
+    /// Appends `items` to both `canonical_queue` and the active playback `queue`.
     pub fn append_items(&mut self, items: Vec<AudioSourceCore>) {
+        crate::map_log!(4, "[DUAL_SOURCE] append_items(count={})", items.len());
         let mut can = write_unpoisoned(&self.canonical_queue);
         let start = can.len();
         can.extend(items.clone());
@@ -8851,7 +9444,9 @@ impl DualSource {
         self.verify_or_abort_crossfade();
     }
 
+    /// Inserts `item` immediately after `current_index` in the active queue and records it in `canonical_queue`.
     pub fn insert_next_item(&mut self, item: AudioSourceCore) {
+        crate::map_log!(4, "[DUAL_SOURCE] insert_next_item(id={})", item.id);
         {
             let mut can = write_unpoisoned(&self.canonical_queue);
             can.push(item.clone());
@@ -8866,12 +9461,15 @@ impl DualSource {
         self.verify_or_abort_crossfade();
     }
 
+    /// Removes the item at `index` from the active and canonical queues, stopping playback if
+    /// the removed item was active or the queue becomes empty.
     pub fn remove_item_at(&mut self, index: usize) -> Option<AudioSourceCore> {
         let mut q = write_unpoisoned(&self.queue);
         if index >= q.len() {
             return None;
         }
         let removed = q.remove(index);
+        crate::map_log!(4, "[DUAL_SOURCE] remove_item_at(index={}, id={})", index, removed.id);
         {
             let mut can = write_unpoisoned(&self.canonical_queue);
             can.retain(|it| it.id != removed.id);
@@ -8930,11 +9528,14 @@ impl DualSource {
         Some(removed)
     }
 
+    /// Moves a queue item from index `from` to index `to`, remapping active cursors and
+    /// verifying any in-flight crossfade target.
     pub fn reorder_item(&mut self, from: usize, to: usize) -> bool {
         let mut q = write_unpoisoned(&self.queue);
         if from >= q.len() || to >= q.len() || from == to {
             return false;
         }
+        crate::map_log!(4, "[DUAL_SOURCE] reorder_item(from={}, to={})", from, to);
         let item = q.remove(from);
         q.insert(to, item);
         let cur = self.current_index.load(Ordering::Relaxed);
@@ -8953,6 +9554,7 @@ impl DualSource {
         true
     }
 
+    /// Remaps queue cursor `idx` after moving an element from `from` to `to`.
     #[inline]
     fn remap_index_for_reorder(idx: i64, from: usize, to: usize) -> i64 {
         if idx < 0 {
@@ -8970,11 +9572,14 @@ impl DualSource {
         }
     }
 
+    /// Reorders the active queue to match the exact sequence of track `ids`, returning `false`
+    /// if the queue is empty or `ids` is not a permutation of the active queue IDs.
     pub fn reorder_by_ids(&mut self, ids: &[i64]) -> bool {
         let mut q = write_unpoisoned(&self.queue);
         if q.is_empty() || ids.len() != q.len() {
             return false;
         }
+        crate::map_log!(4, "[DUAL_SOURCE] reorder_by_ids(len={})", ids.len());
         let cur = self.current_index.load(Ordering::Relaxed);
         let planned = self.planned_index.load(Ordering::Relaxed);
         let prev_auto = self.pending_auto_advance_prev_index.load(Ordering::Relaxed);
@@ -9014,7 +9619,9 @@ impl DualSource {
         true
     }
 
+    /// Clears all queued items, optionally keeping the currently playing item when `keep_current` is `true`.
     pub fn clear_items(&mut self, keep_current: bool) {
+        crate::map_log!(4, "[DUAL_SOURCE] clear_items(keep_current={})", keep_current);
         self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
         write_unpoisoned(&self.canonical_queue).clear();
         write_unpoisoned(&self.original_indices).clear();
@@ -9044,8 +9651,12 @@ impl DualSource {
         }
     }
 
+    /// Sets playlist loop `mode` (`0 = Off`, `1 = One`, `2 = All`), reconciling any pending
+    /// crossfade or prewarmed standby deck.
     pub fn set_loop_mode(&mut self, mode: i32) {
-        self.loop_mode.store(mode.clamp(0, 2), Ordering::Release);
+        let clamped = mode.clamp(0, 2);
+        crate::map_log!(4, "[DUAL_SOURCE] set_loop_mode(mode={})", clamped);
+        self.loop_mode.store(clamped, Ordering::Release);
         let prev_auto_idx = self.pending_auto_advance_prev_index.swap(-1, Ordering::AcqRel);
         if prev_auto_idx >= 0 {
             self.current_index.store(prev_auto_idx, Ordering::Release);
@@ -9065,11 +9676,14 @@ impl DualSource {
         }
     }
 
+    /// Enables or disables shuffle playback order (`enabled`), preserving the currently active
+    /// track at `current_index`.
     pub fn set_shuffle(&mut self, enabled: bool) {
         let cur_enabled = self.shuffle_enabled.load(Ordering::Relaxed);
         if cur_enabled == enabled {
             return;
         }
+        crate::map_log!(4, "[DUAL_SOURCE] set_shuffle(enabled={})", enabled);
         self.shuffle_enabled.store(enabled, Ordering::Release);
 
         let cur = self.current_index.load(Ordering::Relaxed);
@@ -9083,6 +9697,7 @@ impl DualSource {
         }
     }
 
+    /// Shuffles the active queue in place while pinning `current_idx` at position `0`.
     fn apply_shuffle(&mut self, current_idx: usize) {
         let mut q = write_unpoisoned(&self.queue);
         if q.is_empty() {
@@ -9105,6 +9720,8 @@ impl DualSource {
         }
     }
 
+    /// Restores the active queue from `canonical_queue` and updates `current_index` to match
+    /// the track previously at `current_idx`.
     fn restore_canonical_order(&mut self, current_idx: usize) {
         let can = read_unpoisoned(&self.canonical_queue);
         let mut q = write_unpoisoned(&self.queue);
@@ -9119,14 +9736,26 @@ impl DualSource {
         }
     }
 
+    /// Configures automatic crossfade `duration_ms`, `manual_duration_ms`, and `curve` (`0` = equal-power, `1` = linear).
     pub fn set_crossfade(&mut self, duration_ms: u64, manual_duration_ms: u64, curve: i32) {
+        crate::map_log!(
+            4,
+            "[DUAL_SOURCE] set_crossfade(auto={}ms, manual={}ms, curve={})",
+            duration_ms,
+            manual_duration_ms,
+            curve
+        );
         self.auto_crossfade_duration_ms.store(duration_ms, Ordering::Release);
         self.manual_crossfade_duration_ms.store(manual_duration_ms, Ordering::Release);
         self.crossfade_curve.store(curve.clamp(0, 1), Ordering::Release);
     }
 
+    /// Aborts any active crossfade, snapping `active_deck` appropriately and stopping the standby deck.
     pub fn abort_active_crossfade(&mut self) {
         let trans = self.crossfade.transition();
+        if trans != QueueTransition::Idle {
+            crate::map_log!(4, "[DUAL_SOURCE] abort_active_crossfade(trans={:?})", trans);
+        }
         self.crossfade_target_id.store(-1, Ordering::Release);
         self.crossfade_completed_flag.store(false, Ordering::Release);
         if trans == QueueTransition::ManualCrossfade {
@@ -9144,7 +9773,9 @@ impl DualSource {
         }
     }
 
+    /// Pauses the active deck (and standby deck if crossfading) and sets `playback_state` to `Paused`.
     pub fn pause(&mut self) {
+        crate::map_log!(4, "[DUAL_SOURCE] pause()");
         self.pending_open_active.store(false, Ordering::Release);
         self.pending_open_seek_ms.store(0, Ordering::Release);
         self.pending_auto_advance_prev_index.store(-1, Ordering::Release);
@@ -9155,7 +9786,9 @@ impl DualSource {
         self.playback_state.store(PlaybackState::Paused.as_i32(), Ordering::Release);
     }
 
+    /// Stops both decks, aborts any crossfade, clears queue-item assignments, and sets `playback_state` to `Stopped`.
     pub fn stop(&mut self) {
+        crate::map_log!(4, "[DUAL_SOURCE] stop()");
         self.pending_open_active.store(false, Ordering::Release);
         self.pending_open_seek_ms.store(0, Ordering::Release);
         self.pending_auto_advance_prev_index.store(-1, Ordering::Release);
@@ -9167,7 +9800,9 @@ impl DualSource {
         self.playback_state.store(PlaybackState::Stopped.as_i32(), Ordering::Release);
     }
 
+    /// Seeks the active foreground deck to `position_ms`, reconciling any active auto/manual crossfade.
     pub fn seek(&mut self, position_ms: i64) -> i32 {
+        crate::map_log!(4, "[DUAL_SOURCE] seek(position_ms={})", position_ms);
         let prev_auto_idx = self.pending_auto_advance_prev_index.swap(-1, Ordering::AcqRel);
         if prev_auto_idx >= 0 {
             self.current_index.store(prev_auto_idx, Ordering::Release);

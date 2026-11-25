@@ -1,18 +1,18 @@
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player_example/app.dart';
-import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
-import 'package:miniaudio_player_example/models/audio_track.dart';
-import 'package:miniaudio_player_example/theme/studio_colors.dart';
-import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/playlist_queue_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/ram_sound_effects_card.dart';
-import 'package:miniaudio_player_example/widgets/common/studio_badge.dart';
-import 'package:miniaudio_player_example/widgets/common/studio_card.dart';
-import 'package:miniaudio_player_example/widgets/painters/waveform_painter.dart';
+import 'package:miniaudio_player_example/app/miniaudio_example_app.dart';
+import 'package:miniaudio_player_example/core/models/audio_track.dart';
+import 'package:miniaudio_player_example/core/theme/studio_colors.dart';
+import 'package:miniaudio_player_example/features/console/controllers/audio_engine_controller.dart';
+import 'package:miniaudio_player_example/features/playback/widgets/playback_engine_card.dart';
+import 'package:miniaudio_player_example/features/queue/widgets/playlist_queue_card.dart';
+import 'package:miniaudio_player_example/features/sound_effects/widgets/ram_sound_effects_card.dart';
+import 'package:miniaudio_player_example/shared/painters/waveform_painter.dart';
+import 'package:miniaudio_player_example/shared/widgets/studio_badge.dart';
+import 'package:miniaudio_player_example/shared/widgets/studio_card.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

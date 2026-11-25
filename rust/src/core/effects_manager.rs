@@ -14,31 +14,43 @@ use crate::core::voice_pool::{
 use crate::dsp::spatial::{SpatialEmitter, SpatialListener};
 use crate::sync::{lock_unpoisoned, read_unpoisoned, write_unpoisoned, ReaperHandle};
 
+/// Capacity of the bounded control-to-RT voice command channel.
 const RT_VOICE_CMD_QUEUE_CAP: usize = 2048;
+/// Capacity of the RT-to-control voice completion SPSC ring buffer.
 const RT_VOICE_DONE_QUEUE_CAP: usize = 256;
 
 /// Cloneable control-plane handle for polyphonic SFX catalog, triggering, and wait-free telemetry.
 #[derive(Clone)]
 pub struct EffectsControl {
+    /// Synchronized cold sound effect catalog and LRU cache.
     catalog: Arc<Mutex<EffectCatalog>>,
+    /// Lock-free bounded sender delivering commands to [`VoicePoolRt`].
     cmd_tx: crossbeam_channel::Sender<RtVoiceCmd>,
+    /// Shared wait-free atomic counters for active voices, RAM usage, and pending completions.
     metrics: Arc<SharedVoiceMetrics>,
+    /// Snapshot of currently loaded sound effect IDs readable without blocking on catalog locks.
     loaded_ids_snapshot: Arc<RwLock<Vec<String>>>,
+    /// Optional background reaper handle for off-RT destruction of displaced buffers.
     reaper: Arc<RwLock<Option<ReaperHandle>>>,
+    /// Optional Dart resolver bridge for deferred `dart://` or custom SFX sources.
     dart_resolver: Arc<RwLock<Option<Arc<DartResolveRegistry>>>>,
 }
 
 impl EffectsControl {
-    /// Attaches the shared Dart resolution bridge used by deferred SFX sources.
+    /// Attaches the shared Dart resolution bridge (`resolver`) used by deferred SFX sources.
     pub fn attach_dart_resolver(&self, resolver: Arc<DartResolveRegistry>) {
+        crate::map_log!(4, "[SFX] Attached Dart source resolver to EffectsControl");
         *write_unpoisoned(&self.dart_resolver) = Some(resolver);
     }
 
+    /// Replaces the wait-free snapshot of loaded effect identifiers with `ids`.
     #[inline]
     fn refresh_loaded_ids(&self, ids: Vec<String>) {
         *write_unpoisoned(&self.loaded_ids_snapshot) = ids;
     }
 
+    /// Dispatches displaced [`SoundBuffer`] instances in `buffers` to the background reaper if attached,
+    /// or drops them directly off-lock.
     #[inline]
     fn drop_buffers_off_lock(&self, buffers: Vec<SoundBuffer>) {
         if buffers.is_empty() {
@@ -52,44 +64,89 @@ impl EffectsControl {
         }
     }
 
-    /// Declaratively registers the sound effect catalog.
+    /// Declaratively registers the sound effect catalog from `effects`.
     ///
     /// Memory-backed effects are decoded BEFORE acquiring the catalog mutex so heavy
     /// decoding never stalls live playback, telemetry getters, or active voices.
+    ///
+    /// # Errors
+    /// Returns an error string if preparing or decoding any catalog item fails.
     pub fn set_effects(&self, effects: Vec<EffectCatalogItem>) -> Result<(), String> {
+        crate::map_log!(3, "[SFX] Updating effect catalog ({} entries)", effects.len());
         let resolver = read_unpoisoned(&self.dart_resolver).clone();
-        let prepared = prepare_catalog_items(effects, resolver.as_ref())?;
+        let prepared = match prepare_catalog_items(effects, resolver.as_ref()) {
+            Ok(p) => p,
+            Err(e) => {
+                crate::map_log!(1, "[SFX] Failed to prepare effect catalog: {}", e);
+                return Err(e);
+            }
+        };
         let (displaced, loaded_ids) = {
             let mut cat = lock_unpoisoned(&self.catalog);
             let displaced = cat.apply_prepared_effects(prepared);
             let ids = cat.loaded_effect_ids();
             (displaced, ids)
         };
+        crate::map_log!(
+            3,
+            "[SFX] Applied effect catalog (loaded={}, displaced={})",
+            loaded_ids.len(),
+            displaced.len()
+        );
         self.refresh_loaded_ids(loaded_ids);
         self.drop_buffers_off_lock(displaced);
         Ok(())
     }
 
-    /// Triggers playback of a registered sound effect by ID, decoding file/network sources
-    /// strictly outside all locks before atomically installing and spawning in the RT pool.
+    /// Triggers playback of a registered sound effect by `id` with `config`, decoding file/network
+    /// sources strictly outside all locks before atomically installing and spawning in the RT pool.
+    ///
+    /// Returns `(voice_id, ram_changed)` where `ram_changed` indicates whether the RAM cache changed.
+    ///
+    /// # Errors
+    /// Returns an error string if `id` is unknown, decoding fails, or no voice slot can be allocated.
     pub fn play_effect(&self, id: &str, config: EffectConfig) -> Result<(u32, bool), String> {
         let mut ram_changed = false;
 
         for retried in [false, true] {
             let decode_target = {
                 let mut cat = lock_unpoisoned(&self.catalog);
-                match cat.lookup_decode_target(id)? {
-                    None => {
-                        let voice_id = cat.play_cached_effect(id, config)?;
+                match cat.lookup_decode_target(id) {
+                    Ok(None) => {
+                        let voice_id = match cat.play_cached_effect(id, config) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                crate::map_log!(1, "[SFX] play_effect('{}') cached spawn failed: {}", id, e);
+                                return Err(e);
+                            }
+                        };
+                        crate::map_log!(
+                            4,
+                            "[SFX] Spawned cached effect '{}' (voice_id={}, ram_changed={})",
+                            id,
+                            voice_id,
+                            ram_changed
+                        );
                         return Ok((voice_id, ram_changed));
                     }
-                    Some(target) => target,
+                    Ok(Some(target)) => target,
+                    Err(e) => {
+                        crate::map_log!(1, "[SFX] play_effect('{}') lookup failed: {}", id, e);
+                        return Err(e);
+                    }
                 }
             };
 
             let (expected_key, src) = decode_target;
+            crate::map_log!(4, "[SFX] Lazy-decoding effect '{}' before spawning voice", id);
             let resolver = read_unpoisoned(&self.dart_resolver).clone();
-            let decoded = decode_effect_source(id, &src, resolver.as_ref())?;
+            let decoded = match decode_effect_source(id, &src, resolver.as_ref()) {
+                Ok(buf) => buf,
+                Err(e) => {
+                    crate::map_log!(1, "[SFX] Failed to decode effect '{}': {}", id, e);
+                    return Err(e);
+                }
+            };
 
             let mut cat = lock_unpoisoned(&self.catalog);
             let (inserted, displaced) = cat.install_decoded_buffer(id, expected_key, decoded);
@@ -104,12 +161,32 @@ impl EffectsControl {
             self.drop_buffers_off_lock(displaced);
 
             match play_res {
-                Ok(voice_id) => return Ok((voice_id, ram_changed)),
-                Err(e) if !retried && e == "Effect buffer is not loaded" => continue,
-                Err(e) => return Err(e),
+                Ok(voice_id) => {
+                    crate::map_log!(
+                        4,
+                        "[SFX] Spawned decoded effect '{}' (voice_id={}, ram_changed={})",
+                        id,
+                        voice_id,
+                        ram_changed
+                    );
+                    return Ok((voice_id, ram_changed));
+                }
+                Err(e) if !retried && e == "Effect buffer is not loaded" => {
+                    crate::map_log!(
+                        2,
+                        "[SFX] Retrying play_effect('{}') after concurrent eviction",
+                        id
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    crate::map_log!(1, "[SFX] play_effect('{}') failed after decode: {}", id, e);
+                    return Err(e);
+                }
             }
         }
 
+        crate::map_log!(1, "[SFX] play_effect('{}') exhausted retries: Effect buffer is not loaded", id);
         Err("Effect buffer is not loaded".to_string())
     }
 
@@ -140,10 +217,18 @@ impl EffectsControl {
         if let Some((ref ids, _)) = eviction_info {
             self.refresh_loaded_ids(ids.clone());
         }
+        if !completed_ids.is_empty() || eviction_info.is_some() {
+            crate::map_log!(
+                4,
+                "[SFX] Reconciled {} completed voices (evicted={})",
+                completed_ids.len(),
+                eviction_info.is_some()
+            );
+        }
         (completed_ids, eviction_info)
     }
 
-    /// Stops playback of an active voice slot.
+    /// Stops playback of an active voice slot identified by `voice_id` with a `fade_out_samples` ramp.
     #[inline]
     pub fn stop_effect(&self, voice_id: u32, fade_out_samples: usize) {
         let evicted_ids = {
@@ -154,12 +239,19 @@ impl EffectsControl {
                 None
             }
         };
+        crate::map_log!(
+            4,
+            "[SFX] Stopped voice_id={} (fade_out_samples={}, evicted={})",
+            voice_id,
+            fade_out_samples,
+            evicted_ids.is_some()
+        );
         if let Some(ids) = evicted_ids {
             self.refresh_loaded_ids(ids);
         }
     }
 
-    /// Stops all currently active sound effect voices.
+    /// Stops all currently active sound effect voices using a `fade_out_samples` ramp.
     #[inline]
     pub fn stop_all_effects(&self, fade_out_samples: usize) {
         let evicted_ids = {
@@ -170,59 +262,115 @@ impl EffectsControl {
                 None
             }
         };
+        crate::map_log!(
+            3,
+            "[SFX] Stopped all active voices (fade_out_samples={}, evicted={})",
+            fade_out_samples,
+            evicted_ids.is_some()
+        );
         if let Some(ids) = evicted_ids {
             self.refresh_loaded_ids(ids);
         }
     }
 
-    /// Sets playback volume of an active voice lock-free without acquiring catalog locks.
+    /// Sets playback `volume` of an active `voice_id` lock-free without acquiring catalog locks.
     #[inline]
     pub fn set_voice_volume(&self, voice_id: u32, volume: f32) {
-        let _ = self
+        if self
             .cmd_tx
-            .try_send(RtVoiceCmd::SetVolume { voice_id, volume });
+            .try_send(RtVoiceCmd::SetVolume { voice_id, volume })
+            .is_err()
+        {
+            crate::map_log!(
+                2,
+                "[SFX] RT voice command queue full; dropped SetVolume for voice_id={}",
+                voice_id
+            );
+        }
     }
 
-    /// Sets playback pitch multiplier of an active voice lock-free.
+    /// Sets playback `pitch` multiplier of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_pitch(&self, voice_id: u32, pitch: f32) {
-        let _ = self
+        if self
             .cmd_tx
-            .try_send(RtVoiceCmd::SetPitch { voice_id, pitch });
+            .try_send(RtVoiceCmd::SetPitch { voice_id, pitch })
+            .is_err()
+        {
+            crate::map_log!(
+                2,
+                "[SFX] RT voice command queue full; dropped SetPitch for voice_id={}",
+                voice_id
+            );
+        }
     }
 
-    /// Sets stereo pan balance of an active voice lock-free.
+    /// Sets stereo pan `balance` of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_balance(&self, voice_id: u32, balance: f32) {
-        let _ = self
+        if self
             .cmd_tx
-            .try_send(RtVoiceCmd::SetBalance { voice_id, balance });
+            .try_send(RtVoiceCmd::SetBalance { voice_id, balance })
+            .is_err()
+        {
+            crate::map_log!(
+                2,
+                "[SFX] RT voice command queue full; dropped SetBalance for voice_id={}",
+                voice_id
+            );
+        }
     }
 
-    /// Sets 3D spatial emitter parameters of an active voice lock-free.
+    /// Sets 3D spatial `emitter` parameters of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_emitter(&self, voice_id: u32, emitter: Option<SpatialEmitter>) {
-        let _ = self
+        if self
             .cmd_tx
-            .try_send(RtVoiceCmd::SetEmitter { voice_id, emitter });
+            .try_send(RtVoiceCmd::SetEmitter { voice_id, emitter })
+            .is_err()
+        {
+            crate::map_log!(
+                2,
+                "[SFX] RT voice command queue full; dropped SetEmitter for voice_id={}",
+                voice_id
+            );
+        }
     }
 
-    /// Sets 3D spatial listener position and orientation for all sound effects.
+    /// Sets 3D spatial `listener` position and orientation for all sound effects.
     #[inline]
     pub fn set_listener(&self, listener: SpatialListener) {
-        let _ = self.cmd_tx.try_send(RtVoiceCmd::SetListener { listener });
+        if self
+            .cmd_tx
+            .try_send(RtVoiceCmd::SetListener { listener })
+            .is_err()
+        {
+            crate::map_log!(2, "[SFX] RT voice command queue full; dropped SetListener");
+        }
         if let Ok(mut cat) = self.catalog.try_lock() {
             cat.listener = listener;
         }
     }
 
-    /// Updates Doppler effect physics parameters.
+    /// Updates Doppler effect physics parameters with `factor` and `speed_of_sound`.
     #[inline]
     pub fn set_doppler_parameters(&self, factor: f32, speed_of_sound: f32) {
-        let _ = self.cmd_tx.try_send(RtVoiceCmd::SetDoppler {
+        crate::map_log!(
+            4,
+            "[SFX] Updating Doppler parameters (factor={}, speed_of_sound={})",
             factor,
-            speed_of_sound,
-        });
+            speed_of_sound
+        );
+        if self
+            .cmd_tx
+            .try_send(RtVoiceCmd::SetDoppler {
+                factor,
+                speed_of_sound,
+            })
+            .is_err()
+        {
+            crate::map_log!(2, "[SFX] RT voice command queue full; dropped SetDoppler");
+        }
         if let Ok(mut cat) = self.catalog.try_lock() {
             cat.speed_of_sound = speed_of_sound;
         }
@@ -262,13 +410,22 @@ pub struct EffectsManager {
 }
 
 impl EffectsManager {
-    /// Creates a new `EffectsManager` with voice capacity and optional memory budget limits.
+    /// Creates a new `EffectsManager` with `max_voices` capacity, optional `max_ram_bytes`
+    /// memory budget, `sample_rate`, and `channels`.
     pub fn new(
         max_voices: usize,
         max_ram_bytes: Option<usize>,
         sample_rate: u32,
         channels: usize,
     ) -> Self {
+        crate::map_log!(
+            3,
+            "[SFX] Initializing EffectsManager (max_voices={}, max_ram_bytes={:?}, sr={}, ch={})",
+            max_voices,
+            max_ram_bytes,
+            sample_rate,
+            channels
+        );
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded(RT_VOICE_CMD_QUEUE_CAP);
         let (done_tx, done_rx) = rtrb::RingBuffer::<RtVoiceDone>::new(RT_VOICE_DONE_QUEUE_CAP);
         let metrics = Arc::new(SharedVoiceMetrics::new());
@@ -313,24 +470,30 @@ impl EffectsManager {
         self.ctrl.clone()
     }
 
-    /// Attaches a background [`ReaperHandle`] so retired and displaced SFX buffers are destroyed off-RT.
+    /// Attaches a background [`ReaperHandle`] (`reaper`) so retired and displaced SFX buffers are destroyed off-RT.
     pub fn attach_reaper(&mut self, reaper: &ReaperHandle) {
+        crate::map_log!(4, "[SFX] Attached background buffer reaper to EffectsManager");
         self.rt_pool.set_reaper(reaper.sound_buffer_reaper_fn());
         *write_unpoisoned(&self.ctrl.reaper) = Some(reaper.clone());
     }
 
-    /// Declaratively registers the sound effect catalog.
+    /// Declaratively registers the sound effect catalog from `effects`.
+    ///
+    /// # Errors
+    /// Returns an error string if preparing or decoding any catalog item fails.
     #[inline]
     pub fn set_effects(&self, effects: Vec<EffectCatalogItem>) -> Result<(), String> {
         self.ctrl.set_effects(effects)
     }
 
-    /// Triggers playback of a registered sound effect by ID.
+    /// Triggers playback of a registered sound effect by `id` with `config`.
+    ///
+    /// # Errors
+    /// Returns an error string if `id` is unknown, decoding fails, or no voice slot can be allocated.
     #[inline]
     pub fn play_effect(&self, id: &str, config: EffectConfig) -> Result<(u32, bool), String> {
         self.ctrl.play_effect(id, config)
     }
-
 
     /// Returns `true` when RT has posted voice completions needing cold reconciliation.
     #[inline]
@@ -344,55 +507,56 @@ impl EffectsManager {
         self.ctrl.drain_completed_and_evict()
     }
 
-    /// Stops playback of an active voice slot.
+    /// Stops playback of an active `voice_id` slot with a `fade_out_samples` ramp.
     #[inline]
     pub fn stop_effect(&self, voice_id: u32, fade_out_samples: usize) {
         self.ctrl.stop_effect(voice_id, fade_out_samples);
     }
 
-    /// Stops all currently active sound effect voices.
+    /// Stops all currently active sound effect voices using a `fade_out_samples` ramp.
     #[inline]
     pub fn stop_all_effects(&self, fade_out_samples: usize) {
         self.ctrl.stop_all_effects(fade_out_samples);
     }
 
-    /// Sets playback volume of an active voice lock-free.
+    /// Sets playback `volume` of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_volume(&self, voice_id: u32, volume: f32) {
         self.ctrl.set_voice_volume(voice_id, volume);
     }
 
-    /// Sets playback pitch multiplier of an active voice lock-free.
+    /// Sets playback `pitch` multiplier of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_pitch(&self, voice_id: u32, pitch: f32) {
         self.ctrl.set_voice_pitch(voice_id, pitch);
     }
 
-    /// Sets stereo pan balance of an active voice lock-free.
+    /// Sets stereo pan `balance` of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_balance(&self, voice_id: u32, balance: f32) {
         self.ctrl.set_voice_balance(voice_id, balance);
     }
 
-    /// Sets 3D spatial emitter parameters of an active voice lock-free.
+    /// Sets 3D spatial `emitter` parameters of an active `voice_id` lock-free.
     #[inline]
     pub fn set_voice_emitter(&self, voice_id: u32, emitter: Option<SpatialEmitter>) {
         self.ctrl.set_voice_emitter(voice_id, emitter);
     }
 
-    /// Sets 3D spatial listener position and orientation for all sound effects.
+    /// Sets 3D spatial `listener` position and orientation for all sound effects.
     #[inline]
     pub fn set_listener(&self, listener: SpatialListener) {
         self.ctrl.set_listener(listener);
     }
 
-    /// Updates Doppler effect physics parameters.
+    /// Updates Doppler effect physics parameters with `factor` and `speed_of_sound`.
     #[inline]
     pub fn set_doppler_parameters(&self, factor: f32, speed_of_sound: f32) {
         self.ctrl.set_doppler_parameters(factor, speed_of_sound);
     }
 
-    /// Renders active polyphonic voices unconditionally with zero mutex locking or dropouts.
+    /// Renders `frame_count` frames of active polyphonic voices into `inherit_buffer`,
+    /// `self.effects_work_buffer`, and `super_flow` with zero mutex locking or dropouts.
     pub fn render_with_reuse(
         &mut self,
         inherit_buffer: &mut [f32],
@@ -413,7 +577,7 @@ impl EffectsManager {
         );
     }
 
-    /// Returns a mutable slice to the isolated scratch work buffer.
+    /// Returns a mutable slice of `sample_count` samples into the isolated scratch work buffer.
     #[inline]
     pub fn work_buffer(&mut self, sample_count: usize) -> &mut [f32] {
         &mut self.effects_work_buffer[..sample_count]

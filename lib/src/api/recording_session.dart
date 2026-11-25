@@ -3,26 +3,97 @@ part of 'miniaudio_player.dart';
 /// Frames per block for streaming lossless WavPack (`.wv`) encoding (`wavicle`).
 const int _wavpackBlockFrames = 32768;
 
+/// Sony Wave64 RIFF chunk GUID bytes.
 const List<int> _w64RiffGuid = [
-  0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00, 0x00,
-];
-const List<int> _w64WaveGuid = [
-  0x77, 0x61, 0x76, 0x65, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
-];
-const List<int> _w64FmtGuid = [
-  0x66, 0x6d, 0x74, 0x20, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
-];
-const List<int> _w64DataGuid = [
-  0x64, 0x61, 0x74, 0x61, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
+  0x72,
+  0x69,
+  0x66,
+  0x66,
+  0x2e,
+  0x91,
+  0xcf,
+  0x11,
+  0xa5,
+  0xd6,
+  0x28,
+  0xdb,
+  0x04,
+  0xc1,
+  0x00,
+  0x00,
 ];
 
+/// Sony Wave64 WAVE chunk GUID bytes.
+const List<int> _w64WaveGuid = [
+  0x77,
+  0x61,
+  0x76,
+  0x65,
+  0xf3,
+  0xac,
+  0xd3,
+  0x11,
+  0x8c,
+  0xd1,
+  0x00,
+  0xc0,
+  0x4f,
+  0x8e,
+  0xdb,
+  0x8a,
+];
+
+/// Sony Wave64 fmt subchunk GUID bytes.
+const List<int> _w64FmtGuid = [
+  0x66,
+  0x6d,
+  0x74,
+  0x20,
+  0xf3,
+  0xac,
+  0xd3,
+  0x11,
+  0x8c,
+  0xd1,
+  0x00,
+  0xc0,
+  0x4f,
+  0x8e,
+  0xdb,
+  0x8a,
+];
+
+/// Sony Wave64 data subchunk GUID bytes.
+const List<int> _w64DataGuid = [
+  0x64,
+  0x61,
+  0x74,
+  0x61,
+  0xf3,
+  0xac,
+  0xd3,
+  0x11,
+  0x8c,
+  0xd1,
+  0x00,
+  0xc0,
+  0x4f,
+  0x8e,
+  0xdb,
+  0x8a,
+];
+
+/// Writes ASCII characters of [tag] into [dst] starting at byte [offset].
 void _writeAscii(Uint8List dst, int offset, String tag) {
   for (var i = 0; i < tag.length; i++) {
     dst[offset + i] = tag.codeUnitAt(i);
   }
 }
 
-/// Web/JS-safe unsigned 64-bit write avoiding 64-bit `>> 32` integer shifts in dart2js.
+/// Writes an unsigned 64-bit integer [value] into [bd] at [offset] using [endian].
+///
+/// Splits the value into 32-bit halves to avoid 64-bit `>> 32` integer shifts
+/// in dart2js on Web targets.
 void _setUint64(ByteData bd, int offset, int value, Endian endian) {
   final hi = (value ~/ 0x100000000) & 0xFFFFFFFF;
   final lo = value & 0xFFFFFFFF;
@@ -35,6 +106,7 @@ void _setUint64(ByteData bd, int offset, int value, Endian endian) {
   }
 }
 
+/// Encodes an integer [sampleRate] as an 80-bit IEEE 754 extended float into [bd] at [offset].
 void _encodeAiffExtendedF80(ByteData bd, int offset, int sampleRate) {
   if (sampleRate <= 0) {
     bd.setUint16(offset, 0, Endian.big);
@@ -54,6 +126,8 @@ void _encodeAiffExtendedF80(ByteData bd, int offset, int sampleRate) {
   bd.setUint32(offset + 6, 0, Endian.big);
 }
 
+/// Writes the 16-byte WAVE `fmt ` body into [bd] at [offset] for sample rate [sr],
+/// channel count [ch], and PCM/IEEE-float format [isFloat].
 void _writeWaveFmtBody(ByteData bd, int offset, int sr, int ch, bool isFloat) {
   final bps = isFloat ? 32 : 16;
   final audioFormat = isFloat ? 3 : 1;
@@ -67,33 +141,74 @@ void _writeWaveFmtBody(ByteData bd, int offset, int sr, int ch, bool isFloat) {
   bd.setUint16(offset + 14, bps, Endian.little);
 }
 
-/// Coordinates asynchronous FIFO container encoding & finalization from a Push
-/// [watchAudioBus] stream into a [RecordingByteBuffer].
+/// Coordinates asynchronous FIFO container encoding and finalization from a Push
+/// [MiniaudioPlayer.watchAudioBus] stream into a [RecordingByteBuffer].
 final class _DartBufferRecordingSession<T> {
+  /// Owning player whose audio bus tap feeds this session.
   final MiniaudioPlayer<T> _player;
+
+  /// Target random-access byte sink receiving encoded audio data and headers.
   final RecordingByteBuffer _buffer;
+
+  /// Display or destination path reported in the resulting [RecordingResult].
   final String displayPath;
+
+  /// Audio bus source tapped for recording.
   final AudioOutputSource source;
+
+  /// Target container and PCM encoding format.
   final AudioFileFormat encoding;
 
+  /// Active sample rate in Hz, updated from incoming tap chunks.
   int _sampleRate;
+
+  /// Active channel count, updated from incoming tap chunks.
   int _channels;
+
+  /// Total raw PCM payload bytes processed before container framing.
   int _pcmDataBytes = 0;
+
+  /// Total encoded bytes written into [_buffer] (excluding container headers).
   int _writtenDataBytes = 0;
+
+  /// Total interleaved PCM sample count written so far.
   int _sampleCount = 0;
+
+  /// Cumulative dropped frames reported by the audio tap.
   int _droppedFrames = 0;
+
+  /// Running frame index for consecutive WavPack blocks.
   int _wvBlockIndexFrames = 0;
+
+  /// Whether the initial 4-byte WavPack startup probe has been overwritten.
   bool _wvHeaderReplaced = false;
+
+  /// Whether [stop] has been invoked to halt further chunk processing.
   bool _stopped = false;
+
+  /// Whether [_recordFailure] has already emitted state and error notifications.
   bool _errorNotified = false;
+
+  /// First asynchronous error captured during streaming capture or encoding.
   MiniaudioPlayerException? _asyncError;
 
+  /// Reusable scratch buffer for big-endian AIFF byte swapping.
   Uint8List _endianScratch = Uint8List(0);
+
+  /// Pending PCM bytes awaiting a full WavPack block.
   final BytesBuilder _wvPending = BytesBuilder(copy: false);
 
+  /// Subscription to the push audio bus tap stream.
   StreamSubscription<AudioPcmChunk>? _tapSub;
+
+  /// Serialized FIFO future chain ensuring ordered writes to [_buffer].
   Future<void> _writeChain = Future<void>.value();
 
+  /// Creates a [_DartBufferRecordingSession] writing [source] from [player]
+  /// into [buffer] using [encoding].
+  ///
+  /// Uses [displayPath] for diagnostics and [RecordingResult.path], while
+  /// initializing header parameters with [initialSampleRate] and [initialChannels].
   _DartBufferRecordingSession({
     required MiniaudioPlayer<T> player,
     required RecordingByteBuffer buffer,
@@ -107,9 +222,12 @@ final class _DartBufferRecordingSession<T> {
         _sampleRate = initialSampleRate > 0 ? initialSampleRate : 44100,
         _channels = initialChannels > 0 ? initialChannels : 2;
 
+  /// Tap PCM sample format corresponding to [encoding].
   AudioTapFormat get _tapFormat =>
       encoding.isFloat32 ? AudioTapFormat.float32 : AudioTapFormat.pcm16;
 
+  /// Builds the container header for [encoding] using [sampleRate], [channels],
+  /// payload size [dataBytes], and [totalFrames].
   static Uint8List _buildContainerHeader({
     required AudioFileFormat encoding,
     required int sampleRate,
@@ -139,7 +257,8 @@ final class _DartBufferRecordingSession<T> {
       case AudioFileFormat.rf64Float32:
         final hdr = Uint8List(80);
         final bd = ByteData.sublistView(hdr);
-        final riff32 = dataBytes == 0 ? 0 : (dataBytes + 72).clamp(0, 0xFFFFFFFF);
+        final riff32 =
+            dataBytes == 0 ? 0 : (dataBytes + 72).clamp(0, 0xFFFFFFFF);
         final data32 = dataBytes.clamp(0, 0xFFFFFFFF);
         _writeAscii(hdr, 0, 'RF64');
         bd.setUint32(4, riff32, Endian.little);
@@ -221,10 +340,12 @@ final class _DartBufferRecordingSession<T> {
 
       case AudioFileFormat.mp3:
       case AudioFileFormat.flac:
-        throw StateError('Unreachable unsupported recording encoding: $encoding');
+        throw StateError(
+            'Unreachable unsupported recording encoding: $encoding');
     }
   }
 
+  /// Byte-swaps little-endian PCM [raw] samples of width [sampleBytes] to big-endian.
   Uint8List _swapToBigEndian(Uint8List raw, int sampleBytes) {
     if (_endianScratch.length < raw.length) {
       _endianScratch = Uint8List(raw.length);
@@ -245,10 +366,15 @@ final class _DartBufferRecordingSession<T> {
     return Uint8List.sublistView(_endianScratch, 0, raw.length);
   }
 
-  /// Validates channel constraints and tests writable + seekable `writeAt(0)`
-  /// behavior on [_buffer] before attaching the audio tap.
+  /// Validates channel constraints and tests writable `writeAt(0)` behavior on [_buffer].
+  ///
+  /// Once initial header validation succeeds, updates player recording state and
+  /// attaches the audio bus tap subscription.
   Future<void> start() async {
     if (encoding.isWavPack && _channels != 1 && _channels != 2) {
+      MapLogger.error(
+        '[RecordingSession] Unsupported WavPack channel count $_channels for "$displayPath".',
+      );
       throw MiniaudioPlayerException(
         'WavPack recording supports 1 or 2 channels (got $_channels).',
         errorCode: MapResult.errorUnsupported,
@@ -263,14 +389,24 @@ final class _DartBufferRecordingSession<T> {
       totalFrames: 0,
     );
 
+    MapLogger.debug(
+      '[RecordingSession] Validating initial ${encoding.name} header on RecordingByteBuffer "$displayPath" (sr=$_sampleRate, ch=$_channels).',
+    );
     try {
       await _buffer.write(initialHeader);
       await _buffer.writeAt(0, Uint8List.sublistView(initialHeader, 0, 4));
       await _buffer.flush();
     } catch (e) {
+      MapLogger.error(
+        '[RecordingSession] RecordingByteBuffer validation failed for "$displayPath": $e',
+      );
       try {
         await _buffer.close();
-      } catch (_) {}
+      } catch (closeErr) {
+        MapLogger.warn(
+          '[RecordingSession] Failed to close RecordingByteBuffer after validation failure: $closeErr',
+        );
+      }
       if (e is MiniaudioPlayerException) rethrow;
       throw MiniaudioPlayerException(
         'RecordingByteBuffer failed initial write/writeAt validation: $e',
@@ -285,13 +421,16 @@ final class _DartBufferRecordingSession<T> {
     _player.stream._recordingSourceController.add(source);
     _player.stream._isRecordingController.add(true);
 
+    MapLogger.info(
+      '[RecordingSession] Starting Dart buffer recording (${encoding.name}, source=${source.name}, sr=$_sampleRate, ch=$_channels, path="$displayPath").',
+    );
     try {
       _tapSub = _player
           .watchAudioBus(
-            source: source,
-            format: _tapFormat,
-            frameDuration: const Duration(milliseconds: 20),
-          )
+        source: source,
+        format: _tapFormat,
+        frameDuration: const Duration(milliseconds: 20),
+      )
           .listen(
         (chunk) {
           if (_stopped || _asyncError != null) return;
@@ -309,17 +448,27 @@ final class _DartBufferRecordingSession<T> {
         },
       );
     } catch (e) {
+      MapLogger.error(
+        '[RecordingSession] Failed to attach audio bus tap for "$displayPath": $e',
+      );
       _player.state._isRecording = false;
       _player.state._recordingSource = null;
       _player.stream._isRecordingController.add(false);
       _player.stream._recordingSourceController.add(null);
       try {
         await _buffer.close();
-      } catch (_) {}
+      } catch (closeErr) {
+        MapLogger.warn(
+          '[RecordingSession] Failed to close RecordingByteBuffer after tap attach failure: $closeErr',
+        );
+      }
       rethrow;
     }
   }
 
+  /// Encodes [pcmBlockBytes] as a single WavPack block and appends it to [_buffer].
+  ///
+  /// Updates recorded byte and sample counters when [countAsAudioFrames] is `true`.
   Future<void> _writeWavPackBlock(
     Uint8List pcmBlockBytes, {
     bool countAsAudioFrames = true,
@@ -356,6 +505,7 @@ final class _DartBufferRecordingSession<T> {
     }
   }
 
+  /// Buffers incoming PCM [raw] bytes and emits complete WavPack blocks as they fill.
   Future<void> _appendWavPackChunk(Uint8List raw) async {
     final frameBytes = _channels * _tapFormat.bytesPerSample;
     final blockBytes = _wavpackBlockFrames * frameBytes;
@@ -380,6 +530,7 @@ final class _DartBufferRecordingSession<T> {
     }
   }
 
+  /// Processes a single incoming [chunk] from the audio tap and writes it to [_buffer].
   Future<void> _writeChunk(AudioPcmChunk chunk) async {
     if (_stopped || _asyncError != null) return;
 
@@ -470,10 +621,14 @@ final class _DartBufferRecordingSession<T> {
     }
   }
 
+  /// Records the first fatal error [err] and notifies player state and error streams.
   void _recordFailure(MiniaudioPlayerException err) {
     _asyncError ??= err;
     if (!_errorNotified) {
       _errorNotified = true;
+      MapLogger.error(
+        '[RecordingSession] Recording failed for "$displayPath": $err',
+      );
       _player.state._isRecording = false;
       _player.state._recordingSource = null;
       _player.stream._isRecordingController.add(false);
@@ -482,27 +637,34 @@ final class _DartBufferRecordingSession<T> {
     }
   }
 
+  /// Converts an interleaved [totalSamples] count into a [Duration].
   Duration _durationForSamples(int totalSamples) {
     final samplesPerSec = _sampleRate * _channels;
     if (samplesPerSec <= 0) return Duration.zero;
     return Duration(milliseconds: (totalSamples * 1000) ~/ samplesPerSec);
   }
 
+  /// Flushes trailing audio blocks, patches final container headers, and flushes [_buffer].
   Future<void> _finalizeBuffer() async {
     if (encoding.isWavPack) {
       final frameBytes = _channels * _tapFormat.bytesPerSample;
       final remaining = _wvPending.takeBytes();
-      final aligned = frameBytes > 0 ? (remaining.length ~/ frameBytes) * frameBytes : 0;
+      final aligned =
+          frameBytes > 0 ? (remaining.length ~/ frameBytes) * frameBytes : 0;
       if (aligned > 0) {
         await _writeWavPackBlock(Uint8List.sublistView(remaining, 0, aligned));
       }
       if (_writtenDataBytes == 0) {
-        await _writeWavPackBlock(Uint8List(frameBytes), countAsAudioFrames: false);
+        await _writeWavPackBlock(
+          Uint8List(frameBytes),
+          countAsAudioFrames: false,
+        );
       }
       final totalFrames = _channels > 0 ? _sampleCount ~/ _channels : 0;
       final totalPatch = Uint8List(5);
       totalPatch[0] = (totalFrames ~/ 0x100000000) & 0xFF;
-      ByteData.sublistView(totalPatch).setUint32(1, totalFrames & 0xFFFFFFFF, Endian.little);
+      ByteData.sublistView(totalPatch)
+          .setUint32(1, totalFrames & 0xFFFFFFFF, Endian.little);
       await _buffer.writeAt(11, totalPatch);
       await _buffer.flush();
       return;
@@ -523,16 +685,25 @@ final class _DartBufferRecordingSession<T> {
     await _buffer.flush();
   }
 
-  /// Stops capture, drains queued async writes FIFO, patches container headers,
-  /// flushes/closes the buffer, and returns the finalized [RecordingResult].
+  /// Stops capture, drains queued writes, finalizes headers, and returns [RecordingResult].
+  ///
+  /// When [suppressThrowOnDispose] is `true`, deferred capture or finalization errors
+  /// are suppressed so player disposal can finish cleanly.
   Future<RecordingResult> stop({bool suppressThrowOnDispose = false}) async {
+    MapLogger.info(
+      '[RecordingSession] Stopping Dart buffer recording "$displayPath" (suppressThrowOnDispose=$suppressThrowOnDispose).',
+    );
     _stopped = true;
     final sub = _tapSub;
     _tapSub = null;
     if (sub != null) {
       try {
         await sub.cancel();
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn(
+          '[RecordingSession] Failed to cancel tap subscription while stopping "$displayPath": $e',
+        );
+      }
     }
 
     await _writeChain;
@@ -542,6 +713,9 @@ final class _DartBufferRecordingSession<T> {
     try {
       await _finalizeBuffer();
     } catch (e) {
+      MapLogger.error(
+        '[RecordingSession] Failed to finalize ${encoding.name.toUpperCase()} buffer "$displayPath": $e',
+      );
       finalizeErr = e is MiniaudioPlayerException
           ? e
           : MiniaudioPlayerException(
@@ -552,6 +726,9 @@ final class _DartBufferRecordingSession<T> {
       try {
         await _buffer.close();
       } catch (e) {
+        MapLogger.error(
+          '[RecordingSession] Failed to close RecordingByteBuffer "$displayPath": $e',
+        );
         finalizeErr ??= e is MiniaudioPlayerException
             ? e
             : MiniaudioPlayerException(
@@ -573,6 +750,10 @@ final class _DartBufferRecordingSession<T> {
     if (effectiveError != null && !suppressThrowOnDispose) {
       throw effectiveError;
     }
+
+    MapLogger.info(
+      '[RecordingSession] Completed recording "$displayPath" (duration=$finalDur, bytes=$_writtenDataBytes, samples=$_sampleCount, droppedFrames=$_droppedFrames).',
+    );
 
     final buffer = _buffer;
     return RecordingResult(

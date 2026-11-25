@@ -1,4 +1,8 @@
 //! Control-plane transition planning, prepared-deck DSP transfer, and RT swap helpers.
+//!
+//! Separates non-blocking queue/transition planning (`plan_play`, `plan_next`, `plan_previous`),
+//! DSP template/overlay capture and silent application, and deterministic deck commit swaps
+//! from off-thread I/O decoding.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -18,59 +22,103 @@ use crate::sync::{lock_unpoisoned, read_unpoisoned, write_unpoisoned};
 /// Full snapshot of deck DSP, hardware format, silence trimming, and visualizer settings.
 #[derive(Clone)]
 pub struct DeckDspTemplate {
+    /// Output device sample rate in Hz (clamped to at least 8000 on capture).
     pub sample_rate: u32,
+    /// Output channel count (clamped to `1..=16` on capture).
     pub channels: u32,
+    /// Output period size in frames (clamped to at least 64 on capture).
     pub period_size: u32,
+    /// Linear deck output gain.
     pub volume: f32,
+    /// Playback speed multiplier.
     pub rate: f32,
+    /// Pitch-shift multiplier.
     pub pitch: f32,
+    /// Whether playback should pause automatically on audio device changes.
     pub pause_on_device_change: bool,
+    /// Multi-band parametric equalizer configuration.
     pub eq_params: EqualizerParams,
+    /// Pre-amplification gain in decibels.
     pub preamp_db: f32,
+    /// Global ReplayGain mode selector.
     pub replay_gain_mode: u32,
+    /// Fallback `(gain_db, peak)` tuple used when track-level ReplayGain tags are absent.
     pub default_replay_gain: (f32, f32),
+    /// Stereo balance pan in `[-1.0, 1.0]`.
     pub balance: f32,
+    /// Whether stereo-to-mono downmix is enabled.
     pub mono_enabled: bool,
+    /// Whether stereo width spatialization is enabled.
     pub spatializer_enabled: bool,
+    /// Spatializer stereo width factor.
     pub spatializer_width: f32,
+    /// Headphone crossfeed configuration.
     pub crossfeed_config: CrossfeedConfig,
+    /// Algorithmic reverb configuration.
     pub reverb_config: ReverbConfig,
+    /// Whether the soft output limiter is enabled.
     pub limiter_enabled: bool,
+    /// Silence trimming and detection configuration.
     pub silence_config: SilenceConfig,
+    /// Whether real-time FFT visualizer capture is enabled.
     pub visualizer_enabled: bool,
 }
 
 /// Zero-allocation RT-mutable deck settings overlay captured immediately prior to commit swap.
 #[derive(Clone, Copy)]
 pub struct DeckLiveOverlay {
+    /// Live output device sample rate in Hz.
     pub device_sample_rate: u32,
+    /// Live output channel count.
     pub device_channels: u32,
+    /// Live output period size in frames.
     pub period_size_in_frames: u32,
+    /// Live linear deck output gain.
     pub volume: f32,
+    /// Live playback speed multiplier.
     pub rate: f32,
+    /// Live pitch-shift multiplier.
     pub pitch: f32,
+    /// Live pause-on-device-change preference.
     pub pause_on_device_change: bool,
+    /// Live pre-amplification gain in decibels.
     pub preamp_db: f32,
+    /// Live global ReplayGain mode selector.
     pub replay_gain_mode: u32,
+    /// Live fallback `(gain_db, peak)` tuple when track-level ReplayGain tags are absent.
     pub default_replay_gain: (f32, f32),
+    /// Live stereo balance pan.
     pub balance: f32,
+    /// Live stereo-to-mono downmix toggle.
     pub mono_enabled: bool,
+    /// Live spatializer enable toggle.
     pub spatializer_enabled: bool,
+    /// Live spatializer stereo width factor.
     pub spatializer_width: f32,
+    /// Live soft limiter enable toggle.
     pub limiter_enabled: bool,
+    /// Live silence trimming and detection configuration.
     pub silence_config: SilenceConfig,
+    /// Live real-time FFT visualizer enable toggle.
     pub visualizer_enabled: bool,
 }
 
 /// Specification returned by synchronous planning when an asynchronous I/O open is required.
 #[derive(Clone)]
 pub struct PlannedOpenSpec {
+    /// Queue item to open asynchronously.
     pub item: AudioSourceCore,
+    /// Full DSP and hardware format template captured at plan time.
     pub template: DeckDspTemplate,
+    /// Optional factory for custom Dart-backed byte sources.
     pub custom_factory: Option<CustomSourceFactory>,
+    /// Optional unified Dart source resolution registry.
     pub dart_resolver: Option<Arc<DartResolveRegistry>>,
+    /// Optional initial seek target in milliseconds after opening.
     pub seek_ms: Option<i64>,
+    /// Optional manual crossfade duration override in milliseconds.
     pub manual_crossfade_ms: Option<u64>,
+    /// Whether playback should start even if the player was stopped or paused.
     pub force_play: bool,
 }
 
@@ -87,18 +135,27 @@ pub enum PlanOutcome {
 /// Strategy used when committing a prepared `Box<StreamingDeck>` or standby hit on RT clock.
 #[derive(Clone, Copy)]
 pub enum TransitionCommitMode {
+    /// Manual user-initiated track transition.
     Manual {
+        /// Optional manual crossfade duration override in milliseconds.
         manual_crossfade_ms: Option<u64>,
+        /// Whether playback should start even when the engine was not currently playing.
         force_play: bool,
     },
+    /// Automatic end-of-track crossfade transition.
     AutoCrossfade {
+        /// Effective crossfade duration in milliseconds.
         eff_ms: u64,
     },
+    /// Automatic gapless advance when the active track reaches EOF.
     AutoAdvanceGapless,
 }
 
 impl StreamingDeck {
     /// Captures all DSP, format, silence, and visualizer parameters without mutating state.
+    ///
+    /// Uses `sr`, `ch`, and `period` for hardware format fields (clamped to valid minimums)
+    /// along with `replay_gain_mode` and `default_replay_gain` for ReplayGain policy.
     pub fn capture_dsp_template(
         &self,
         sr: u32,
@@ -131,7 +188,8 @@ impl StreamingDeck {
         }
     }
 
-    /// Captures lightweight atomic/copy DSP parameters for zero-allocation RT commit sync.
+    /// Captures lightweight atomic/copy DSP parameters for zero-allocation RT commit sync,
+    /// embedding `replay_gain_mode` and `default_replay_gain` in the resulting overlay.
     pub fn capture_live_overlay(
         &self,
         replay_gain_mode: u32,
@@ -158,16 +216,23 @@ impl StreamingDeck {
         }
     }
 
+    /// Pushes each [`DspCommand`] in `cmds` into this deck's lock-free DSP command ringbuffer.
     fn push_dsp_commands(&self, cmds: &[DspCommand]) {
         let mut guard = lock_unpoisoned(&self.cmd_producer);
         if let Some(ref mut prod) = *guard {
             for cmd in cmds {
-                let _ = prod.push(cmd.clone());
+                if prod.push(cmd.clone()).is_err() {
+                    crate::map_log!(
+                        2,
+                        "[DualSourceControl] DSP command ringbuffer full while applying deck configuration"
+                    );
+                }
             }
         }
     }
 
-    /// Applies `tpl` cleanly to an unattached prepared deck without emitting UI telemetry events.
+    /// Applies `tpl` cleanly to an unattached prepared deck without emitting UI telemetry events,
+    /// resolving per-track ReplayGain and queue assignment from `item` when present.
     pub fn apply_dsp_template_silent(&mut self, tpl: &DeckDspTemplate, item: Option<&AudioSourceCore>) {
         self.device_sample_rate.store(tpl.sample_rate, Ordering::Relaxed);
         self.device_channels.store(tpl.channels, Ordering::Relaxed);
@@ -221,7 +286,8 @@ impl StreamingDeck {
         ]);
     }
 
-    /// Re-applies RT-mutable DSP scalars onto a prepared or standby deck on `map-engine-clock`.
+    /// Re-applies RT-mutable DSP scalars from `ov` onto a prepared or standby deck on `map-engine-clock`,
+    /// updating per-track ReplayGain and queue assignment from `item` when provided.
     pub fn apply_live_overlay_silent(&mut self, ov: &DeckLiveOverlay, item: Option<&AudioSourceCore>) {
         self.device_sample_rate
             .store(ov.device_sample_rate, Ordering::Relaxed);
@@ -302,13 +368,15 @@ impl DualSource {
             .capture_live_overlay(self.replay_gain_mode, self.default_replay_gain)
     }
 
-    /// Replaces `deck_a` and `deck_b` with clean stopped decks in $O(1)$ and returns the displaced pair.
+    /// Replaces `deck_a` and `deck_b` with `clean_a` and `clean_b` in $O(1)$, installs `items`
+    /// as the new queue, resets playback state to stopped, and returns the displaced deck pair.
     pub fn set_queue_swap_decks(
         &mut self,
         items: Vec<AudioSourceCore>,
         mut clean_a: Box<StreamingDeck>,
         mut clean_b: Box<StreamingDeck>,
     ) -> (Box<StreamingDeck>, Box<StreamingDeck>) {
+        let item_count = items.len();
         let tpl = self.capture_dsp_template();
         clean_a.apply_dsp_template_silent(&tpl, None);
         clean_b.apply_dsp_template_silent(&tpl, None);
@@ -335,6 +403,12 @@ impl DualSource {
         self.last_notified_infinite_mix_id.store(-1, Ordering::Release);
         self.playback_state
             .store(PlaybackState::Stopped.as_i32(), Ordering::Release);
+
+        crate::map_log!(
+            3,
+            "[DualSourceControl] Queue replaced with {} item(s); active deck reset to 0",
+            item_count
+        );
 
         (clean_a, clean_b)
     }
@@ -397,6 +471,12 @@ impl DualSource {
                     self.pending_auto_advance_prev_index
                         .store(-1, Ordering::Release);
                     self.pending_open_active.store(true, Ordering::Release);
+                    crate::map_log!(
+                        3,
+                        "[DualSourceControl] Removed active index {}; planning replacement open id={}",
+                        index,
+                        item.id
+                    );
                     let spec = PlannedOpenSpec {
                         item,
                         template: self.capture_dsp_template(),
@@ -413,7 +493,9 @@ impl DualSource {
         (removed, None)
     }
 
-    /// Optimistically marks `target_idx` active in the queue before background I/O completes.
+    /// Optimistically marks `target_idx` active in the queue before background I/O completes,
+    /// recording `seek_ms` and stopping any active crossfade/deck if `manual_crossfade_ms`
+    /// (or the configured manual crossfade duration) resolves to zero.
     fn mark_pending_manual_open(
         &mut self,
         target_idx: usize,
@@ -440,6 +522,10 @@ impl DualSource {
     }
 
     /// Plans `play()` without executing any blocking I/O on the calling thread.
+    ///
+    /// Selects a target track using `id` (taking precedence) or `position`, applies optional
+    /// `shuffled` state, seeks to `seek_ms` when applicable, and avoids relying on standby
+    /// when `has_inflight_active_open` is `true`.
     pub fn plan_play(
         &mut self,
         id: Option<i64>,
@@ -457,6 +543,12 @@ impl DualSource {
             let can = read_unpoisoned(&self.canonical_queue).clone();
             if can.is_empty() {
                 if id.is_some() || position.is_some() {
+                    crate::map_log!(
+                        2,
+                        "[DualSourceControl] plan_play rejected: queue is empty (id={:?}, position={:?})",
+                        id,
+                        position
+                    );
                     return PlanOutcome::Immediate(Err(
                         "Cannot play specific track: queue is empty".to_string()
                     ));
@@ -473,6 +565,11 @@ impl DualSource {
 
             let target_canon_idx: Option<usize> = if let Some(target_id) = id {
                 let Some(idx) = can.iter().position(|it| it.id == target_id) else {
+                    crate::map_log!(
+                        2,
+                        "[DualSourceControl] plan_play rejected: track id {} not found in queue",
+                        target_id
+                    );
                     return PlanOutcome::Immediate(Err(format!(
                         "Track id {} not found in queue",
                         target_id
@@ -481,6 +578,12 @@ impl DualSource {
                 Some(idx)
             } else if let Some(pos) = position {
                 if pos >= can.len() {
+                    crate::map_log!(
+                        2,
+                        "[DualSourceControl] plan_play rejected: position {} out of bounds (len={})",
+                        pos,
+                        can.len()
+                    );
                     return PlanOutcome::Immediate(Err(format!(
                         "Position {} out of bounds (queue size {})",
                         pos,
@@ -515,6 +618,14 @@ impl DualSource {
             self.invalidate_standby();
             self.mark_pending_manual_open(start_idx, seek_ms, Some(0));
 
+            crate::map_log!(
+                3,
+                "[DualSourceControl] plan_play: initial open id={} idx={} shuffled={}",
+                start_item.id,
+                start_idx,
+                effective_shuffled
+            );
+
             return PlanOutcome::NeedOpen(PlannedOpenSpec {
                 item: start_item,
                 template: self.capture_dsp_template(),
@@ -546,6 +657,12 @@ impl DualSource {
                             Some(seek_ms.unwrap_or(0)),
                             Some(0),
                         );
+                        crate::map_log!(
+                            3,
+                            "[DualSourceControl] plan_play: reopening stopped/mismatched track id={} idx={}",
+                            item.id,
+                            effective_idx
+                        );
                         return PlanOutcome::NeedOpen(PlannedOpenSpec {
                             item,
                             template: self.capture_dsp_template(),
@@ -568,8 +685,14 @@ impl DualSource {
                 }
                 self.playback_state
                     .store(PlaybackState::Playing.as_i32(), Ordering::Release);
+                crate::map_log!(4, "[DualSourceControl] plan_play: resumed active deck in place");
                 PlanOutcome::Immediate(Ok(()))
             } else {
+                crate::map_log!(
+                    1,
+                    "[DualSourceControl] plan_play: active deck play() failed with code {}",
+                    res
+                );
                 PlanOutcome::Immediate(Err(format!("Play failed: code {}", res)))
             };
         }
@@ -580,6 +703,11 @@ impl DualSource {
                 .iter()
                 .any(|it| it.id == target_id);
             if !exists {
+                crate::map_log!(
+                    2,
+                    "[DualSourceControl] plan_play rejected: track id {} not found in queue",
+                    target_id
+                );
                 return PlanOutcome::Immediate(Err(format!(
                     "Track id {} not found in queue",
                     target_id
@@ -589,6 +717,12 @@ impl DualSource {
         } else if let Some(pos) = position {
             let q = read_unpoisoned(&self.queue);
             if pos >= q.len() {
+                crate::map_log!(
+                    2,
+                    "[DualSourceControl] plan_play rejected: position {} out of bounds (len={})",
+                    pos,
+                    q.len()
+                );
                 return PlanOutcome::Immediate(Err(format!(
                     "Position {} out of bounds (queue size {})",
                     pos,
@@ -597,6 +731,7 @@ impl DualSource {
             }
             q[pos].id
         } else {
+            crate::map_log!(2, "[DualSourceControl] plan_play rejected: invalid play target");
             return PlanOutcome::Immediate(Err("Invalid play target".to_string()));
         };
 
@@ -612,6 +747,11 @@ impl DualSource {
                 .map(|(i, it)| (i, it.clone()))
         };
         let Some((target_idx, target_item)) = target_opt else {
+            crate::map_log!(
+                1,
+                "[DualSourceControl] plan_play error: track id {} disappeared after shuffle",
+                target_track_id
+            );
             return PlanOutcome::Immediate(Err(format!(
                 "Track id {} disappeared after shuffle",
                 target_track_id
@@ -622,6 +762,12 @@ impl DualSource {
             && !self.crossfade.is_active()
             && self.standby_is_ready_for(&target_item)
         {
+            crate::map_log!(
+                3,
+                "[DualSourceControl] plan_play: standby hit id={} idx={}",
+                target_item.id,
+                target_idx
+            );
             let _displaced = self.commit_transition_internal(
                 None,
                 &target_item,
@@ -635,6 +781,12 @@ impl DualSource {
         }
 
         self.mark_pending_manual_open(target_idx, seek_ms, None);
+        crate::map_log!(
+            3,
+            "[DualSourceControl] plan_play: async open id={} idx={}",
+            target_item.id,
+            target_idx
+        );
         PlanOutcome::NeedOpen(PlannedOpenSpec {
             item: target_item,
             template: self.capture_dsp_template(),
@@ -648,6 +800,9 @@ impl DualSource {
 
     /// Plans `next()` without performing blocking I/O. Advances `planned_index` synchronously
     /// so un-awaited concurrent `next()` bursts compose FIFO (`planned_index += 1`).
+    ///
+    /// Applies `manual_crossfade_ms` when accelerating an active auto-crossfade or launching
+    /// the next track, and guards against standby races when `has_inflight_active_open` is `true`.
     pub fn plan_next(
         &mut self,
         manual_crossfade_ms: Option<u64>,
@@ -679,6 +834,11 @@ impl DualSource {
             self.crossfade
                 .transition
                 .store(QueueTransition::ManualCrossfade.as_i32(), Ordering::Release);
+            crate::map_log!(
+                3,
+                "[DualSourceControl] plan_next: promoted auto-crossfade to manual ({} ms)",
+                manual_ms
+            );
             return PlanOutcome::Immediate(Ok(()));
         }
 
@@ -709,6 +869,12 @@ impl DualSource {
             && !self.crossfade.is_active()
             && self.standby_is_ready_for(&item)
         {
+            crate::map_log!(
+                3,
+                "[DualSourceControl] plan_next: standby hit id={} idx={}",
+                item.id,
+                target_idx
+            );
             let _displaced = self.commit_transition_internal(
                 None,
                 &item,
@@ -722,6 +888,12 @@ impl DualSource {
         }
 
         self.mark_pending_manual_open(target_idx, None, manual_crossfade_ms);
+        crate::map_log!(
+            3,
+            "[DualSourceControl] plan_next: async open id={} idx={}",
+            item.id,
+            target_idx
+        );
         PlanOutcome::NeedOpen(PlannedOpenSpec {
             item,
             template: self.capture_dsp_template(),
@@ -734,6 +906,10 @@ impl DualSource {
     }
 
     /// Plans `previous()` without performing blocking I/O.
+    ///
+    /// Restarts the active track at `0 ms` when no active open is in flight
+    /// (`!has_inflight_active_open`) and playback position exceeds 3 seconds on a non-live source;
+    /// otherwise steps backward in the queue.
     pub fn plan_previous(&mut self, has_inflight_active_open: bool) -> PlanOutcome {
         let cur_deck = self.active_deck_ref();
         let pos_ms = cur_deck.position_ms.load(Ordering::Relaxed);
@@ -747,6 +923,11 @@ impl DualSource {
             self.abort_active_crossfade();
             self.active_deck_mut().seek(0);
             self.sync_planned_index_to_current();
+            crate::map_log!(
+                4,
+                "[DualSourceControl] plan_previous: restarted active track at 0 ms (pos={} ms)",
+                pos_ms
+            );
             return PlanOutcome::Immediate(Ok(()));
         }
 
@@ -767,6 +948,12 @@ impl DualSource {
             && !self.crossfade.is_active()
             && self.standby_is_ready_for(&item)
         {
+            crate::map_log!(
+                3,
+                "[DualSourceControl] plan_previous: standby hit id={} idx={}",
+                item.id,
+                target_idx
+            );
             let _displaced = self.commit_transition_internal(
                 None,
                 &item,
@@ -780,6 +967,12 @@ impl DualSource {
         }
 
         self.mark_pending_manual_open(target_idx, None, None);
+        crate::map_log!(
+            3,
+            "[DualSourceControl] plan_previous: async open id={} idx={}",
+            item.id,
+            target_idx
+        );
         PlanOutcome::NeedOpen(PlannedOpenSpec {
             item,
             template: self.capture_dsp_template(),
@@ -791,20 +984,42 @@ impl DualSource {
         })
     }
 
-    /// Installs a newly prepared standby deck if still matching expected next track.
-    /// Returns displaced standby deck on success, or returns `Err(prepared)` to be reaped.
+    /// Installs a newly `prepared` standby deck if `item` still matches the expected next track.
+    ///
+    /// Returns the displaced standby deck on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(prepared)` so the caller can reap it off-RT when a crossfade is active,
+    /// there is no expected prewarm target, or `item` no longer matches the expected candidate.
     pub fn commit_prepared_standby(
         &mut self,
         mut prepared: Box<StreamingDeck>,
         item: &AudioSourceCore,
     ) -> Result<Box<StreamingDeck>, Box<StreamingDeck>> {
         if self.crossfade.is_active() {
+            crate::map_log!(
+                4,
+                "[DualSourceControl] commit_prepared_standby: rejected id={} (crossfade active)",
+                item.id
+            );
             return Err(prepared);
         }
         let Some((_idx, expected)) = self.expected_prewarm_target() else {
+            crate::map_log!(
+                4,
+                "[DualSourceControl] commit_prepared_standby: rejected id={} (no expected prewarm target)",
+                item.id
+            );
             return Err(prepared);
         };
         if expected.id != item.id || expected.source != item.source {
+            crate::map_log!(
+                4,
+                "[DualSourceControl] commit_prepared_standby: rejected stale id={} (expected id={})",
+                item.id,
+                expected.id
+            );
             return Err(prepared);
         }
 
@@ -820,10 +1035,17 @@ impl DualSource {
         }
         self.standby_ready_id.store(expected.id, Ordering::Release);
         *write_unpoisoned(&self.standby_ready_source) = Some(expected.source);
+        crate::map_log!(
+            3,
+            "[DualSourceControl] commit_prepared_standby: installed id={} on standby deck",
+            expected.id
+        );
         Ok(prepared)
     }
 
-    /// Commits a pre-opened `prepared` deck (or standby deck when `None`) onto the engine clock.
+    /// Commits a pre-opened deck from `prepared_opt` (or the standby deck when `None`) for `item`
+    /// onto the engine clock using `mode`, optionally applying `seek_ms`.
+    ///
     /// Returns any displaced `Box<StreamingDeck>` so the caller drops it off-RT in `ReaperHandle`.
     pub fn commit_transition_internal(
         &mut self,
@@ -832,26 +1054,21 @@ impl DualSource {
         seek_ms: Option<i64>,
         mode: TransitionCommitMode,
     ) -> Option<Box<StreamingDeck>> {
-        let (resolved_idx, live_item) = {
+        let (index, live_item) = {
             let q = read_unpoisoned(&self.queue);
-            if q.is_empty() {
-                if let Some(unused) = prepared_opt {
-                    return Some(unused);
-                }
-                return None;
-            }
             if let Some(pos) = q.iter().position(|it| it.id == item.id) {
                 (pos, q[pos].clone())
             } else {
                 // Target track was removed from the queue while opening off-thread.
-                if let Some(unused) = prepared_opt {
-                    return Some(unused);
-                }
-                return None;
+                crate::map_log!(
+                    2,
+                    "[DualSourceControl] commit_transition_internal aborted: target id={} not in queue (len={})",
+                    item.id,
+                    q.len()
+                );
+                return prepared_opt;
             }
         };
-
-        let index = resolved_idx;
 
         match mode {
             TransitionCommitMode::Manual { .. } if self.crossfade.is_active() => {
@@ -934,6 +1151,14 @@ impl DualSource {
                         self.playback_state
                             .store(PlaybackState::Paused.as_i32(), Ordering::Release);
                     }
+                    crate::map_log!(
+                        3,
+                        "[DualSourceControl] Committed manual transition id={} idx={} to deck {} (force_play={})",
+                        item.id,
+                        index,
+                        to_deck,
+                        force_play
+                    );
                     return displaced;
                 }
 
@@ -971,10 +1196,23 @@ impl DualSource {
                     self.playback_state
                         .store(PlaybackState::Playing.as_i32(), Ordering::Release);
                 }
+                crate::map_log!(
+                    3,
+                    "[DualSourceControl] Committed manual transition id={} idx={} to deck {} (xfade_ms={})",
+                    item.id,
+                    index,
+                    to_deck,
+                    xfade_ms
+                );
             }
             TransitionCommitMode::AutoCrossfade { eff_ms } => {
                 if !was_playing {
                     to_slot.stop();
+                    crate::map_log!(
+                        4,
+                        "[DualSourceControl] Auto-crossfade transition id={} aborted because player is not playing",
+                        item.id
+                    );
                     return displaced;
                 }
                 to_slot.play();
@@ -990,10 +1228,23 @@ impl DualSource {
                 );
                 self.crossfade_target_id.store(item.id, Ordering::Release);
                 self.planned_index.store(index as i64, Ordering::Release);
+                crate::map_log!(
+                    3,
+                    "[DualSourceControl] Committed auto-crossfade id={} idx={} to deck {} (eff_ms={})",
+                    item.id,
+                    index,
+                    to_deck,
+                    eff_ms
+                );
             }
             TransitionCommitMode::AutoAdvanceGapless => {
                 if !was_playing {
                     to_slot.stop();
+                    crate::map_log!(
+                        4,
+                        "[DualSourceControl] Auto-advance gapless id={} aborted because player is not playing",
+                        item.id
+                    );
                     return displaced;
                 }
                 to_slot.play();
@@ -1006,6 +1257,13 @@ impl DualSource {
                 self.active_deck.store(to_deck, Ordering::Release);
                 self.current_index.store(index as i64, Ordering::Release);
                 self.planned_index.store(index as i64, Ordering::Release);
+                crate::map_log!(
+                    3,
+                    "[DualSourceControl] Committed gapless auto-advance id={} idx={} to deck {}",
+                    item.id,
+                    index,
+                    to_deck
+                );
             }
         }
 

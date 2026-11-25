@@ -1,15 +1,15 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player_example/main.dart';
-import 'package:miniaudio_player_example/widgets/cards/dsp_effects_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/hardware_routing_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/playlist_queue_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/ram_sound_effects_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/spectrum_visualizer_card.dart';
-import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
+import 'package:miniaudio_player_example/features/dsp/widgets/dsp_effects_card.dart';
+import 'package:miniaudio_player_example/features/dsp/widgets/equalizer_sub_card.dart';
+import 'package:miniaudio_player_example/features/playback/widgets/playback_engine_card.dart';
+import 'package:miniaudio_player_example/features/queue/widgets/playlist_queue_card.dart';
+import 'package:miniaudio_player_example/features/routing/widgets/hardware_routing_card.dart';
+import 'package:miniaudio_player_example/features/sound_effects/widgets/ram_sound_effects_card.dart';
+import 'package:miniaudio_player_example/features/visualizer/widgets/spectrum_visualizer_card.dart';
+import 'package:miniaudio_player_example/shared/widgets/compact_slider_overlay.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

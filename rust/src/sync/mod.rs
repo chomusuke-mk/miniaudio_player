@@ -3,10 +3,15 @@
 //! Provides single-producer single-consumer (SPSC) ring buffers, cache-padded seqlocks
 //! for lockless reader-writer synchronization, and a zero-allocation telemetry dispatcher.
 
+/// Cooperative hierarchical cancellation tokens and RAII abort hook guards.
 pub mod cancel;
+/// Dedicated background reaper thread for off-RT resource teardown.
 pub mod reaper;
+/// Lock-free single-producer single-consumer (SPSC) audio sample ring buffers.
 pub mod ring_buffer;
+/// Cache-line padded seqlock for wait-free reader snapshots.
 pub mod seqlock;
+/// Reactive telemetry event types and background dispatcher pipeline.
 pub mod telemetry;
 
 pub use cancel::{CancelHookGuard, CancelToken};
@@ -20,13 +25,13 @@ pub use telemetry::{
 
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-/// Acquires a `Mutex` guard even if a previous holder panicked (poison recovery).
+/// Acquires a guard on mutex `m` even if a previous holder panicked (poison recovery).
 #[inline]
 pub fn lock_unpoisoned<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Waits on a condition variable with a timeout, recovering the guard if poisoned.
+/// Waits on condition variable `cvar` using mutex `guard` for up to `dur`, recovering if poisoned.
 #[inline]
 pub fn wait_timeout_unpoisoned<'a, T>(
     cvar: &std::sync::Condvar,
@@ -39,12 +44,17 @@ pub fn wait_timeout_unpoisoned<'a, T>(
 /// Outcome of waiting with a timeout on a [`WakeQueue`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WakeRecvError {
+    /// No item arrived before the requested timeout elapsed.
     Timeout,
+    /// The queue was closed and has no remaining queued items.
     Disconnected,
 }
 
+/// Internal FIFO buffer and closure state protected by [`WakeQueue`].
 struct WakeQueueInner<T> {
+    /// Queued wakeup items awaiting consumption in FIFO order.
     items: std::collections::VecDeque<T>,
+    /// Flag indicating that [`WakeQueue::close`] has been called.
     closed: bool,
 }
 
@@ -52,7 +62,9 @@ struct WakeQueueInner<T> {
 /// `crossbeam_channel::Receiver::recv_timeout` (whose deadline math calls
 /// `std::time::Instant::now()` and panics on `wasm32`).
 pub struct WakeQueue<T> {
+    /// Mutex guarding the item queue and closed state.
     lock: Mutex<WakeQueueInner<T>>,
+    /// Condition variable signalled on enqueue and queue closure.
     cvar: std::sync::Condvar,
 }
 
@@ -68,7 +80,7 @@ impl<T> WakeQueue<T> {
         }
     }
 
-    /// Pushes an item and wakes one waiting consumer. Returns `false` if closed.
+    /// Pushes `item` and wakes one waiting consumer. Returns `false` if closed.
     pub fn send(&self, item: T) -> bool {
         let mut guard = lock_unpoisoned(&self.lock);
         if guard.closed {
@@ -94,6 +106,11 @@ impl<T> WakeQueue<T> {
     }
 
     /// Waits up to `timeout` for an item, avoiding `std::time::Instant::now()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WakeRecvError::Timeout`] if `timeout` elapses (or the thread cannot block),
+    /// or [`WakeRecvError::Disconnected`] if the queue is closed and empty.
     pub fn wait_pop_timeout(&self, timeout: std::time::Duration) -> Result<T, WakeRecvError> {
         let mut guard = lock_unpoisoned(&self.lock);
         if let Some(item) = guard.items.pop_front() {
@@ -133,18 +150,19 @@ impl<T> WakeQueue<T> {
 }
 
 impl<T> Default for WakeQueue<T> {
+    /// Creates an open empty [`WakeQueue`].
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Acquires a read lock on an `RwLock`, recovering gracefully from poisoning.
+/// Acquires a read lock on `rw`, recovering gracefully from poisoning.
 #[inline]
 pub fn read_unpoisoned<T>(rw: &RwLock<T>) -> RwLockReadGuard<'_, T> {
     rw.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Acquires a write lock on an `RwLock`, recovering gracefully from poisoning.
+/// Acquires a write lock on `rw`, recovering gracefully from poisoning.
 #[inline]
 pub fn write_unpoisoned<T>(rw: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     rw.write().unwrap_or_else(|e| e.into_inner())
@@ -168,17 +186,20 @@ pub fn can_block_current_thread() -> bool {
 pub fn init_wasm_thread_spawner() {
     #[cfg(target_arch = "wasm32")]
     {
+        crate::map_log!(3, "[WASM_THREAD] Initializing Web Worker thread spawner");
         thread::ensure_main_thread_spawner();
         crate::net::ureq::ensure_network_worker();
         crate::opfs::ensure_opfs_worker();
     }
 }
 
+/// Cross-platform threading module re-exporting `std::thread` on native targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod thread {
     pub use std::thread::*;
 }
 
+/// Web Worker-backed threading shim mirroring `std::thread` APIs on `wasm32`.
 #[cfg(target_arch = "wasm32")]
 pub mod thread {
     use std::cell::RefCell;
@@ -193,16 +214,23 @@ pub mod thread {
 
     pub use std::thread::{Result, yield_now};
 
+    /// `BroadcastChannel` identifier used by background workers to request main-thread spawns.
     const SPAWNER_CHANNEL_NAME: &str = "__miniaudio_wasm_thread_spawner__";
+    /// Cached URL of the `miniaudio_player.js` glue script loaded inside spawned Web Workers.
     static SCRIPT_SRC: OnceLock<String> = OnceLock::new();
+    /// Atomic flag set once the main-thread `BroadcastChannel` spawner is active.
     static MAIN_SPAWNER_READY: AtomicBool = AtomicBool::new(false);
 
     thread_local! {
+        /// Cached JS function dispatching a boxed task pointer to a pooled Web Worker.
         static DISPATCH_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+        /// Cached JS function installing the main-thread `BroadcastChannel` worker spawner.
         static SPAWNER_SETUP_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+        /// Cached JS function posting a spawn request pointer to the main thread over `BroadcastChannel`.
         static POST_CHANNEL_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
     }
 
+    /// Returns `true` when executing on the browser's main UI thread (`window` and `document` present).
     #[inline]
     pub fn is_web_main_thread() -> bool {
         let global = js_sys::global();
@@ -210,6 +238,7 @@ pub mod thread {
             && Reflect::has(&global, &JsValue::from_str("document")).unwrap_or(false)
     }
 
+    /// Suspends the current worker thread for `dur` via `Condvar::wait_timeout` (no-op on the main thread).
     #[inline]
     pub fn sleep(dur: Duration) {
         if dur.is_zero() || is_web_main_thread() {
@@ -221,6 +250,7 @@ pub mod thread {
         let _ = super::wait_timeout_unpoisoned(&cvar, guard, dur);
     }
 
+    /// Resolves and caches the script URL for `miniaudio_player.js` so Web Workers can `importScripts` it.
     fn resolve_script_src() -> String {
         SCRIPT_SRC
             .get_or_init(|| {
@@ -265,6 +295,7 @@ pub mod thread {
             .clone()
     }
 
+    /// Installs the main-thread `BroadcastChannel` worker spawner listener when running on the UI thread.
     pub fn ensure_main_thread_spawner() {
         if !is_web_main_thread() {
             return;
@@ -297,19 +328,43 @@ pub mod thread {
             borrow.clone().unwrap()
         });
         let _ = dispatch_task_to_worker(0);
-        if let Ok(ok) = func.call4(
+        match func.call4(
             &JsValue::NULL,
             &JsValue::from_str(SPAWNER_CHANNEL_NAME),
             &JsValue::from_str(&script_src),
             &wasm_bindgen::module(),
             &wasm_bindgen::memory(),
         ) {
-            if ok.as_bool() == Some(true) {
-                MAIN_SPAWNER_READY.store(true, Ordering::Release);
+            Ok(ok) if ok.as_bool() == Some(true) => {
+                if !MAIN_SPAWNER_READY.swap(true, Ordering::Release) {
+                    crate::map_log!(
+                        3,
+                        "[WASM_THREAD] Main-thread BroadcastChannel worker spawner ready (src={})",
+                        script_src
+                    );
+                }
+            }
+            Ok(_) => {
+                crate::map_log!(
+                    2,
+                    "[WASM_THREAD] Main-thread BroadcastChannel worker spawner returned false"
+                );
+            }
+            Err(err) => {
+                crate::map_log!(
+                    2,
+                    "[WASM_THREAD] Failed to initialize main-thread worker spawner: {:?}",
+                    err
+                );
             }
         }
     }
 
+    /// Dispatches a boxed [`ThreadTask`] pointer `task_ptr` to an idle or newly created Web Worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`JsValue`] exception if evaluating or invoking the JS worker dispatcher fails.
     fn dispatch_task_to_worker(task_ptr: u32) -> std::result::Result<(), JsValue> {
         let script_src = resolve_script_src();
         let func = DISPATCH_FN.with(|slot| {
@@ -369,6 +424,11 @@ pub mod thread {
         Ok(())
     }
 
+    /// Forwards a boxed [`ThreadTask`] pointer `task_ptr` from a worker thread to the main thread's spawner.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`JsValue`] exception if posting to the `BroadcastChannel` fails.
     fn post_spawn_to_main_thread(task_ptr: u32) -> std::result::Result<(), JsValue> {
         let func = POST_CHANNEL_FN.with(|slot| {
             let mut borrow = slot.borrow_mut();
@@ -391,11 +451,15 @@ pub mod thread {
         Ok(())
     }
 
+    /// Heap-allocated closure payload transferred across shared WASM memory to a Web Worker.
     pub struct ThreadTask {
+        /// Flag flipped to `true` once the target Web Worker enters [`wasm_thread_entry_point`].
         started: Arc<AtomicBool>,
+        /// Boxed entry closure executed on the worker thread.
         func: Box<dyn FnOnce() + Send + 'static>,
     }
 
+    /// Entry point invoked by spawned Web Workers to execute a boxed [`ThreadTask`] at `task_ptr`.
     #[wasm_bindgen]
     pub fn wasm_thread_entry_point(task_ptr: u32) {
         if task_ptr == 0 {
@@ -406,18 +470,30 @@ pub mod thread {
         (task.func)();
     }
 
+    /// Synchronization state shared between a spawned Web Worker and its [`JoinHandle`].
     struct SharedJoinState<T> {
+        /// Captured return value or panic payload produced by the worker closure.
         result: Mutex<Option<Result<T>>>,
+        /// Completion flag set after storing `result`.
         done: AtomicBool,
+        /// Condition variable notified when the worker finishes.
         cvar: Condvar,
     }
 
+    /// Join handle for a task spawned onto a Web Worker via [`Builder::spawn`].
     pub struct JoinHandle<T> {
+        /// Shared flag indicating whether the worker started executing the task.
         started: Arc<AtomicBool>,
+        /// Shared completion state holding the worker result.
         state: Arc<SharedJoinState<T>>,
     }
 
     impl<T> JoinHandle<T> {
+        /// Waits briefly (off the main thread) for the worker task to complete and returns its result.
+        ///
+        /// # Errors
+        ///
+        /// Returns an `Err` panic payload if the worker panicked or if joining timed out / was deferred.
         pub fn join(self) -> Result<T> {
             if !self.state.done.load(Ordering::Acquire)
                 && !is_web_main_thread()
@@ -444,27 +520,37 @@ pub mod thread {
         }
     }
 
+    /// Thread builder configuring and spawning background Web Worker tasks on `wasm32`.
     #[derive(Default)]
     pub struct Builder {
+        /// Optional diagnostic name assigned to the spawned worker task.
         name: Option<String>,
     }
 
     impl Builder {
+        /// Creates a new [`Builder`] with default settings.
         pub fn new() -> Self {
             Self { name: None }
         }
 
+        /// Sets the diagnostic `name` of the thread to be spawned.
         pub fn name(mut self, name: String) -> Self {
             self.name = Some(name);
             self
         }
 
+        /// Spawns closure `f` onto a Web Worker and returns a [`JoinHandle`].
+        ///
+        /// # Errors
+        ///
+        /// Returns an `io::Error` if dispatching the task to a Web Worker fails.
         pub fn spawn<F, T>(self, f: F) -> io::Result<JoinHandle<T>>
         where
             F: FnOnce() -> T + Send + 'static,
             T: Send + 'static,
         {
-            let _ = &self.name;
+            let thread_name = self.name.as_deref().unwrap_or("unnamed");
+            crate::map_log!(4, "[WASM_THREAD] Spawning Web Worker task '{}'", thread_name);
             let started = Arc::new(AtomicBool::new(false));
             let state = Arc::new(SharedJoinState {
                 result: Mutex::new(None),
@@ -492,6 +578,11 @@ pub mod thread {
                     unsafe {
                         drop(Box::from_raw(task_ptr as *mut ThreadTask));
                     }
+                    crate::map_log!(
+                        1,
+                        "[WASM_THREAD] Failed to dispatch Web Worker task '{}' from main thread",
+                        thread_name
+                    );
                     return Err(io::Error::other("failed to dispatch wasm worker task"));
                 }
             } else if MAIN_SPAWNER_READY.load(Ordering::Acquire) {
@@ -500,12 +591,22 @@ pub mod thread {
                     unsafe {
                         drop(Box::from_raw(task_ptr as *mut ThreadTask));
                     }
+                    crate::map_log!(
+                        1,
+                        "[WASM_THREAD] Failed to post Web Worker spawn request '{}'",
+                        thread_name
+                    );
                     return Err(io::Error::other("failed to post wasm worker spawn request"));
                 }
             } else if dispatch_task_to_worker(task_ptr).is_err() {
                 unsafe {
                     drop(Box::from_raw(task_ptr as *mut ThreadTask));
                 }
+                crate::map_log!(
+                    1,
+                    "[WASM_THREAD] Failed to spawn nested Web Worker task '{}'",
+                    thread_name
+                );
                 return Err(io::Error::other("failed to spawn nested wasm worker"));
             }
 

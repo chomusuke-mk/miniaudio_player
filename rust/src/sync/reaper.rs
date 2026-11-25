@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::core::voice_pool::{SoundBuffer, SoundBufferReaperFn};
 use crate::sync::thread::{self, JoinHandle};
 
+/// Bounded capacity of the background `map-reaper` teardown channel.
 const REAPER_QUEUE_CAPACITY: usize = 1024;
 
 /// Retired heavy resources queued for destruction by `map-reaper`.
@@ -27,12 +28,16 @@ pub enum ReaperTrash {
 /// Cloneable handle to the background `map-reaper` teardown thread.
 #[derive(Clone)]
 pub struct ReaperHandle {
+    /// Bounded sender delivering [`ReaperTrash`] items to the background reaper thread.
     tx: Option<crossbeam_channel::Sender<ReaperTrash>>,
+    /// Shared join handle for the `map-reaper` worker thread, taken on shutdown.
     worker: Option<Arc<std::sync::Mutex<Option<JoinHandle<()>>>>>,
+    /// Flag indicating whether the reaper has stopped or is a no-op handle.
     stopped: Arc<AtomicBool>,
 }
 
 impl Default for ReaperHandle {
+    /// Creates an inactive no-op [`ReaperHandle`].
     fn default() -> Self {
         Self::noop()
     }
@@ -52,7 +57,7 @@ impl ReaperHandle {
     pub fn spawn() -> Self {
         let (tx, rx) = crossbeam_channel::bounded::<ReaperTrash>(REAPER_QUEUE_CAPACITY);
         let stopped = Arc::new(AtomicBool::new(false));
-        let handle = thread::Builder::new()
+        let spawn_res = thread::Builder::new()
             .name("map-reaper".to_string())
             .spawn(move || {
                 while let Ok(item) = rx.recv() {
@@ -60,24 +65,38 @@ impl ReaperHandle {
                         ReaperTrash::SoundBuffer(buf) => drop(buf),
                         ReaperTrash::SoundBuffers(bufs) => drop(bufs),
                         ReaperTrash::Deferred(task) => task(),
-                        ReaperTrash::Shutdown => break,
+                        ReaperTrash::Shutdown => {
+                            crate::map_log!(
+                                4,
+                                "[REAPER] Received shutdown sentinel; exiting map-reaper thread"
+                            );
+                            break;
+                        }
                     }
                 }
-            })
-            .ok();
+            });
 
-        if let Some(jh) = handle {
-            Self {
-                tx: Some(tx),
-                worker: Some(Arc::new(std::sync::Mutex::new(Some(jh)))),
-                stopped,
+        match spawn_res {
+            Ok(jh) => {
+                crate::map_log!(3, "[REAPER] Spawned background map-reaper thread");
+                Self {
+                    tx: Some(tx),
+                    worker: Some(Arc::new(std::sync::Mutex::new(Some(jh)))),
+                    stopped,
+                }
             }
-        } else {
-            Self::noop()
+            Err(e) => {
+                crate::map_log!(
+                    1,
+                    "[REAPER] Failed to spawn map-reaper thread ({}); falling back to noop",
+                    e
+                );
+                Self::noop()
+            }
         }
     }
 
-    /// Non-blocking submission safe to invoke from real-time audio paths.
+    /// Non-blocking submission of `item` safe to invoke from real-time audio paths.
     #[inline]
     pub fn push_from_rt(&self, item: ReaperTrash) {
         if let Some(ref tx) = self.tx {
@@ -89,19 +108,25 @@ impl ReaperHandle {
         drop(item);
     }
 
-    /// Submits a heavy value for off-thread destruction, dropping inline if shut down.
+    /// Submits a heavy `value` for off-thread destruction, dropping inline if shut down.
     pub fn reap_value<T: Send + 'static>(&self, value: T) {
         if let Some(ref tx) = self.tx {
             if !self.stopped.load(Ordering::Acquire) {
                 let task: Box<dyn FnOnce() + Send> = Box::new(move || drop(value));
-                let _ = tx.try_send(ReaperTrash::Deferred(task));
+                if let Err(err) = tx.try_send(ReaperTrash::Deferred(task)) {
+                    crate::map_log!(
+                        2,
+                        "[REAPER] Reaper queue full or disconnected; dropping deferred value inline"
+                    );
+                    drop(err);
+                }
                 return;
             }
         }
         drop(value);
     }
 
-    /// Submits displaced PCM sound effect buffers for off-thread destruction.
+    /// Submits displaced PCM sound effect `buffers` for off-thread destruction.
     #[inline]
     pub fn reap_sound_buffers(&self, buffers: Vec<SoundBuffer>) {
         if buffers.is_empty() {
@@ -109,7 +134,13 @@ impl ReaperHandle {
         }
         if let Some(ref tx) = self.tx {
             if !self.stopped.load(Ordering::Acquire) {
-                let _ = tx.try_send(ReaperTrash::SoundBuffers(buffers));
+                if let Err(err) = tx.try_send(ReaperTrash::SoundBuffers(buffers)) {
+                    crate::map_log!(
+                        2,
+                        "[REAPER] Reaper queue full or disconnected; dropping sound buffers inline"
+                    );
+                    drop(err);
+                }
                 return;
             }
         }
@@ -129,13 +160,17 @@ impl ReaperHandle {
         if self.stopped.swap(true, Ordering::AcqRel) {
             return;
         }
+        crate::map_log!(3, "[REAPER] Shutting down map-reaper background thread");
         if let Some(ref tx) = self.tx {
-            let _ = tx.send(ReaperTrash::Shutdown);
+            if let Err(e) = tx.send(ReaperTrash::Shutdown) {
+                crate::map_log!(2, "[REAPER] Failed to send shutdown sentinel: {}", e);
+            }
         }
         if let Some(ref worker) = self.worker {
             let jh_opt = crate::sync::lock_unpoisoned(worker).take();
             if let Some(jh) = jh_opt {
                 let _ = jh.join();
+                crate::map_log!(4, "[REAPER] map-reaper thread joined cleanly");
             }
         }
     }

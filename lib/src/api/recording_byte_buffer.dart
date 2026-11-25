@@ -22,20 +22,22 @@ abstract interface class RecordingByteBuffer {
   /// Releases resources or finalizes the sink when recording finishes.
   FutureOr<void> close();
 
-  /// Optional display/destination path reported in [RecordingResult.path].
+  /// Optional display/destination path reported in `RecordingResult.path`.
   String? get path;
 
   /// Current logical byte length written to this sink.
   int get lengthInBytes;
 
-  /// Creates the built-in chunked in-memory WAV recording buffer.
+  /// Creates a built-in chunked in-memory [RecordingByteBuffer].
+  ///
+  /// Optionally sets the reported display [path] and internal [chunkSizeBytes].
   factory RecordingByteBuffer.memory({
     String? path,
     int chunkSizeBytes,
   }) = MemoryRecordingBuffer;
 }
 
-/// Chunked in-memory [RecordingByteBuffer] with amortized $O(1)$ append performance.
+/// Chunked in-memory [RecordingByteBuffer] with amortized O(1) append performance.
 ///
 /// Stores audio in fixed-size blocks (default 64 KiB) to avoid large contiguous
 /// array reallocations while recording, supporting random-access [writeAt]
@@ -44,13 +46,23 @@ class MemoryRecordingBuffer implements RecordingByteBuffer {
   /// Default internal chunk capacity (64 KiB).
   static const int defaultChunkSizeBytes = 65536;
 
+  /// Optional display path returned by [path].
   final String? _path;
+
+  /// Fixed byte capacity allocated for each internal chunk.
   final int _chunkSize;
+
+  /// Backing list of fixed-size byte chunks.
   final List<Uint8List> _chunks = [];
+
+  /// Current logical byte length written into [_chunks].
   int _length = 0;
+
+  /// Whether [close] has been invoked on this buffer.
   bool _closed = false;
 
-  /// Creates an in-memory [MemoryRecordingBuffer] with an optional display [path].
+  /// Creates an in-memory [MemoryRecordingBuffer] with an optional display [path]
+  /// and internal [chunkSizeBytes] capacity.
   MemoryRecordingBuffer({
     String? path,
     int chunkSizeBytes = defaultChunkSizeBytes,
@@ -63,16 +75,18 @@ class MemoryRecordingBuffer implements RecordingByteBuffer {
                 'chunkSizeBytes must be > 0',
               );
 
+  /// Optional display/destination path reported for this in-memory buffer.
   @override
   String? get path => _path;
 
+  /// Current logical byte length written to this buffer.
   @override
   int get lengthInBytes => _length;
 
   /// Whether [close] has been invoked on this buffer.
   bool get isClosed => _closed;
 
-  /// Allocates/returns zero-filled chunks covering at least [minLength] bytes.
+  /// Allocates zero-filled chunks covering at least [minLength] bytes.
   void _ensureCapacity(int minLength) {
     final neededChunks = (minLength + _chunkSize - 1) ~/ _chunkSize;
     while (_chunks.length < neededChunks) {
@@ -80,12 +94,14 @@ class MemoryRecordingBuffer implements RecordingByteBuffer {
     }
   }
 
+  /// Appends [bytes] sequentially at the end of this buffer.
   @override
   void write(Uint8List bytes) {
     if (bytes.isEmpty) return;
     _writeRange(_length, bytes);
   }
 
+  /// Overwrites [bytes] starting at byte [offset].
   @override
   void writeAt(int offset, Uint8List bytes) {
     if (offset < 0) {
@@ -95,6 +111,7 @@ class MemoryRecordingBuffer implements RecordingByteBuffer {
     _writeRange(offset, bytes);
   }
 
+  /// Copies [bytes] across chunk boundaries starting at [startOffset].
   void _writeRange(int startOffset, Uint8List bytes) {
     final endOffset = startOffset + bytes.length;
     _ensureCapacity(endOffset);
@@ -162,9 +179,11 @@ class MemoryRecordingBuffer implements RecordingByteBuffer {
     _length = 0;
   }
 
+  /// No-op flush for the synchronous in-memory buffer.
   @override
   void flush() {}
 
+  /// Marks this buffer as closed so [isClosed] becomes `true`.
   @override
   void close() {
     _closed = true;

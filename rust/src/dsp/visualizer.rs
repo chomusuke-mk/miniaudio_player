@@ -23,6 +23,7 @@ pub struct VisualizerData {
 }
 
 impl Default for VisualizerData {
+    /// Returns zeroed [`VisualizerData`] representing silence.
     fn default() -> Self {
         Self {
             bands: [0.0; 10],
@@ -63,15 +64,20 @@ impl VisualizerData {
 
 /// Real-time audio visualizer analyzing 10 frequency bands and signal levels.
 pub struct Visualizer {
+    /// Whether visualizer analysis is enabled.
     enabled: bool,
+    /// Active audio sample rate in Hz.
     sample_rate: u32,
+    /// Number of interleaved audio channels in incoming buffers.
     channels: usize,
+    /// Bank of 10 constant-skirt-gain bandpass filters tuned to ISO 266 EQ frequencies.
     bpf_filters: [BiquadDf2t; EQ_BAND_COUNT],
+    /// Most recently computed visualizer snapshot.
     current_data: VisualizerData,
 }
 
 impl Visualizer {
-    /// Creates a new `Visualizer` instance for the specified channel count and sample rate.
+    /// Creates a new `Visualizer` instance for `channels` and `sample_rate`.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let sr = if sample_rate == 0 { 44100 } else { sample_rate };
         let mut vis = Self {
@@ -85,7 +91,7 @@ impl Visualizer {
         vis
     }
 
-    /// Enables or disables real-time visualizer processing.
+    /// Sets whether real-time visualizer processing is `enabled`, resetting state when disabled.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
@@ -101,7 +107,7 @@ impl Visualizer {
         }
     }
 
-    /// Updates the sample rate and recalculates bandpass filter coefficients.
+    /// Updates `sample_rate` and recalculates bandpass filter coefficients when changed.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if self.sample_rate != sample_rate && sample_rate > 0 {
             self.sample_rate = sample_rate;
@@ -114,7 +120,7 @@ impl Visualizer {
         self.current_data
     }
 
-    /// Processes a buffer of interleaved float frames and updates band energies and peak levels.
+    /// Processes a buffer of interleaved float `frames` and updates band energies and peak levels.
     pub fn process_frames(&mut self, frames: &[f32]) {
         if !self.enabled || frames.is_empty() || self.channels == 0 {
             return;
@@ -195,6 +201,7 @@ impl Visualizer {
         }
     }
 
+    /// Recalculates the 10 bandpass filter coefficients from `sample_rate` while preserving filter states.
     fn recalculate_filters(&mut self) {
         let fs = self.sample_rate as f64;
         for (b, &freq) in EQ_FREQUENCIES.iter().enumerate().take(EQ_BAND_COUNT) {

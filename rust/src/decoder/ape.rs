@@ -11,9 +11,13 @@ use super::extended_pcm::PcmSampleNormalizer;
 /// Ensures `Read::read` fills the full requested slice unless EOF (`Ok(0)`) is reached,
 /// preventing `ape-decoder::read_frame_data` from failing with `"short read on frame data"`
 /// across circular ring buffer wrap boundaries or incremental HTTP chunks.
-struct FullReadSource(Box<dyn MediaSource>);
+struct FullReadSource(
+    /// Underlying boxed media source wrapped for full-slice reads.
+    Box<dyn MediaSource>,
+);
 
 impl Read for FullReadSource {
+    /// Reads into `buf` repeatedly until filled, EOF (`Ok(0)`), or a non-`Interrupted` error.
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         let mut total = 0usize;
         while total < buf.len() {
@@ -34,17 +38,20 @@ impl Read for FullReadSource {
 }
 
 impl Seek for FullReadSource {
+    /// Delegates seeking to `pos` on the inner [`MediaSource`].
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
         self.0.seek(pos)
     }
 }
 
 impl MediaSource for FullReadSource {
+    /// Reports whether the inner media source supports random-access seeking.
     #[inline]
     fn is_seekable(&self) -> bool {
         self.0.is_seekable()
     }
 
+    /// Returns the total byte length of the inner media source if known.
     #[inline]
     fn byte_len(&self) -> Option<u64> {
         self.0.byte_len()
@@ -61,18 +68,31 @@ pub enum ApeProbe {
 
 /// Decoder reader parsing and decoding Monkey's Audio (`.ape`) frames into normalized float PCM.
 pub struct ApeReader {
+    /// Underlying `ape-decoder` instance owning the wrapped media source.
     decoder: ApeDecoder<FullReadSource>,
+    /// Audio sample rate in Hz.
     sample_rate: u32,
+    /// Number of interleaved audio channels.
     channels: u32,
+    /// Bits per sample (for example `16` or `24`).
     bits_per_sample: u16,
+    /// Total number of APE frames in the stream.
     total_frames: u32,
+    /// Zero-based index of the next APE frame to decode.
     current_frame: u32,
+    /// Remaining per-channel leading samples to discard after a seek.
     pending_skip_samples: usize,
+    /// Total stream duration in milliseconds if computable from `sample_rate`.
     duration_ms: Option<u64>,
 }
 
 impl ApeReader {
-    /// Attempts to probe magic bytes and initialize an `ApeReader` from a media source.
+    /// Attempts to probe `"MAC "` magic bytes and initialize an [`ApeReader`] from `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if the `"MAC "` signature matched but initializing
+    /// [`ApeDecoder`] failed.
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<ApeProbe, SymphoniaError> {
         if source.seek(SeekFrom::Start(0)).is_err() {
             return Ok(ApeProbe::NotMatched(source));
@@ -85,7 +105,10 @@ impl ApeReader {
         }
 
         let _ = source.seek(SeekFrom::Start(0));
-        let decoder = ApeDecoder::new(FullReadSource(source)).map_err(Self::map_ape_err)?;
+        let decoder = ApeDecoder::new(FullReadSource(source)).map_err(|err| {
+            crate::map_log!(1, "[APE] Failed to initialize APE decoder: {:?}", err);
+            Self::map_ape_err(err)
+        })?;
 
         let info = decoder.info();
         let sample_rate = info.sample_rate;
@@ -97,6 +120,16 @@ impl ApeReader {
         } else {
             None
         };
+
+        crate::map_log!(
+            3,
+            "[APE] Opened stream: sr={}Hz, ch={}, bps={}, frames={}, dur_ms={:?}",
+            sample_rate,
+            channels,
+            bits_per_sample,
+            total_frames,
+            duration_ms
+        );
 
         Ok(ApeProbe::Matched(Self {
             decoder,
@@ -110,6 +143,7 @@ impl ApeReader {
         }))
     }
 
+    /// Translates an [`ApeError`] `err` into a [`SymphoniaError`].
     fn map_ape_err(err: ApeError) -> SymphoniaError {
         match err {
             ApeError::Io(io_err) => SymphoniaError::IoError(io_err),
@@ -148,12 +182,26 @@ impl ApeReader {
         self.duration_ms
     }
 
-    /// Seeks to the specified position in milliseconds.
+    /// Seeks to the specified `position_ms` in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if the underlying APE decoder fails to seek.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_sample = ((position_ms as f64 / 1000.0) * self.sample_rate as f64) as u64;
-        let seek_res = self.decoder.seek(target_sample).map_err(Self::map_ape_err)?;
+        let seek_res = self.decoder.seek(target_sample).map_err(|err| {
+            crate::map_log!(1, "[APE] Seek to {}ms failed: {:?}", position_ms, err);
+            Self::map_ape_err(err)
+        })?;
         self.current_frame = seek_res.frame_index;
         self.pending_skip_samples = seek_res.skip_samples as usize;
+        crate::map_log!(
+            4,
+            "[APE] Seek to {}ms -> frame={}, skip_samples={}",
+            position_ms,
+            seek_res.frame_index,
+            seek_res.skip_samples
+        );
         Ok(())
     }
 
@@ -201,7 +249,12 @@ impl ApeReader {
         Some((start, end))
     }
 
-    /// Decodes the next audio frame into the output normalized float PCM buffer.
+    /// Decodes the next audio frame into the normalized float PCM buffer `out_pcm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] on I/O failure, frame checksum/decode failure, or unsupported
+    /// sample bit depth.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         loop {
             out_pcm.clear();
@@ -212,12 +265,26 @@ impl ApeReader {
             let pcm_bytes = match self.decoder.decode_frame(self.current_frame) {
                 Ok(bytes) => bytes,
                 Err(ApeError::Io(io_err)) => {
+                    crate::map_log!(
+                        1,
+                        "[APE] Frame {} I/O error: {}",
+                        self.current_frame,
+                        io_err
+                    );
                     return Err(SymphoniaError::IoError(IoError::new(
                         io_err.kind(),
                         io_err.to_string(),
                     )));
                 }
-                Err(other) => return Err(Self::map_ape_err(other)),
+                Err(other) => {
+                    crate::map_log!(
+                        1,
+                        "[APE] Frame {} decode error: {:?}",
+                        self.current_frame,
+                        other
+                    );
+                    return Err(Self::map_ape_err(other));
+                }
             };
             self.current_frame += 1;
 

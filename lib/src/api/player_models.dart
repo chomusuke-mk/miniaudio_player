@@ -4,6 +4,7 @@ import '../equalizer.dart';
 import '../loader/recording_result_helper.dart';
 import '../reverb.dart';
 import 'crossfade_config.dart';
+import 'logger.dart';
 import 'miniaudio_player.dart';
 import 'player_exception.dart';
 import 'recording.dart' show DuckingConfig, WavFormat;
@@ -192,6 +193,10 @@ enum AudioFileFormat {
   /// Whether blocks are compressed losslessly with WavPack (`wavicle`).
   final bool isWavPack;
 
+  /// Creates an [AudioFileFormat] entry describing its encoding metadata.
+  ///
+  /// Associates [wireCode], [extension], [mimeType], [shortLabel], [displayLabel],
+  /// [isFloat32], [isBigEndian], and [isWavPack].
   const AudioFileFormat({
     required this.wireCode,
     required this.extension,
@@ -220,6 +225,7 @@ enum AudioFileFormat {
   static List<AudioFileFormat> get supportedRecordingFormats =>
       values.where((f) => f.isSupportedForRecording).toList(growable: false);
 
+  /// Mapping from 16-bit container variants to their 32-bit float counterparts.
   static const Map<AudioFileFormat, AudioFileFormat> _float32Pairs = {
     wav: wavFloat32,
     rf64: rf64Float32,
@@ -228,6 +234,7 @@ enum AudioFileFormat {
     wavPack: wavPackFloat32,
   };
 
+  /// Mapping from 32-bit float container variants to their 16-bit PCM counterparts.
   static const Map<AudioFileFormat, AudioFileFormat> _pcm16Pairs = {
     wavFloat32: wav,
     rf64Float32: rf64,
@@ -240,9 +247,11 @@ enum AudioFileFormat {
   /// Validates this format for live recording and resolves an optional [wavFormat] bit-depth override.
   ///
   /// Throws [MiniaudioPlayerException] with [MapResult.errorUnsupported] when the format
-  /// (or requested bit depth for that container, e.g. 32-bit float AIFF) cannot be encoded.
+  /// or requested bit depth for that container (for example, 32-bit float AIFF) cannot be encoded.
   AudioFileFormat resolveForRecording({WavFormat? wavFormat}) {
     if (!isSupportedForRecording) {
+      MapLogger.warn(
+          'Unsupported live recording format requested: ${name.toUpperCase()}');
       throw MiniaudioPlayerException(
         'Live recording to ${name.toUpperCase()} is not supported yet. '
         'Supported formats: WAV, RF64, W64, AIFF, CAF, WavPack.',
@@ -254,6 +263,9 @@ enum AudioFileFormat {
         ? (_float32Pairs[this] ?? (isFloat32 ? this : null))
         : (_pcm16Pairs[this] ?? (!isFloat32 ? this : null));
     if (resolved == null) {
+      MapLogger.warn(
+        'Container ${name.toUpperCase()} does not support ${wavFormat.name}.',
+      );
       throw MiniaudioPlayerException(
         'Container ${name.toUpperCase()} does not support ${wavFormat.name}.',
         errorCode: MapResult.errorUnsupported,
@@ -291,6 +303,8 @@ enum AudioOutputSource {
 
   /// Raw native enum value.
   final int value;
+
+  /// Creates an [AudioOutputSource] backed by native integer [value].
   const AudioOutputSource(this.value);
 
   /// Resolves an [AudioOutputSource] from its raw integer [val].
@@ -340,12 +354,13 @@ class AudioOutput {
   /// The audio signal routing source stream. Defaults to [AudioOutputSource.all].
   final AudioOutputSource source;
 
-  /// Creates a unified [AudioOutput] destination.
+  /// Creates a unified [AudioOutput] destination targeting [deviceId] with [source].
   const AudioOutput({
     this.deviceId = 'AUTO',
     this.source = AudioOutputSource.all,
   });
 
+  /// Compares this [AudioOutput] with [other] by [deviceId] and [source].
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -354,30 +369,34 @@ class AudioOutput {
           deviceId == other.deviceId &&
           source == other.source;
 
+  /// Returns a hash code combining [deviceId] and [source].
   @override
   int get hashCode => Object.hash(deviceId, source);
 
+  /// Returns a readable string representation of this [AudioOutput].
   @override
   String toString() => 'AudioOutput(deviceId: $deviceId, source: $source)';
 }
 
 /// Real-time capture configuration parameters for an [AudioInput].
 class AudioInputConfig {
-  /// The linear capture input gain/volume multiplier (`>= 0.0`). Defaults to `1.0`.
+  /// Linear capture input gain/volume multiplier (`>= 0.0`). Defaults to `1.0`.
   final double volume;
 
-  /// Optional sidechain ducking configuration. When non-null and enabled, this input's
-  /// voice signal attenuates the music deck bus during speech.
+  /// Optional sidechain ducking configuration.
+  ///
+  /// When non-null and enabled, this input's voice signal attenuates the music deck bus during speech.
   final DuckingConfig? ducking;
 
   /// Whether low-latency direct pass-through monitoring to the master output is enabled.
+  ///
   /// When `true`, this input's signal is routed directly to the master output.
   final bool monitorDirect;
 
-  /// The linear volume multiplier for direct voice monitoring (`>= 0.0`). Defaults to `1.0`.
+  /// Linear volume multiplier for direct voice monitoring (`>= 0.0`). Defaults to `1.0`.
   final double monitorVolume;
 
-  /// Creates an [AudioInputConfig] with the specified capture parameters.
+  /// Creates an [AudioInputConfig] with [volume], [ducking], [monitorDirect], and [monitorVolume].
   const AudioInputConfig({
     this.volume = 1.0,
     this.ducking,
@@ -385,7 +404,8 @@ class AudioInputConfig {
     this.monitorVolume = 1.0,
   });
 
-  /// Creates a copy of this configuration with the given fields replaced.
+  /// Creates a copy of this configuration with [volume], [ducking], [monitorDirect],
+  /// or [monitorVolume] replaced.
   AudioInputConfig copyWith({
     double? volume,
     DuckingConfig? ducking,
@@ -400,6 +420,7 @@ class AudioInputConfig {
     );
   }
 
+  /// Compares this [AudioInputConfig] with [other] across all capture parameters.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -409,6 +430,7 @@ class AudioInputConfig {
           monitorDirect == other.monitorDirect &&
           monitorVolume == other.monitorVolume;
 
+  /// Returns a hash code combining [volume], [ducking], [monitorDirect], and [monitorVolume].
   @override
   int get hashCode => Object.hash(
         volume,
@@ -417,6 +439,7 @@ class AudioInputConfig {
         monitorVolume,
       );
 
+  /// Returns a readable string representation of this [AudioInputConfig].
   @override
   String toString() =>
       'AudioInputConfig(volume: $volume, ducking: $ducking, monitorDirect: $monitorDirect, monitorVolume: $monitorVolume)';
@@ -439,24 +462,26 @@ class AudioInputConfig {
 /// The declared set in `state.inputs` and `stream.inputs` remains completely intact and
 /// unmodified, preserving all user-selected items.
 class AudioInput {
+  /// Backing field for [deviceId].
   final String _deviceId;
 
-  /// The physical OS hardware audio capture device identifier (`'AUTO'` targets default).
+  /// Physical OS hardware audio capture device identifier (`'AUTO'` targets default).
   String get deviceId => _deviceId;
 
+  /// Backing field for [config].
   final AudioInputConfig _config;
 
   /// Real-time capture configuration (gain, ducking, direct monitoring).
   AudioInputConfig get config => _config;
 
-  /// Creates an [AudioInput] bound to a hardware endpoint and an [AudioInputConfig].
+  /// Creates an [AudioInput] bound to [deviceId] and [config].
   const AudioInput({
     String deviceId = 'AUTO',
     AudioInputConfig config = const AudioInputConfig(),
   })  : _deviceId = deviceId,
         _config = config;
 
-  /// Creates a copy of this input with updated parameters.
+  /// Creates a copy of this input with updated [deviceId] or [config].
   AudioInput copyWith({
     String? deviceId,
     AudioInputConfig? config,
@@ -467,33 +492,36 @@ class AudioInput {
     );
   }
 
+  /// Compares this [AudioInput] with [other] by [deviceId].
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is AudioInput && _deviceId == other._deviceId;
 
+  /// Returns a hash code derived from [deviceId].
   @override
   int get hashCode => _deviceId.hashCode;
 
+  /// Returns a readable string representation of this [AudioInput].
   @override
   String toString() => 'AudioInput(deviceId: $_deviceId, config: $_config)';
 }
 
 /// Descriptor of an audio effect registered in the player's sound effects catalog.
 class AudioEffect {
-  /// The unique string identifier for this effect.
+  /// Unique string identifier for this effect.
   final String id;
 
-  /// The audio source to be decoded on demand into RAM.
+  /// Audio source to be decoded on demand into RAM.
   final AudioSource source;
 
-  /// The maximum number of simultaneous voices allowed for this effect.
+  /// Maximum number of simultaneous voices allowed for this effect.
   final int maxPolyphony;
 
   /// Whether this effect is pinned to prevent cache eviction under memory pressure.
   final bool pinned;
 
-  /// Creates an [AudioEffect] descriptor.
+  /// Creates an [AudioEffect] descriptor with [id], [source], [maxPolyphony], and [pinned].
   const AudioEffect({
     required this.id,
     required this.source,
@@ -515,6 +543,8 @@ enum DspRouting {
 
   /// Raw native enum value.
   final int value;
+
+  /// Creates a [DspRouting] entry backed by native integer [value].
   const DspRouting(this.value);
 
   /// Resolves a [DspRouting] from its raw integer [val].
@@ -533,20 +563,22 @@ enum DspRouting {
 
 /// Polyphonic voice stealing policy when voice budget is saturated.
 enum VoiceStealingPolicy {
-  /// Steal the voice with the lowest priority value.
+  /// Steals the voice with the lowest priority value.
   lowestPriority(0),
 
-  /// Steal the oldest active playing voice.
+  /// Steals the oldest active playing voice.
   oldest(1),
 
-  /// Steal the quietest voice currently playing.
+  /// Steals the quietest voice currently playing.
   quietest(2),
 
-  /// Steal the voice located furthest away from listener.
+  /// Steals the voice located furthest away from listener.
   farthest(3);
 
   /// Raw native enum value.
   final int value;
+
+  /// Creates a [VoiceStealingPolicy] entry backed by native integer [value].
   const VoiceStealingPolicy(this.value);
 
   /// Resolves a [VoiceStealingPolicy] from its raw integer [val].
@@ -613,6 +645,10 @@ class EffectConfig {
   final bool pinned;
 
   /// Creates an [EffectConfig] with custom voice parameters.
+  ///
+  /// Configures [volume], [balance], [pitch], [rate], [looping], [priority],
+  /// [pitchJitter], [volumeJitter], [spatial], [equalizer], [reverb],
+  /// [stealingPolicy], [maxPolyphony], [dspRouting], and [pinned].
   const EffectConfig({
     this.volume = 1.0,
     this.balance = 0.0,
@@ -631,7 +667,9 @@ class EffectConfig {
     this.pinned = false,
   });
 
-  /// Returns a copy of this [EffectConfig] with modified properties.
+  /// Returns a copy of this [EffectConfig] with modified [volume], [balance], [pitch],
+  /// [rate], [looping], [priority], [pitchJitter], [volumeJitter], [spatial], [equalizer],
+  /// [reverb], [stealingPolicy], [maxPolyphony], [dspRouting], or [pinned] properties.
   EffectConfig copyWith({
     double? volume,
     double? balance,
@@ -720,6 +758,10 @@ class PlayerConfig {
   final AudioOutputSource visualizerSource;
 
   /// Creates a [PlayerConfig] with engine parameters.
+  ///
+  /// Configures [sampleRate], [channels], [bufferSizeFrames], [maxVoices], [maxRamBytes],
+  /// [voiceStealingPolicy], [autoPlay], [pauseOnDeviceChange], [bufferLocalDuration],
+  /// [bufferNetworkDuration], [crossfade], [enableSpatialAudio], and [visualizerSource].
   const PlayerConfig({
     this.sampleRate = 44100,
     this.channels = 2,
@@ -767,9 +809,13 @@ class RecordingResult {
   /// Whether [path] refers to a browser Origin Private File System (OPFS) file on Web.
   final bool isOpfs;
 
+  /// Backing in-memory buffer when the recording was captured into RAM, or `null`.
   final MemoryRecordingBuffer? _memoryBuffer;
 
   /// Creates a [RecordingResult] summarizing a completed recording.
+  ///
+  /// Stores [path], [duration], [bytesWritten], [sampleCount], [droppedFrames],
+  /// [format], [isOpfs], and an optional [memoryBuffer].
   const RecordingResult({
     required this.path,
     required this.duration,
@@ -813,11 +859,17 @@ class RecordingResult {
 
   /// Triggers a direct browser file download on Web (`true` when initiated) using
   /// an $O(1)$-RAM disk-backed `File` handle for OPFS results or the recorded chunks for
-  /// [MemoryRecordingBuffer] results. Returns `false` on non-Web targets or empty sources.
+  /// [MemoryRecordingBuffer] results.
+  ///
+  /// Uses [fileName] when provided and non-empty, or falls back to [RecordingResult.fileName].
+  /// Returns `false` on non-Web targets or empty sources.
   Future<bool> download({String? fileName}) async {
     final targetName = (fileName != null && fileName.trim().isNotEmpty)
         ? fileName.trim()
         : this.fileName;
+    MapLogger.debug(
+      'RecordingResult.download: targetName=$targetName, isOpfs=$isOpfs, isInMemory=$isInMemory',
+    );
     if (isOpfs && path.trim().isNotEmpty) {
       return downloadOpfsRecordingFile(
         path,
@@ -836,8 +888,11 @@ class RecordingResult {
     return false;
   }
 
-  /// Reads all finalized container + audio bytes into memory.
+  /// Reads all finalized container and audio bytes into memory.
   Future<Uint8List> readBytes() async {
+    MapLogger.debug(
+      'RecordingResult.readBytes: path=$path, isOpfs=$isOpfs, isInMemory=$isInMemory',
+    );
     final mem = _memoryBuffer;
     if (mem != null) return mem.toBytes();
     if (isOpfs) return readOpfsRecordingBytes(path);
@@ -847,13 +902,16 @@ class RecordingResult {
   /// Converts this completed recording directly into an [AudioSource<D>] suitable for
   /// `player.action.load(...)`, `setQueue(...)`, or `MiniaudioPlayer.analyzeAudio(...)`.
   ///
-  /// For Web OPFS and native disk paths, this points directly to [path] ($O(1)$ RAM).
-  /// For [MemoryRecordingBuffer], passes the encoded bytes to the native engine.
+  /// Attaches optional domain [data] typed as [D]. For Web OPFS and native disk paths,
+  /// this points directly to [path] ($O(1)$ RAM). For [MemoryRecordingBuffer], passes the
+  /// encoded bytes to the native engine.
   AudioSource<D> toAudioSource<D>({D? data}) {
     final mem = _memoryBuffer;
     if (mem != null) {
       final bytes = mem.toBytes();
       if (bytes.isEmpty) {
+        MapLogger.warn(
+            'RecordingResult.toAudioSource failed: empty memory buffer.');
         throw const MiniaudioPlayerException(
           'Cannot create AudioSource from an empty or cleared recording buffer.',
           errorCode: MapResult.errorInvalidState,
@@ -862,6 +920,8 @@ class RecordingResult {
       return AudioSource<D>(bytes, data: data);
     }
     if (path.trim().isEmpty) {
+      MapLogger.warn(
+          'RecordingResult.toAudioSource failed: missing path and memory buffer.');
       throw const MiniaudioPlayerException(
         'Cannot create AudioSource: recording has no file path or MemoryRecordingBuffer.',
         errorCode: MapResult.errorInvalidState,
@@ -873,9 +933,13 @@ class RecordingResult {
   /// Creates an on-demand browser `blob:` URI (`$O(1)` RAM disk-backed for OPFS files)
   /// for `<audio>` elements, Web Share, or external JS consumers; returns `null` off Web.
   ///
+  /// Uses optional [fileName] (or [RecordingResult.fileName]) as the suggested blob filename.
   /// Call [revokeBlobUri] once the URL is no longer needed.
   Future<Uri?> createBlobUri({String? fileName}) async {
     final targetName = fileName ?? this.fileName;
+    MapLogger.debug(
+      'RecordingResult.createBlobUri: targetName=$targetName, isOpfs=$isOpfs, isInMemory=$isInMemory',
+    );
     if (isOpfs && path.trim().isNotEmpty) {
       return createOpfsRecordingBlobUri(
         path,
@@ -894,8 +958,13 @@ class RecordingResult {
     return null;
   }
 
-  /// Revokes a Web `blob:` [Uri] previously created by [createBlobUri].
-  static void revokeBlobUri(Uri? uri) => revokeRecordingResultBlobUri(uri);
+  /// Revokes a Web `blob:` [uri] previously created by [createBlobUri].
+  static void revokeBlobUri(Uri? uri) {
+    if (uri != null) {
+      MapLogger.debug('RecordingResult.revokeBlobUri: $uri');
+    }
+    revokeRecordingResultBlobUri(uri);
+  }
 
   /// Returns whether this recording still exists in OPFS, on local disk, or with data in RAM.
   Future<bool> exists() async {
@@ -906,8 +975,12 @@ class RecordingResult {
   }
 
   /// Deletes the recorded file (on OPFS or native disk) or clears the in-memory buffer.
-  /// Returns `true` if data was deleted/cleared.
+  ///
+  /// Returns `true` if data was deleted or cleared.
   Future<bool> delete() async {
+    MapLogger.debug(
+      'RecordingResult.delete: path=$path, isOpfs=$isOpfs, isInMemory=$isInMemory',
+    );
     final mem = _memoryBuffer;
     if (mem != null) {
       final hadData = mem.lengthInBytes > 0;
@@ -920,10 +993,15 @@ class RecordingResult {
 
   /// Copies/saves this recording to [destinationPath] (local filesystem on Native,
   /// sanitized OPFS path on Web) and returns the canonical saved destination path.
-  Future<String> saveTo(String destinationPath) => saveRecordingToDestination(
-        destinationPath: destinationPath,
-        sourcePath: path,
-        sourceIsOpfs: isOpfs,
-        memoryChunks: _memoryBuffer?.chunks,
-      );
+  Future<String> saveTo(String destinationPath) {
+    MapLogger.debug(
+      'RecordingResult.saveTo: source=$path -> destination=$destinationPath',
+    );
+    return saveRecordingToDestination(
+      destinationPath: destinationPath,
+      sourcePath: path,
+      sourceIsOpfs: isOpfs,
+      memoryChunks: _memoryBuffer?.chunks,
+    );
+  }
 }

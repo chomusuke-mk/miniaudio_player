@@ -34,6 +34,7 @@ pub struct EncryptionKeyInfo {
 }
 
 impl EncryptionKeyInfo {
+    /// Converts a parsed `m3u8_rs::Key` (`key`) into an [`EncryptionKeyInfo`], returning `None` for `KeyMethod::None`.
     fn from_m3u8_key(key: &Key) -> Option<Self> {
         let method = match key.method {
             KeyMethod::None => return None,
@@ -68,6 +69,7 @@ pub struct SegmentInfo {
 }
 
 impl SegmentInfo {
+    /// Builds a [`SegmentInfo`] from a parsed `m3u8_rs::MediaSegment` (`seg`), assigned `sequence_number`, optional `active_key`, and `resolved_byte_range`.
     fn from_media_segment(
         seg: MediaSegment,
         sequence_number: u64,
@@ -85,7 +87,7 @@ impl SegmentInfo {
     }
 }
 
-/// Slices a byte sub-range `(length, offset)` safely when bounds allow.
+/// Slices a byte sub-range (`length`, `offset`) out of `bytes` safely when bounds allow.
 pub fn slice_byte_range(bytes: &[u8], length: u64, offset: u64) -> Option<Vec<u8>> {
     if length == 0 {
         return None;
@@ -102,7 +104,7 @@ pub fn slice_byte_range(bytes: &[u8], length: u64, offset: u64) -> Option<Vec<u8
     Some(bytes[start..end].to_vec())
 }
 
-/// Resolves an HLS playlist or segment URI against a base playlist URI or local path.
+/// Resolves an HLS playlist or segment URI (`seg_uri`) against a base playlist URI or local path (`base_url`).
 pub fn resolve_hls_uri(base_url: &str, seg_uri: &str) -> String {
     let trimmed = seg_uri.trim();
     if trimmed.starts_with("http://")
@@ -166,9 +168,12 @@ pub enum ParsedHlsPlaylist {
     },
 }
 
+/// Sentinel prefix replacing `#EXTINF` titles that contain commas prior to `m3u8_rs` parsing.
 const EXTINF_SENTINEL_PREFIX: &str = "__MINIAUDIO_EXTINF_";
+/// Sentinel suffix terminating `#EXTINF` placeholder tokens.
 const EXTINF_SENTINEL_SUFFIX: &str = "__";
 
+/// Splits an `#EXTINF:` line (`line_no_eol`) into `(indent, duration_part, payload)` when `payload` contains a comma.
 fn split_extinf_comma_payload(line_no_eol: &str) -> Option<(&str, &str, &str)> {
     let ws_len = line_no_eol.len() - line_no_eol.trim_start().len();
     let (indent, trimmed) = line_no_eol.split_at(ws_len);
@@ -179,6 +184,7 @@ fn split_extinf_comma_payload(line_no_eol: &str) -> Option<(&str, &str, &str)> {
     payload.contains(',').then_some((indent, duration_part, payload))
 }
 
+/// Temporarily replaces `#EXTINF` titles containing commas in `content` with indexed sentinels so `m3u8_rs` parses them without truncation.
 fn preprocess_m3u8_extinf_commas(content: &[u8]) -> Option<(Vec<u8>, Vec<String>)> {
     let text = std::str::from_utf8(content).ok()?;
     if !text.lines().any(|l| split_extinf_comma_payload(l).is_some()) {
@@ -213,6 +219,7 @@ fn preprocess_m3u8_extinf_commas(content: &[u8]) -> Option<(Vec<u8>, Vec<String>
     Some((out.into_bytes(), restored_titles))
 }
 
+/// Restores a sentinel-encoded `#EXTINF` `title` from `restored_titles`, returning the original title string.
 fn restore_extinf_title(title: Option<String>, restored_titles: &[String]) -> Option<String> {
     let s = title?;
     if let Some(idx_str) = s
@@ -232,28 +239,69 @@ fn restore_extinf_title(title: Option<String>, restored_titles: &[String]) -> Op
 pub struct M3u8Parser;
 
 impl M3u8Parser {
-    /// Determines if raw content begins with an M3U8 playlist header.
+    /// Determines if raw `data` begins with an M3U8 playlist header.
     pub fn is_m3u8(data: &[u8]) -> bool {
         let trimmed = data.trim_ascii_start();
         trimmed.starts_with(b"#EXTM3U") || trimmed.starts_with(b"#EXT-X-")
     }
 
-    /// Parses an M3U8 playlist from raw UTF-8 bytes into a `ParsedHlsPlaylist`.
+    /// Parses an M3U8 playlist from raw UTF-8 `content` bytes into a [`ParsedHlsPlaylist`].
+    ///
+    /// # Errors
+    /// Returns an error string if `m3u8_rs` cannot decode `content` as a valid master or media playlist.
     pub fn parse(content: &[u8]) -> Result<ParsedHlsPlaylist, String> {
         let preprocessed = preprocess_m3u8_extinf_commas(content);
         let (parse_bytes, restored_titles): (&[u8], &[String]) = match preprocessed {
             Some((ref buf, ref titles)) => (buf.as_slice(), titles.as_slice()),
             None => (content, &[]),
         };
-        let playlist = m3u8_rs::parse_playlist_res(parse_bytes)
-            .map_err(|e| format!("Failed to parse M3U8: {:?}", e))?;
+        let playlist = m3u8_rs::parse_playlist_res(parse_bytes).map_err(|e| {
+            crate::map_log!(
+                1,
+                "[HLS] M3U8 parse failed ({} bytes): {:?}",
+                content.len(),
+                e
+            );
+            format!("Failed to parse M3U8: {:?}", e)
+        })?;
 
         match playlist {
-            Playlist::MasterPlaylist(master) => Ok(Self::process_master(master)),
-            Playlist::MediaPlaylist(media) => Ok(Self::process_media(media, restored_titles)),
+            Playlist::MasterPlaylist(master) => {
+                let parsed = Self::process_master(master);
+                if let ParsedHlsPlaylist::Master { ref variants } = parsed {
+                    crate::map_log!(
+                        4,
+                        "[HLS] Parsed master playlist: {} variants",
+                        variants.len()
+                    );
+                }
+                Ok(parsed)
+            }
+            Playlist::MediaPlaylist(media) => {
+                let parsed = Self::process_media(media, restored_titles);
+                if let ParsedHlsPlaylist::Media {
+                    is_live,
+                    target_duration,
+                    media_sequence,
+                    ref segments,
+                    ..
+                } = parsed
+                {
+                    crate::map_log!(
+                        4,
+                        "[HLS] Parsed media playlist: is_live={} target_duration={}s seq={} segments={}",
+                        is_live,
+                        target_duration,
+                        media_sequence,
+                        segments.len()
+                    );
+                }
+                Ok(parsed)
+            }
         }
     }
 
+    /// Converts a parsed `m3u8_rs::MasterPlaylist` (`master`) into [`ParsedHlsPlaylist::Master`].
     fn process_master(master: MasterPlaylist) -> ParsedHlsPlaylist {
         let variants = master
             .variants
@@ -270,6 +318,7 @@ impl M3u8Parser {
         ParsedHlsPlaylist::Master { variants }
     }
 
+    /// Converts a parsed `m3u8_rs::MediaPlaylist` (`media`) into [`ParsedHlsPlaylist::Media`], restoring any `restored_titles`.
     fn process_media(media: MediaPlaylist, restored_titles: &[String]) -> ParsedHlsPlaylist {
         let is_live = !media.end_list;
         let target_duration = media.target_duration as f32;
@@ -334,23 +383,32 @@ pub struct HlsSegmentTarget {
     pub title: Option<String>,
 }
 
+/// Deduplication identity key `(resolved_url, optional_byte_range)` for a live segment.
 type SegmentKey = (String, Option<(u64, u64)>);
 
 /// Incremental state machine tracking live HLS media playlist reloads without duplicates.
 pub struct HlsPlaylistTracker {
+    /// Base media playlist URL used to resolve relative segment URIs.
     base_media_url: String,
+    /// Whether the media playlist has not yet emitted `#EXT-X-ENDLIST`.
     is_live: bool,
+    /// Nominal `#EXT-X-TARGETDURATION` in seconds used for reload cadence.
     target_duration_seconds: f32,
+    /// `#EXT-X-MEDIA-SEQUENCE` of the most recently ingested playlist snapshot.
     last_media_sequence: u64,
+    /// Highest segment sequence number observed across ingested snapshots.
     last_sequence_number: Option<u64>,
+    /// Key of the first segment in the most recently ingested playlist snapshot.
     last_first_key: Option<SegmentKey>,
+    /// Bounded sliding window of recently seen segment keys for discontinuity deduplication.
     recent_keys: VecDeque<SegmentKey>,
 }
 
 impl HlsPlaylistTracker {
+    /// Maximum number of recent segment keys retained for overlap deduplication.
     const MAX_RECENT_KEYS: usize = 64;
 
-    /// Initializes the tracker from an already-parsed media playlist snapshot.
+    /// Initializes the tracker from `base_media_url`, `is_live`, `target_duration_seconds`, `media_sequence`, and `initial_segments`.
     pub fn new(
         base_media_url: String,
         is_live: bool,
@@ -394,7 +452,7 @@ impl HlsPlaylistTracker {
         self.is_live
     }
 
-    /// Computes the interruptible poll delay before re-fetching a live media playlist.
+    /// Computes the interruptible poll delay before re-fetching a live media playlist based on `had_new_segments`.
     pub fn poll_interval(&self, had_new_segments: bool) -> Duration {
         let td = if self.target_duration_seconds > 0.0 {
             self.target_duration_seconds
@@ -406,7 +464,7 @@ impl HlsPlaylistTracker {
         Duration::from_secs_f32(secs)
     }
 
-    /// Builds `HlsSegmentTarget` items for a slice of segments using the playlist base URL.
+    /// Builds [`HlsSegmentTarget`] items for `segments` using `base_media_url`.
     pub fn resolve_targets(&self, segments: &[SegmentInfo]) -> Vec<HlsSegmentTarget> {
         segments
             .iter()
@@ -420,7 +478,7 @@ impl HlsPlaylistTracker {
             .collect()
     }
 
-    /// Ingests a freshly fetched media playlist snapshot and returns only unseen segments in order.
+    /// Ingests a freshly fetched media playlist snapshot (`media_sequence`, `is_live`, `target_duration`, `segments`) and returns only unseen segments in order.
     pub fn ingest_media_playlist(
         &mut self,
         media_sequence: u64,
@@ -461,10 +519,19 @@ impl HlsPlaylistTracker {
                                 .iter()
                                 .any(|k| k.0 == t.url && k.1 == t.byte_range)
                         });
-                    match overlap_idx {
+                    let fallback_unseen: Vec<HlsSegmentTarget> = match overlap_idx {
                         Some(idx) => targets.into_iter().skip(idx + 1).collect(),
                         None => targets,
-                    }
+                    };
+                    crate::map_log!(
+                        4,
+                        "[HLS] Live playlist sequence reset/discontinuity (prev_seq={}, media_seq={}, overlap_idx={:?}, unseen={})",
+                        prev_seq,
+                        media_sequence,
+                        overlap_idx,
+                        fallback_unseen.len()
+                    );
+                    fallback_unseen
                 }
             }
         };
@@ -481,6 +548,7 @@ impl HlsPlaylistTracker {
         unseen
     }
 
+    /// Appends `key` to `recent_keys`, evicting the oldest entry if `MAX_RECENT_KEYS` is reached.
     fn push_recent_key(&mut self, key: SegmentKey) {
         if self.recent_keys.len() >= Self::MAX_RECENT_KEYS {
             self.recent_keys.pop_front();
@@ -508,6 +576,7 @@ pub fn is_live_ad_marker(value: &str) -> bool {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("ADWSRTAG_"))
 }
 
+/// Trims `raw` and returns `None` when [`is_live_ad_marker`] identifies it as empty or an ad marker.
 fn clean_live_meta_value(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if is_live_ad_marker(trimmed) {
@@ -517,6 +586,7 @@ fn clean_live_meta_value(raw: &str) -> Option<String> {
     }
 }
 
+/// Parses comma-separated `key=value` attribute pairs from `input`, returning an empty `Vec` on syntax mismatch.
 fn parse_extinf_kv_pairs(input: &str) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     let bytes = input.as_bytes();
@@ -587,7 +657,7 @@ fn parse_extinf_kv_pairs(input: &str) -> Vec<(String, String)> {
     pairs
 }
 
-/// Parses an HLS `#EXTINF` title string (attribute list or plain `"Artist - Title"`) into track metadata.
+/// Parses an HLS `#EXTINF` `raw_title` string (attribute list or plain `"Artist - Title"`) into track metadata.
 pub fn parse_hls_extinf_metadata(raw_title: &str) -> Option<HlsExtinfMetadata> {
     let trimmed = raw_title.trim();
     if trimmed.is_empty() {
@@ -629,6 +699,7 @@ pub fn parse_hls_extinf_metadata(raw_title: &str) -> Option<HlsExtinfMetadata> {
     })
 }
 
+/// Extracts `(optional_edge_host, stream_id)` from a Mediastream Icecast endpoint `raw_url`.
 fn parse_mdstrm_icecast_id(raw_url: &str) -> Option<(Option<&str>, &str)> {
     let clean = raw_url
         .split(['?', '#'])
@@ -680,7 +751,7 @@ fn parse_mdstrm_icecast_id(raw_url: &str) -> Option<(Option<&str>, &str)> {
     None
 }
 
-/// Derives CORS-accessible companion HLS playlist URLs for direct Mediastream Icecast endpoints.
+/// Derives CORS-accessible companion HLS playlist URLs for direct Mediastream Icecast endpoints from `original_url` and optional `final_url`.
 pub fn derive_companion_hls_metadata_urls(original_url: &str, final_url: Option<&str>) -> Vec<String> {
     let mut stream_id: Option<&str> = None;
     let mut edge_host: Option<&str> = None;

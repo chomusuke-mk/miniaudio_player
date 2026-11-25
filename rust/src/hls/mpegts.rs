@@ -2,15 +2,24 @@
 //!
 //! Uses a pipeline of `TsPacketIterator` -> `TsDemuxSession` -> `MpegTsDemuxResult`.
 
+/// Fixed byte length of an MPEG-2 Transport Stream packet.
 const TS_PACKET_SIZE: usize = 188;
+/// MPEG-2 Transport Stream packet sync byte (`'G'`).
 const TS_SYNC_BYTE: u8 = 0x47;
 
+/// PMT stream type for ISO/IEC 11172-3 Audio (MPEG-1 Audio).
 const STREAM_TYPE_MP3_1: u8 = 0x03;
+/// PMT stream type for ISO/IEC 13818-3 Audio (MPEG-2 Audio).
 const STREAM_TYPE_MP3_2: u8 = 0x04;
+/// PMT stream type for ISO/IEC 13818-7 ADTS AAC Audio.
 const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
+/// PMT stream type for ISO/IEC 14496-3 LATM/LOAS AAC Audio.
 const STREAM_TYPE_AAC_LATM: u8 = 0x11;
+/// PMT stream type for timed ID3 metadata carried in PES packets.
 const STREAM_TYPE_METADATA_ID3: u8 = 0x15;
+/// PMT stream type for ATSC A/52 AC-3 Audio.
 const STREAM_TYPE_AC3: u8 = 0x81;
+/// PMT stream type for Enhanced AC-3 (E-AC-3) Audio.
 const STREAM_TYPE_EAC3: u8 = 0x87;
 
 /// Elementary audio codec carried inside an MPEG-TS program.
@@ -27,7 +36,7 @@ pub enum TsAudioCodec {
 }
 
 impl TsAudioCodec {
-    /// Maps an MPEG-TS Program Map Table (PMT) stream type byte to a [`TsAudioCodec`].
+    /// Maps an MPEG-TS Program Map Table (PMT) `stream_type` byte to a [`TsAudioCodec`].
     #[inline]
     pub fn from_stream_type(stream_type: u8) -> Self {
         match stream_type {
@@ -38,7 +47,7 @@ impl TsAudioCodec {
         }
     }
 
-    /// Sniffs the audio codec from elementary bitstream sync headers.
+    /// Sniffs the audio codec from elementary bitstream sync headers in `data`.
     pub fn sniff_elementary(data: &[u8]) -> Self {
         if data.len() >= 2 {
             if data[0] == 0xFF && (data[1] & 0xF6) == 0xF0 {
@@ -71,11 +80,12 @@ pub struct MpegTsDemuxResult {
 /// Validated 188-byte MPEG-2 TS packet view.
 #[derive(Clone, Copy)]
 pub struct TsPacket<'a> {
+    /// Borrowed 188-byte packet buffer starting with `TS_SYNC_BYTE`.
     raw: &'a [u8; TS_PACKET_SIZE],
 }
 
 impl<'a> TsPacket<'a> {
-    /// Parses a 188-byte slice into a `TsPacket` if the sync byte is `0x47`.
+    /// Parses a 188-byte `slice` into a `TsPacket` if the sync byte is `0x47`.
     #[inline]
     pub fn parse(slice: &'a [u8]) -> Option<Self> {
         let raw: &'a [u8; TS_PACKET_SIZE] = slice.try_into().ok()?;
@@ -124,7 +134,9 @@ impl<'a> TsPacket<'a> {
 
 /// Input generator yielding sync-aligned 188-byte `TsPacket` instances from a byte slice.
 pub struct TsPacketIterator<'a> {
+    /// Underlying MPEG-TS byte stream slice.
     data: &'a [u8],
+    /// Current byte offset within `data`.
     cursor: usize,
 }
 
@@ -136,6 +148,7 @@ impl<'a> TsPacketIterator<'a> {
         iter
     }
 
+    /// Advances `cursor` to the first byte offset that shows consecutive `TS_SYNC_BYTE` markers.
     fn align_initial_sync(&mut self) {
         let total = self.data.len();
         while self.cursor + TS_PACKET_SIZE <= total {
@@ -174,16 +187,22 @@ impl<'a> Iterator for TsPacketIterator<'a> {
 
 /// Stateful MPEG-TS demuxing pipeline processing PSI tables (PAT/PMT) and PES streams.
 pub struct TsDemuxSession {
+    /// Discovered Program Map Table (PMT) PID from the PAT.
     pmt_pid: Option<u16>,
+    /// Elementary audio stream PID selected from the PMT or PES header sniffing.
     audio_pid: Option<u16>,
+    /// PMT elementary stream type byte associated with `audio_pid`.
     audio_stream_type: Option<u8>,
+    /// Elementary timed-ID3 metadata PID selected from the PMT, if present.
     id3_pid: Option<u16>,
+    /// Accumulated elementary audio bitstream bytes.
     audio_payload: Vec<u8>,
+    /// Accumulated ID3 timed metadata payload bytes.
     id3_payload: Vec<u8>,
 }
 
 impl TsDemuxSession {
-    /// Creates a new demuxing session with an pre-allocated audio buffer capacity.
+    /// Creates a new demuxing session with a pre-allocated audio buffer capacity of `estimated_audio_bytes`.
     pub fn with_capacity(estimated_audio_bytes: usize) -> Self {
         Self {
             pmt_pid: None,
@@ -195,7 +214,7 @@ impl TsDemuxSession {
         }
     }
 
-    /// Processes an individual TS packet, tracking PSI tables and extracting PES streams.
+    /// Processes an individual TS `packet`, tracking PSI tables and extracting PES streams.
     pub fn process_packet(&mut self, packet: TsPacket<'_>) {
         let Some(payload) = packet.payload() else {
             return;
@@ -251,6 +270,7 @@ impl TsDemuxSession {
         }
     }
 
+    /// Returns `true` when `payload` begins with an audio or private-stream-1 PES start code.
     fn is_audio_pes_start(payload: &[u8]) -> bool {
         if payload.len() < 6 || payload[0] != 0x00 || payload[1] != 0x00 || payload[2] != 0x01 {
             return false;
@@ -259,6 +279,7 @@ impl TsDemuxSession {
         (0xC0..=0xDF).contains(&stream_id) || stream_id == 0xBD
     }
 
+    /// Parses a Program Association Table (PAT) from `payload` (accounting for pointer field when `pusi` is set) and returns the first program's PMT PID.
     fn parse_pat(payload: &[u8], pusi: bool) -> Option<u16> {
         let mut idx = if pusi {
             1 + (*payload.first()? as usize)
@@ -284,6 +305,7 @@ impl TsDemuxSession {
         None
     }
 
+    /// Parses a Program Map Table (PMT) from `payload` (accounting for pointer field when `pusi` is set) and returns `(audio_pid, stream_type, optional_id3_pid)`.
     fn parse_pmt(payload: &[u8], pusi: bool) -> Option<(u16, u8, Option<u16>)> {
         let mut idx = if pusi {
             1 + (*payload.first()? as usize)
@@ -327,6 +349,7 @@ impl TsDemuxSession {
         audio_result.map(|(a_pid, s_type)| (a_pid, s_type, id3_pid))
     }
 
+    /// Strips any PES header when `pusi` is set and appends elementary `payload` bytes to `output`.
     fn append_pes_payload(payload: &[u8], pusi: bool, output: &mut Vec<u8>) {
         if pusi && payload.len() >= 6 && payload[0..3] == [0x00, 0x00, 0x01] {
             let stream_id = payload[3];
@@ -351,7 +374,7 @@ impl TsDemuxSession {
 pub struct MpegTsDemuxer;
 
 impl MpegTsDemuxer {
-    /// Checks if a buffer begins with or contains sync-aligned 188-byte MPEG-2 TS packets.
+    /// Checks if `data` begins with or contains sync-aligned 188-byte MPEG-2 TS packets.
     pub fn is_mpeg_ts(data: &[u8]) -> bool {
         if data.len() < TS_PACKET_SIZE * 2 {
             return data.starts_with(&[TS_SYNC_BYTE]);
@@ -368,12 +391,32 @@ impl MpegTsDemuxer {
         false
     }
 
-    /// Demuxes an MPEG-2 TS byte stream through a `TsPacketIterator` -> `TsDemuxSession` pipeline.
+    /// Demuxes an MPEG-2 TS byte stream `data` through a `TsPacketIterator` -> `TsDemuxSession` pipeline.
     pub fn demux_segment(data: &[u8]) -> MpegTsDemuxResult {
         let mut session = TsDemuxSession::with_capacity(data.len() / 2);
         for packet in TsPacketIterator::new(data) {
             session.process_packet(packet);
         }
-        session.finalize()
+        let result = session.finalize();
+        if result.audio_bytes.is_empty() {
+            crate::map_log!(
+                2,
+                "[MPEGTS] Demuxed {} bytes with 0 audio bytes (codec={:?}, audio_pid={:?})",
+                data.len(),
+                result.codec,
+                result.audio_pid
+            );
+        } else {
+            crate::map_log!(
+                5,
+                "[MPEGTS] Demuxed {} bytes -> {} audio bytes (codec={:?}, pid={:?}, id3_bytes={})",
+                data.len(),
+                result.audio_bytes.len(),
+                result.codec,
+                result.audio_pid,
+                result.id3_bytes.as_ref().map_or(0, |b| b.len())
+            );
+        }
+        result
     }
 }

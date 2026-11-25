@@ -1,5 +1,9 @@
-//! Strongly-typed models for Flutter <-> Rust communication.
+//! Strongly-typed models and conversion implementations for Flutter <-> Rust communication.
+//!
+//! Defines all data transfer structs, enums, configuration payloads, metadata models,
+//! spatial audio types, and event stream variants bridged via `flutter_rust_bridge`.
 
+/// Converts a null-terminated or fixed-size UTF-8 byte buffer `buf` into a `String`.
 pub(crate) fn c_buf_to_string(buf: &[u8]) -> String {
     let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     String::from_utf8_lossy(&buf[..len]).to_string()
@@ -66,29 +70,49 @@ impl From<crate::buffer::DartResolveRequest> for RustDartResolveRequest {
 #[derive(Debug, Clone)]
 pub enum RustResolvedSource {
     /// Resolved local filesystem path (e.g. desktop `flutter_assets` disk file).
-    Path { path: String },
+    Path {
+        /// Local filesystem path to the audio asset.
+        path: String,
+    },
     /// Resolved HTTP(S) URL (e.g. Web debug probed asset URL).
-    Url { url: String },
+    Url {
+        /// Resolved HTTP or HTTPS URL.
+        url: String,
+    },
     /// Resolved detached POSIX file descriptor (`fd` ownership transfers to Rust).
     Fd {
+        /// Detached POSIX file descriptor whose ownership transfers to Rust.
         fd: i32,
+        /// Starting byte offset within the file descriptor.
         offset: u64,
+        /// Optional byte length of the audio slice.
         length: Option<u64>,
+        /// Optional format or file extension hint (e.g. `"mp3"`).
         hint_ext: Option<String>,
     },
     /// Resolved full raw byte payload.
     Bytes {
+        /// Raw encoded audio bytes.
         data: Vec<u8>,
+        /// Optional format or file extension hint (e.g. `"flac"`).
         hint_ext: Option<String>,
     },
     /// Resolved live `CustomByteProvider` stream registered under `stream_id`.
     CustomStream {
+        /// Identifier of the registered custom byte stream.
         stream_id: u32,
+        /// Total byte length of the stream when known.
         total_bytes: Option<u64>,
+        /// Optional format or file extension hint (e.g. `"ogg"`).
         hint_ext: Option<String>,
     },
     /// Resolution failure carrying numeric `MapResult` code and descriptive message.
-    Error { code: i32, message: String },
+    Error {
+        /// Numeric error code describing the failure reason.
+        code: i32,
+        /// Human-readable error message.
+        message: String,
+    },
 }
 
 /// Hardware or virtual audio endpoint detected by the operating system.
@@ -435,39 +459,67 @@ pub struct RustAudioInfo {
 /// Type of embedded picture according to ID3v2 APIC / FLAC Picture standards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustPictureType {
+    /// Uncategorized or other picture type.
     #[default]
     Other,
+    /// 32x32 pixels file icon (PNG only).
     Icon,
+    /// Other file icon.
     OtherIcon,
+    /// Front album cover art.
     CoverFront,
+    /// Back album cover art.
     CoverBack,
+    /// Leaflet or liner notes page.
     Leaflet,
+    /// Physical media label (e.g. CD/vinyl label side).
     Media,
+    /// Lead artist, lead performer, or soloist.
     LeadArtist,
+    /// Performing artist or group.
     Artist,
+    /// Orchestra or ensemble conductor.
     Conductor,
+    /// Band or orchestra picture.
     Band,
+    /// Musical composer.
     Composer,
+    /// Lyricist or text writer.
     Lyricist,
+    /// Recording studio or location.
     RecordingLocation,
+    /// Photo taken during recording sessions.
     DuringRecording,
+    /// Photo taken during live performance.
     DuringPerformance,
+    /// Video or movie screen capture.
     ScreenCapture,
+    /// Bright colored fish (ID3v2 APIC standard type 0x11).
     BrightFish,
+    /// Illustration or artwork.
     Illustration,
+    /// Band or artist logotype.
     BandLogo,
+    /// Publisher or studio logotype.
     PublisherLogo,
 }
 
 /// MIME type of an embedded picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustMimeType {
+    /// PNG image (`image/png`).
     Png,
+    /// JPEG image (`image/jpeg`).
     Jpeg,
+    /// TIFF image (`image/tiff`).
     Tiff,
+    /// BMP bitmap image (`image/bmp`).
     Bmp,
+    /// GIF image (`image/gif`).
     Gif,
+    /// WebP image (`image/webp`).
     Webp,
+    /// Unrecognized or unspecified image MIME type.
     #[default]
     Unknown,
 }
@@ -533,89 +585,151 @@ pub struct RustCustomTagField {
     pub value: String,
 }
 
-/// Extended metadata fields (63 fields matching haudiotagger::ExtendedTag).
+/// Extended metadata fields (63 fields matching `haudiotagger::ExtendedTag`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RustExtendedMetadata {
     // MusicBrainz Identifiers
+    /// MusicBrainz recording UUID.
     pub music_brainz_recording_id: Option<String>,
+    /// MusicBrainz track UUID.
     pub music_brainz_track_id: Option<String>,
+    /// MusicBrainz release UUID.
     pub music_brainz_release_id: Option<String>,
+    /// MusicBrainz release group UUID.
     pub music_brainz_release_group_id: Option<String>,
+    /// MusicBrainz artist UUID.
     pub music_brainz_artist_id: Option<String>,
+    /// MusicBrainz release artist UUID.
     pub music_brainz_release_artist_id: Option<String>,
+    /// MusicBrainz work UUID.
     pub music_brainz_work_id: Option<String>,
+    /// MusicBrainz release type (e.g. `"album"`, `"single"`).
     pub music_brainz_release_type: Option<String>,
 
     // AcoustID
+    /// AcoustID track identifier UUID.
     pub acoust_id: Option<String>,
+    /// AcoustID Chromaprint fingerprint string.
     pub acoust_id_fingerprint: Option<String>,
 
     // Standard Identifiers
+    /// International Standard Recording Code (ISRC).
     pub isrc: Option<String>,
+    /// Retail barcode (UPC/EAN).
     pub barcode: Option<String>,
+    /// Record label catalog number.
     pub catalog_number: Option<String>,
 
     // Credits & People
+    /// Musical arranger credit.
     pub arranger: Option<String>,
+    /// Orchestra or ensemble conductor credit.
     pub conductor: Option<String>,
+    /// Director credit.
     pub director: Option<String>,
+    /// Audio recording engineer credit.
     pub engineer: Option<String>,
+    /// Lyricist or songwriter credit.
     pub lyricist: Option<String>,
+    /// Mix DJ credit.
     pub mix_dj: Option<String>,
+    /// Mixing engineer credit.
     pub mix_engineer: Option<String>,
+    /// Featured or ensemble performer credit.
     pub performer: Option<String>,
+    /// Record producer credit.
     pub producer: Option<String>,
+    /// Music publisher name.
     pub publisher: Option<String>,
+    /// Record label or imprint name.
     pub label: Option<String>,
+    /// Remixer credit.
     pub remixer: Option<String>,
+    /// Writer credit.
     pub writer: Option<String>,
+    /// Musical composer credit.
     pub composer: Option<String>,
+    /// Original lyricist credit.
     pub original_lyricist: Option<String>,
 
     // Detailed Dates
+    /// Recording date string.
     pub recording_date: Option<String>,
+    /// Release date string.
     pub release_date: Option<String>,
+    /// Original release date string.
     pub original_release_date: Option<String>,
 
     // Style & Classification
+    /// Initial musical key signature (e.g. `"Am"`, `"C"`).
     pub initial_key: Option<String>,
+    /// User or library color tag.
     pub color: Option<String>,
+    /// Mood classification tag.
     pub mood: Option<String>,
 
     // URLs
+    /// Official audio file webpage URL.
     pub audio_file_url: Option<String>,
+    /// Official audio source webpage URL.
     pub audio_source_url: Option<String>,
+    /// Commercial information URL.
     pub commercial_information_url: Option<String>,
+    /// Copyright or legal information URL.
     pub copyright_url: Option<String>,
+    /// Track artist official URL.
     pub track_artist_url: Option<String>,
+    /// Internet radio station homepage URL.
     pub radio_station_url: Option<String>,
+    /// Payment or purchase URL.
     pub payment_url: Option<String>,
+    /// Publisher official URL.
     pub publisher_url: Option<String>,
 
     // Legal & Copyright
+    /// Copyright notice text.
     pub copyright_message: Option<String>,
+    /// License terms or identifier string.
     pub license: Option<String>,
 
     // Podcast
+    /// Podcast episode description.
     pub podcast_description: Option<String>,
+    /// Podcast series category.
     pub podcast_series_category: Option<String>,
+    /// Podcast RSS feed or episode URL.
     pub podcast_url: Option<String>,
+    /// Podcast globally unique identifier (GUID).
     pub podcast_global_unique_id: Option<String>,
+    /// Podcast search keywords.
     pub podcast_keywords: Option<String>,
 
     // Grouping, Sorting & Encoding
+    /// Subtitle of the disc/set.
     pub set_subtitle: Option<String>,
+    /// Show or series name.
     pub show_name: Option<String>,
+    /// Content group or work grouping description.
     pub content_group: Option<String>,
+    /// Track subtitle or version refinement.
     pub track_subtitle: Option<String>,
+    /// Audio language code or name.
     pub language: Option<String>,
+    /// Script or alphabet tag.
     pub script: Option<String>,
+    /// Parental advisory rating tag.
     pub parental_advisory: Option<String>,
+    /// File owner or licensee name.
     pub file_owner: Option<String>,
+    /// Original filename prior to encoding or renaming.
     pub original_file_name: Option<String>,
+    /// Original media type (e.g. `"CD"`, `"Vinyl"`).
     pub original_media_type: Option<String>,
+    /// Person or organization that encoded the audio file.
     pub encoded_by: Option<String>,
+    /// Software tool used to encode the audio file.
     pub encoder_software: Option<String>,
+    /// Encoder settings or profile string.
     pub encoder_settings: Option<String>,
 }
 
@@ -957,42 +1071,6 @@ impl From<RustSpatialEmitter> for crate::dsp::spatial::SpatialEmitter {
     }
 }
 
-/// Policy governing which active voice to terminate when polyphony limits are reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RustVoiceStealingPolicy {
-    /// Steal voice with the lowest numerical priority level.
-    #[default]
-    LowestPriority,
-    /// Steal voice that has been playing the longest.
-    Oldest,
-    /// Steal voice with the lowest computed audible amplitude.
-    Quietest,
-    /// Steal voice located farthest from the 3D listener.
-    Farthest,
-}
-
-impl From<RustVoiceStealingPolicy> for crate::core::voice_pool::VoiceStealingPolicy {
-    fn from(p: RustVoiceStealingPolicy) -> Self {
-        match p {
-            RustVoiceStealingPolicy::LowestPriority => Self::LowestPriority,
-            RustVoiceStealingPolicy::Oldest => Self::Oldest,
-            RustVoiceStealingPolicy::Quietest => Self::Quietest,
-            RustVoiceStealingPolicy::Farthest => Self::Farthest,
-        }
-    }
-}
-
-impl From<crate::core::voice_pool::VoiceStealingPolicy> for RustVoiceStealingPolicy {
-    fn from(p: crate::core::voice_pool::VoiceStealingPolicy) -> Self {
-        match p {
-            crate::core::voice_pool::VoiceStealingPolicy::LowestPriority => Self::LowestPriority,
-            crate::core::voice_pool::VoiceStealingPolicy::Oldest => Self::Oldest,
-            crate::core::voice_pool::VoiceStealingPolicy::Quietest => Self::Quietest,
-            crate::core::voice_pool::VoiceStealingPolicy::Farthest => Self::Farthest,
-        }
-    }
-}
-
 /// Format and sample bit depth for captured audio recordings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustWavFormat {
@@ -1049,19 +1127,6 @@ impl Default for RustDuckingConfig {
             release_ms: 400.0,
         }
     }
-}
-
-/// Cue channel preview configuration for DJ workflows.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct RustCueConfig {
-    /// Whether cue monitoring is active.
-    pub enabled: bool,
-    /// Target audio output device ID for the cue feed.
-    pub device_id: Option<String>,
-    /// Cue monitoring volume level.
-    pub volume: f32,
-    /// Cue source selection (0: Deck A, 1: Deck B, 2: Master).
-    pub mode: i32,
 }
 
 /// Initialization configuration for the audio player and backend engine.

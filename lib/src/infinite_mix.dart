@@ -7,6 +7,9 @@ class InfiniteMixConfig {
   final int remainingTracksThreshold;
 
   /// Creates an immutable [InfiniteMixConfig].
+  ///
+  /// Controls whether auto-refill is [enabled] and sets the non-negative
+  /// [remainingTracksThreshold] (defaults to `2`).
   const InfiniteMixConfig({
     this.enabled = false,
     this.remainingTracksThreshold = 2,
@@ -21,7 +24,9 @@ class InfiniteMixConfig {
     remainingTracksThreshold: 2,
   );
 
-  /// Creates a copy of this [InfiniteMixConfig] with modified parameters.
+  /// Returns a copy of this [InfiniteMixConfig] with modified parameters.
+  ///
+  /// Overrides [enabled] and [remainingTracksThreshold] when non-`null`.
   InfiniteMixConfig copyWith({
     bool? enabled,
     int? remainingTracksThreshold,
@@ -33,6 +38,7 @@ class InfiniteMixConfig {
     );
   }
 
+  /// Returns `true` if [other] is an [InfiniteMixConfig] with identical settings.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -41,9 +47,11 @@ class InfiniteMixConfig {
           enabled == other.enabled &&
           remainingTracksThreshold == other.remainingTracksThreshold;
 
+  /// Returns a hash code derived from [enabled] and [remainingTracksThreshold].
   @override
   int get hashCode => Object.hash(enabled, remainingTracksThreshold);
 
+  /// Returns a human-readable string representation of this [InfiniteMixConfig].
   @override
   String toString() =>
       'InfiniteMixConfig(enabled: $enabled, remainingTracksThreshold: $remainingTracksThreshold)';

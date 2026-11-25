@@ -10,7 +10,7 @@ part 'types.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `c_buf_to_string`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioOutputSource`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `hash`
 
 /// Configuration parameters for offline acoustic and metadata analysis.
 class RustAnalysisConfig {
@@ -943,45 +943,6 @@ class RustCrossfeedConfig {
           feedDb == other.feedDb;
 }
 
-/// Cue channel preview configuration for DJ workflows.
-class RustCueConfig {
-  /// Whether cue monitoring is active.
-  final bool enabled;
-
-  /// Target audio output device ID for the cue feed.
-  final String? deviceId;
-
-  /// Cue monitoring volume level.
-  final double volume;
-
-  /// Cue source selection (0: Deck A, 1: Deck B, 2: Master).
-  final int mode;
-
-  const RustCueConfig({
-    required this.enabled,
-    this.deviceId,
-    required this.volume,
-    required this.mode,
-  });
-
-  static Future<RustCueConfig> default_() =>
-      RustLib.instance.api.crateApiTypesRustCueConfigDefault();
-
-  @override
-  int get hashCode =>
-      enabled.hashCode ^ deviceId.hashCode ^ volume.hashCode ^ mode.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RustCueConfig &&
-          runtimeType == other.runtimeType &&
-          enabled == other.enabled &&
-          deviceId == other.deviceId &&
-          volume == other.volume &&
-          mode == other.mode;
-}
-
 /// Key-value pair representing a custom/user-defined metadata tag field.
 class RustCustomTagField {
   /// Tag field key/identifier.
@@ -1257,69 +1218,192 @@ class RustEqualizerParams {
           enabled == other.enabled;
 }
 
-/// Extended metadata fields (63 fields matching haudiotagger::ExtendedTag).
+/// Extended metadata fields (63 fields matching `haudiotagger::ExtendedTag`).
 class RustExtendedMetadata {
+  /// MusicBrainz recording UUID.
   final String? musicBrainzRecordingId;
+
+  /// MusicBrainz track UUID.
   final String? musicBrainzTrackId;
+
+  /// MusicBrainz release UUID.
   final String? musicBrainzReleaseId;
+
+  /// MusicBrainz release group UUID.
   final String? musicBrainzReleaseGroupId;
+
+  /// MusicBrainz artist UUID.
   final String? musicBrainzArtistId;
+
+  /// MusicBrainz release artist UUID.
   final String? musicBrainzReleaseArtistId;
+
+  /// MusicBrainz work UUID.
   final String? musicBrainzWorkId;
+
+  /// MusicBrainz release type (e.g. `"album"`, `"single"`).
   final String? musicBrainzReleaseType;
+
+  /// AcoustID track identifier UUID.
   final String? acoustId;
+
+  /// AcoustID Chromaprint fingerprint string.
   final String? acoustIdFingerprint;
+
+  /// International Standard Recording Code (ISRC).
   final String? isrc;
+
+  /// Retail barcode (UPC/EAN).
   final String? barcode;
+
+  /// Record label catalog number.
   final String? catalogNumber;
+
+  /// Musical arranger credit.
   final String? arranger;
+
+  /// Orchestra or ensemble conductor credit.
   final String? conductor;
+
+  /// Director credit.
   final String? director;
+
+  /// Audio recording engineer credit.
   final String? engineer;
+
+  /// Lyricist or songwriter credit.
   final String? lyricist;
+
+  /// Mix DJ credit.
   final String? mixDj;
+
+  /// Mixing engineer credit.
   final String? mixEngineer;
+
+  /// Featured or ensemble performer credit.
   final String? performer;
+
+  /// Record producer credit.
   final String? producer;
+
+  /// Music publisher name.
   final String? publisher;
+
+  /// Record label or imprint name.
   final String? label;
+
+  /// Remixer credit.
   final String? remixer;
+
+  /// Writer credit.
   final String? writer;
+
+  /// Musical composer credit.
   final String? composer;
+
+  /// Original lyricist credit.
   final String? originalLyricist;
+
+  /// Recording date string.
   final String? recordingDate;
+
+  /// Release date string.
   final String? releaseDate;
+
+  /// Original release date string.
   final String? originalReleaseDate;
+
+  /// Initial musical key signature (e.g. `"Am"`, `"C"`).
   final String? initialKey;
+
+  /// User or library color tag.
   final String? color;
+
+  /// Mood classification tag.
   final String? mood;
+
+  /// Official audio file webpage URL.
   final String? audioFileUrl;
+
+  /// Official audio source webpage URL.
   final String? audioSourceUrl;
+
+  /// Commercial information URL.
   final String? commercialInformationUrl;
+
+  /// Copyright or legal information URL.
   final String? copyrightUrl;
+
+  /// Track artist official URL.
   final String? trackArtistUrl;
+
+  /// Internet radio station homepage URL.
   final String? radioStationUrl;
+
+  /// Payment or purchase URL.
   final String? paymentUrl;
+
+  /// Publisher official URL.
   final String? publisherUrl;
+
+  /// Copyright notice text.
   final String? copyrightMessage;
+
+  /// License terms or identifier string.
   final String? license;
+
+  /// Podcast episode description.
   final String? podcastDescription;
+
+  /// Podcast series category.
   final String? podcastSeriesCategory;
+
+  /// Podcast RSS feed or episode URL.
   final String? podcastUrl;
+
+  /// Podcast globally unique identifier (GUID).
   final String? podcastGlobalUniqueId;
+
+  /// Podcast search keywords.
   final String? podcastKeywords;
+
+  /// Subtitle of the disc/set.
   final String? setSubtitle;
+
+  /// Show or series name.
   final String? showName;
+
+  /// Content group or work grouping description.
   final String? contentGroup;
+
+  /// Track subtitle or version refinement.
   final String? trackSubtitle;
+
+  /// Audio language code or name.
   final String? language;
+
+  /// Script or alphabet tag.
   final String? script;
+
+  /// Parental advisory rating tag.
   final String? parentalAdvisory;
+
+  /// File owner or licensee name.
   final String? fileOwner;
+
+  /// Original filename prior to encoding or renaming.
   final String? originalFileName;
+
+  /// Original media type (e.g. `"CD"`, `"Vinyl"`).
   final String? originalMediaType;
+
+  /// Person or organization that encoded the audio file.
   final String? encodedBy;
+
+  /// Software tool used to encode the audio file.
   final String? encoderSoftware;
+
+  /// Encoder settings or profile string.
   final String? encoderSettings;
 
   const RustExtendedMetadata({
@@ -1649,12 +1733,25 @@ class RustInfiniteMixConfig {
 
 /// MIME type of an embedded picture.
 enum RustMimeType {
+  /// PNG image (`image/png`).
   png,
+
+  /// JPEG image (`image/jpeg`).
   jpeg,
+
+  /// TIFF image (`image/tiff`).
   tiff,
+
+  /// BMP bitmap image (`image/bmp`).
   bmp,
+
+  /// GIF image (`image/gif`).
   gif,
+
+  /// WebP image (`image/webp`).
   webp,
+
+  /// Unrecognized or unspecified image MIME type.
   unknown,
   ;
 
@@ -1664,26 +1761,67 @@ enum RustMimeType {
 
 /// Type of embedded picture according to ID3v2 APIC / FLAC Picture standards.
 enum RustPictureType {
+  /// Uncategorized or other picture type.
   other,
+
+  /// 32x32 pixels file icon (PNG only).
   icon,
+
+  /// Other file icon.
   otherIcon,
+
+  /// Front album cover art.
   coverFront,
+
+  /// Back album cover art.
   coverBack,
+
+  /// Leaflet or liner notes page.
   leaflet,
+
+  /// Physical media label (e.g. CD/vinyl label side).
   media,
+
+  /// Lead artist, lead performer, or soloist.
   leadArtist,
+
+  /// Performing artist or group.
   artist,
+
+  /// Orchestra or ensemble conductor.
   conductor,
+
+  /// Band or orchestra picture.
   band,
+
+  /// Musical composer.
   composer,
+
+  /// Lyricist or text writer.
   lyricist,
+
+  /// Recording studio or location.
   recordingLocation,
+
+  /// Photo taken during recording sessions.
   duringRecording,
+
+  /// Photo taken during live performance.
   duringPerformance,
+
+  /// Video or movie screen capture.
   screenCapture,
+
+  /// Bright colored fish (ID3v2 APIC standard type 0x11).
   brightFish,
+
+  /// Illustration or artwork.
   illustration,
+
+  /// Band or artist logotype.
   bandLogo,
+
+  /// Publisher or studio logotype.
   publisherLogo,
   ;
 
@@ -2164,38 +2302,58 @@ sealed class RustResolvedSource with _$RustResolvedSource {
 
   /// Resolved local filesystem path (e.g. desktop `flutter_assets` disk file).
   const factory RustResolvedSource.path({
+    /// Local filesystem path to the audio asset.
     required String path,
   }) = RustResolvedSource_Path;
 
   /// Resolved HTTP(S) URL (e.g. Web debug probed asset URL).
   const factory RustResolvedSource.url({
+    /// Resolved HTTP or HTTPS URL.
     required String url,
   }) = RustResolvedSource_Url;
 
   /// Resolved detached POSIX file descriptor (`fd` ownership transfers to Rust).
   const factory RustResolvedSource.fd({
+    /// Detached POSIX file descriptor whose ownership transfers to Rust.
     required int fd,
+
+    /// Starting byte offset within the file descriptor.
     required BigInt offset,
+
+    /// Optional byte length of the audio slice.
     BigInt? length,
+
+    /// Optional format or file extension hint (e.g. `"mp3"`).
     String? hintExt,
   }) = RustResolvedSource_Fd;
 
   /// Resolved full raw byte payload.
   const factory RustResolvedSource.bytes({
+    /// Raw encoded audio bytes.
     required Uint8List data,
+
+    /// Optional format or file extension hint (e.g. `"flac"`).
     String? hintExt,
   }) = RustResolvedSource_Bytes;
 
   /// Resolved live `CustomByteProvider` stream registered under `stream_id`.
   const factory RustResolvedSource.customStream({
+    /// Identifier of the registered custom byte stream.
     required int streamId,
+
+    /// Total byte length of the stream when known.
     BigInt? totalBytes,
+
+    /// Optional format or file extension hint (e.g. `"ogg"`).
     String? hintExt,
   }) = RustResolvedSource_CustomStream;
 
   /// Resolution failure carrying numeric `MapResult` code and descriptive message.
   const factory RustResolvedSource.error({
+    /// Numeric error code describing the failure reason.
     required int code,
+
+    /// Human-readable error message.
     required String message,
   }) = RustResolvedSource_Error;
 }
@@ -2510,25 +2668,6 @@ class RustVisualizerData {
           peak == other.peak &&
           left == other.left &&
           right == other.right;
-}
-
-/// Policy governing which active voice to terminate when polyphony limits are reached.
-enum RustVoiceStealingPolicy {
-  /// Steal voice with the lowest numerical priority level.
-  lowestPriority,
-
-  /// Steal voice that has been playing the longest.
-  oldest,
-
-  /// Steal voice with the lowest computed audible amplitude.
-  quietest,
-
-  /// Steal voice located farthest from the 3D listener.
-  farthest,
-  ;
-
-  static Future<RustVoiceStealingPolicy> default_() =>
-      RustLib.instance.api.crateApiTypesRustVoiceStealingPolicyDefault();
 }
 
 /// Format and sample bit depth for captured audio recordings.

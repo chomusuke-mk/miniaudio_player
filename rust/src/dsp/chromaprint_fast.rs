@@ -11,27 +11,43 @@ pub const TARGET_SAMPLE_RATE: u32 = 11025;
 /// Standard AcoustID / `fpcalc` analysis window in seconds.
 pub const CHROMAPRINT_MAX_DURATION_SECS: u64 = 120;
 
+/// Minimum supported input sample rate (Hz) accepted by [`CachedChromaprintSession`].
 const MIN_SAMPLE_RATE: u32 = 1000;
+/// Maximum mono `i16` staging buffer size (frames) per resampling batch.
 const MAX_BUFFER_SIZE: usize = 32768;
+/// Base number of FIR taps used for polyphase resampling prior to cutoff scaling.
 const RESAMPLE_FILTER_LENGTH: i32 = 16;
+/// Log2 phase resolution (`256` sub-sample phases) for the polyphase filter bank.
 const RESAMPLE_PHASE_SHIFT: i32 = 8;
+/// Anti-aliasing lowpass cutoff ratio relative to Nyquist.
 const RESAMPLE_CUTOFF: f64 = 0.8;
+/// Fixed-point Q15 coefficient shift applied to `i16` polyphase filter taps.
 const FILTER_SHIFT: i32 = 15;
+/// Kaiser window beta parameter matching `chromaprint-next`'s resampler configuration.
 const WINDOW_TYPE: i32 = 9;
+/// Maximum number of `Fingerprinter` workspaces retained in the global pool.
 const MAX_POOLED_FINGERPRINTERS: usize = 8;
 
 /// Precomputed immutable polyphase FIR filter bank shared across tracks of matching `in_rate`.
 struct PolyphaseBank {
+    /// Interleaved Q15 FIR tap weights across `2^phase_shift + 1` phases.
     filter_bank: Vec<i16>,
+    /// Number of taps per polyphase row.
     filter_length: usize,
+    /// Fixed-point phase step per output sample (`in_rate * phase_count`).
     ideal_dst_incr: i32,
+    /// Rational denominator increment (`TARGET_SAMPLE_RATE`).
     src_incr: i32,
+    /// Initial negative phase index centering the FIR kernel at sample 0.
     initial_index: i32,
+    /// Bit shift separating integer sample index from fractional phase bits.
     phase_shift: i32,
+    /// Bitmask extracting fractional phase bits (`(1 << phase_shift) - 1`).
     phase_mask: i32,
 }
 
 impl PolyphaseBank {
+    /// Builds a Kaiser-windowed sinc polyphase bank converting from `in_rate` Hz to [`TARGET_SAMPLE_RATE`].
     fn build(in_rate: u32) -> Self {
         let out_rate = TARGET_SAMPLE_RATE as i32;
         let in_rate_i32 = in_rate as i32;
@@ -69,6 +85,8 @@ impl PolyphaseBank {
     }
 }
 
+/// Computes the zeroth-order modified Bessel function of the first kind `I0(x)`
+/// for Kaiser window shaping.
 fn bessel(x: f64) -> f64 {
     let mut v: f64 = 1.0;
     let mut last_v: f64 = 0.0;
@@ -84,6 +102,8 @@ fn bessel(x: f64) -> f64 {
     v
 }
 
+/// Populates `filter` with Q-scaled Kaiser-windowed sinc polyphase coefficients for
+/// `tap_count` taps, `phase_count` phases, cutoff `factor`, `scale`, and `window_type`.
 fn build_filter(
     filter: &mut [i16],
     factor: f64,
@@ -115,7 +135,9 @@ fn build_filter(
     }
 }
 
+/// Returns a cached shared [`PolyphaseBank`] for `in_rate`, building and caching it on first access.
 fn shared_polyphase_bank(in_rate: u32) -> Arc<PolyphaseBank> {
+    /// Global cache mapping input sample rates to precomputed polyphase filter banks.
     static CACHE: OnceLock<Mutex<HashMap<u32, Arc<PolyphaseBank>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(guard) = cache.lock() {
@@ -123,6 +145,12 @@ fn shared_polyphase_bank(in_rate: u32) -> Arc<PolyphaseBank> {
             return Arc::clone(found);
         }
     }
+    crate::map_log!(
+        4,
+        "[CHROMAPRINT] Building cached polyphase filter bank for {} Hz -> {} Hz",
+        in_rate,
+        TARGET_SAMPLE_RATE
+    );
     let bank = Arc::new(PolyphaseBank::build(in_rate));
     if let Ok(mut guard) = cache.lock() {
         let entry = guard.entry(in_rate).or_insert_with(|| Arc::clone(&bank));
@@ -132,6 +160,10 @@ fn shared_polyphase_bank(in_rate: u32) -> Arc<PolyphaseBank> {
     }
 }
 
+/// Computes the signed 32-bit dot product of `a` and `b` using SSE2 `pmaddwd` intrinsics.
+///
+/// # Safety
+/// Caller must ensure SSE2 is supported on the current CPU (architecturally guaranteed on `x86_64`).
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 #[inline]
@@ -176,6 +208,7 @@ unsafe fn dot_product_i16_sse2(a: &[i16], b: &[i16]) -> i32 {
     result
 }
 
+/// Computes the signed 32-bit dot product of `i16` slices `a` and `b`.
 #[inline]
 fn dot_product_i16(a: &[i16], b: &[i16]) -> i32 {
     #[cfg(target_arch = "x86_64")]
@@ -189,14 +222,20 @@ fn dot_product_i16(a: &[i16], b: &[i16]) -> i32 {
     }
 }
 
+/// Stateful polyphase sinc resampler backed by a shared [`PolyphaseBank`].
 struct CachedResampler {
+    /// Shared immutable filter bank for the input sample rate.
     bank: Arc<PolyphaseBank>,
+    /// Output phase increment per output sample.
     dst_incr: i32,
+    /// Current combined integer-sample and fractional-phase index.
     index: i32,
+    /// Remainder accumulator modulo `bank.src_incr`.
     frac: i32,
 }
 
 impl CachedResampler {
+    /// Creates a new [`CachedResampler`] converting from `in_rate` Hz to [`TARGET_SAMPLE_RATE`].
     fn new(in_rate: u32) -> Self {
         let bank = shared_polyphase_bank(in_rate);
         Self {
@@ -207,6 +246,8 @@ impl CachedResampler {
         }
     }
 
+    /// Resamples mono `i16` samples from `src` into `dst` (up to `dst_size` samples),
+    /// reporting input samples consumed via `consumed` and returning output samples written.
     fn resample(
         &mut self,
         dst: &mut [i16],
@@ -284,13 +325,18 @@ impl CachedResampler {
     }
 }
 
+/// Reusable Chromaprint fingerprinting workspace pooled across tracks to eliminate allocations.
 struct PooledFpWorkspace {
+    /// Stateful Chromaprint `Fingerprinter` instance.
     fp: chromaprint::Fingerprinter,
+    /// Scratch buffer staging mono `i16` samples at the input sample rate.
     mono_buf: Vec<i16>,
+    /// Scratch buffer staging resampled mono `i16` samples at [`TARGET_SAMPLE_RATE`].
     resample_buf: Vec<i16>,
 }
 
 impl PooledFpWorkspace {
+    /// Allocates a new [`PooledFpWorkspace`] with pre-sized `MAX_BUFFER_SIZE` scratch buffers.
     fn new() -> Self {
         Self {
             fp: chromaprint::Fingerprinter::new(chromaprint::types::Algorithm::default()),
@@ -300,11 +346,14 @@ impl PooledFpWorkspace {
     }
 }
 
+/// Returns the global mutex-guarded pool of idle [`PooledFpWorkspace`] instances.
 fn fp_workspace_pool() -> &'static Mutex<Vec<PooledFpWorkspace>> {
+    /// Global pool of reusable Chromaprint fingerprinting workspaces.
     static POOL: OnceLock<Mutex<Vec<PooledFpWorkspace>>> = OnceLock::new();
     POOL.get_or_init(|| Mutex::new(Vec::with_capacity(MAX_POOLED_FINGERPRINTERS)))
 }
 
+/// Pops an idle [`PooledFpWorkspace`] from the global pool or allocates a new one if empty.
 fn acquire_fp_workspace() -> PooledFpWorkspace {
     if let Ok(mut guard) = fp_workspace_pool().lock() {
         if let Some(ws) = guard.pop() {
@@ -314,6 +363,7 @@ fn acquire_fp_workspace() -> PooledFpWorkspace {
     PooledFpWorkspace::new()
 }
 
+/// Returns `ws` to the global pool if fewer than `MAX_POOLED_FINGERPRINTERS` are cached.
 fn release_fp_workspace(ws: PooledFpWorkspace) {
     if let Ok(mut guard) = fp_workspace_pool().lock() {
         if guard.len() < MAX_POOLED_FINGERPRINTERS {
@@ -325,30 +375,47 @@ fn release_fp_workspace(ws: PooledFpWorkspace) {
 /// High-speed Chromaprint session reusing cached `11025 Hz` polyphase filter banks
 /// and pooled `Fingerprinter` instances with optional duration capping (default 120 s).
 pub struct CachedChromaprintSession {
+    /// Borrowed fingerprinting workspace returned to the pool on finish or drop.
     workspace: Option<PooledFpWorkspace>,
+    /// Optional polyphase resampler (`None` when input is already `TARGET_SAMPLE_RATE`).
     resampler: Option<CachedResampler>,
+    /// Number of valid mono `i16` samples currently buffered in `workspace.mono_buf`.
     mono_offset: usize,
+    /// Total input frames ingested so far toward `max_frames`.
     frames_fed: u64,
+    /// Optional frame limit corresponding to the duration cap.
     max_frames: Option<u64>,
 }
 
 impl CachedChromaprintSession {
-    /// Starts a new Chromaprint session with the AcoustID standard 120 s duration cap.
+    /// Starts a new Chromaprint session for `sample_rate` and `channels` with the AcoustID standard 120 s duration cap.
     pub fn new(sample_rate: u32, channels: usize) -> Option<Self> {
         Self::new_with_max_secs(sample_rate, channels, Some(CHROMAPRINT_MAX_DURATION_SECS))
     }
 
-    /// Starts a new Chromaprint session with an optional duration cap in seconds (`None` = full track).
+    /// Starts a new Chromaprint session for `sample_rate` and `channels` with an optional
+    /// `max_secs` duration cap (`None` = full track).
     pub fn new_with_max_secs(
         sample_rate: u32,
         channels: usize,
         max_secs: Option<u64>,
     ) -> Option<Self> {
         if sample_rate <= MIN_SAMPLE_RATE || channels == 0 {
+            crate::map_log!(
+                2,
+                "[CHROMAPRINT] Rejecting session: unsupported sample_rate={} or channels={}",
+                sample_rate,
+                channels
+            );
             return None;
         }
         let mut ws = acquire_fp_workspace();
         if ws.fp.start(TARGET_SAMPLE_RATE, 1).is_err() {
+            crate::map_log!(
+                1,
+                "[CHROMAPRINT] Failed to start Fingerprinter at {} Hz",
+                TARGET_SAMPLE_RATE
+            );
             release_fp_workspace(ws);
             return None;
         }
@@ -358,6 +425,13 @@ impl CachedChromaprintSession {
             None
         };
         let max_frames = max_secs.map(|s| (sample_rate as u64).saturating_mul(s));
+        crate::map_log!(
+            4,
+            "[CHROMAPRINT] Session started (sr={}, ch={}, max_secs={:?})",
+            sample_rate,
+            channels,
+            max_secs
+        );
         Some(Self {
             workspace: Some(ws),
             resampler,
@@ -374,11 +448,13 @@ impl CachedChromaprintSession {
             .is_some_and(|limit| self.frames_fed >= limit)
     }
 
+    /// Converts a normalized `f32` `sample` in `[-1.0, 1.0]` to signed `i16`.
     #[inline]
     fn f32_to_i16(sample: f32) -> i16 {
         (sample.clamp(-1.0, 1.0) * 32767.0) as i16
     }
 
+    /// Resamples buffered mono samples (if needed) and feeds them into the `Fingerprinter`.
     #[inline]
     fn resample_and_feed_block(&mut self) {
         let Some(ref mut ws) = self.workspace else {
@@ -407,7 +483,7 @@ impl CachedChromaprintSession {
         }
     }
 
-    /// Feeds interleaved float PCM frames (`channels` per frame) until capped.
+    /// Feeds interleaved float `pcm` frames (`channels` per frame) until capped.
     pub fn push_slice(&mut self, pcm: &[f32], channels: usize) {
         if channels == 0 || pcm.is_empty() || self.is_capped() {
             return;
@@ -474,8 +550,7 @@ impl CachedChromaprintSession {
         if self.mono_offset > 0 {
             self.resample_and_feed_block();
         }
-        let ws = self.workspace.take()?;
-        let mut ws = ws;
+        let mut ws = self.workspace.take()?;
         let result = if ws.fp.finish().is_ok() {
             let fingerprint = ws.fp.encode();
             let raw = ws.fp.fingerprint().to_vec();
@@ -486,12 +561,24 @@ impl CachedChromaprintSession {
                 chromaprint::types::Algorithm::Test4 => 3,
                 chromaprint::types::Algorithm::Test5 => 4,
             };
+            crate::map_log!(
+                4,
+                "[CHROMAPRINT] Finalized fingerprint (frames_fed={}, raw_len={}, algo={})",
+                self.frames_fed,
+                raw.len(),
+                algorithm
+            );
             Some(RustChromaprintResult {
                 fingerprint,
                 raw,
                 algorithm,
             })
         } else {
+            crate::map_log!(
+                2,
+                "[CHROMAPRINT] Fingerprinter::finish failed (frames_fed={})",
+                self.frames_fed
+            );
             None
         };
         release_fp_workspace(ws);
@@ -500,6 +587,7 @@ impl CachedChromaprintSession {
 }
 
 impl Drop for CachedChromaprintSession {
+    /// Returns the borrowed [`PooledFpWorkspace`] to the global pool if not already consumed by `finish`.
     fn drop(&mut self) {
         if let Some(ws) = self.workspace.take() {
             release_fp_workspace(ws);

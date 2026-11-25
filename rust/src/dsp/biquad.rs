@@ -22,15 +22,17 @@ pub struct BiquadDf2t {
 }
 
 impl Default for BiquadDf2t {
+    /// Returns an identity pass-through [`BiquadDf2t`] filter.
     fn default() -> Self {
         Self::identity()
     }
 }
 
 impl BiquadDf2t {
+    /// Magnitude threshold below which state and output values are flushed to zero to avoid denormals.
     const DENORMAL_THRESHOLD: f32 = 1e-20;
 
-    /// Creates a new biquad filter with specified coefficients and zeroed state registers.
+    /// Creates a new biquad filter with coefficients `b0`, `b1`, `b2`, `a1`, and `a2`, and zeroed state registers.
     pub const fn new(b0: f32, b1: f32, b2: f32, a1: f32, a2: f32) -> Self {
         Self {
             b0,
@@ -55,7 +57,7 @@ impl BiquadDf2t {
         self.s2 = 0.0;
     }
 
-    /// Updates filter coefficients while preserving internal state registers `s1` and `s2`.
+    /// Updates filter coefficients from `prototype` while preserving internal state registers `s1` and `s2`.
     #[inline]
     pub fn update_coefficients_from(&mut self, prototype: &Self) {
         self.b0 = prototype.b0;
@@ -65,7 +67,7 @@ impl BiquadDf2t {
         self.a2 = prototype.a2;
     }
 
-    /// Processes a single input sample through the DF2T biquad, clamping denormals.
+    /// Processes a single input sample `x` through the DF2T biquad, clamping denormals.
     #[inline(always)]
     pub fn process(&mut self, x: f32) -> f32 {
         let mut y = self.b0 * x + self.s1;
@@ -85,6 +87,8 @@ impl BiquadDf2t {
         y
     }
 
+    /// Normalizes raw `f64` biquad coefficients (`b0`, `b1`, `b2`, `a0`, `a1`, `a2`) by `a0`,
+    /// returning an identity filter if `a0` is near zero.
     #[inline]
     fn from_normalized_f64(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Self {
         if a0.abs() < 1e-15 {
@@ -99,12 +103,15 @@ impl BiquadDf2t {
         )
     }
 
+    /// Validates that cutoff frequency `f0` lies strictly within `(0, fs / 2)` for sample rate `fs`
+    /// and that filter shape parameter `param` (Q or shelf slope) is positive.
     #[inline]
     fn is_valid_frequency(f0: f64, fs: f64, param: f64) -> bool {
         fs > 0.0 && f0 > 0.0 && f0 < fs * 0.5 && param > 0.0
     }
 
-    /// Designs a low-shelf biquad filter according to the RBJ Audio EQ Cookbook.
+    /// Designs a low-shelf biquad filter at corner frequency `f0`, sample rate `fs`,
+    /// boost/cut `gain_db`, and `shelf_slope` according to the RBJ Audio EQ Cookbook.
     pub fn low_shelf(f0: f64, fs: f64, gain_db: f64, shelf_slope: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, shelf_slope) || gain_db.abs() < 1e-6 {
             return Self::identity();
@@ -130,7 +137,8 @@ impl BiquadDf2t {
         Self::from_normalized_f64(b0, b1, b2, a0, a1, a2)
     }
 
-    /// Designs a parametric peaking band biquad filter according to the RBJ Audio EQ Cookbook.
+    /// Designs a parametric peaking band biquad filter at center frequency `f0`, sample rate `fs`,
+    /// boost/cut `gain_db`, and quality factor `q` according to the RBJ Audio EQ Cookbook.
     pub fn peaking(f0: f64, fs: f64, gain_db: f64, q: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, q) || gain_db.abs() < 1e-6 {
             return Self::identity();
@@ -152,7 +160,8 @@ impl BiquadDf2t {
         Self::from_normalized_f64(b0, b1, b2, a0, a1, a2)
     }
 
-    /// Designs a high-shelf biquad filter according to the RBJ Audio EQ Cookbook.
+    /// Designs a high-shelf biquad filter at corner frequency `f0`, sample rate `fs`,
+    /// boost/cut `gain_db`, and `shelf_slope` according to the RBJ Audio EQ Cookbook.
     pub fn high_shelf(f0: f64, fs: f64, gain_db: f64, shelf_slope: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, shelf_slope) || gain_db.abs() < 1e-6 {
             return Self::identity();
@@ -178,7 +187,8 @@ impl BiquadDf2t {
         Self::from_normalized_f64(b0, b1, b2, a0, a1, a2)
     }
 
-    /// Designs a bandpass filter with constant skirt gain (peak gain = Q).
+    /// Designs a bandpass filter with constant skirt gain (peak gain = `q`) at center frequency `f0`
+    /// and sample rate `fs`.
     pub fn bandpass(f0: f64, fs: f64, q: f64) -> Self {
         if !Self::is_valid_frequency(f0, fs, q) {
             return Self::identity();

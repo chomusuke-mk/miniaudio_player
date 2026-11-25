@@ -6,12 +6,16 @@
 
 use std::f64::consts::PI;
 
-use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult, RustChromaprintResult};
+use crate::api::types::{RustAnalysisConfig, RustAudioAnalysisResult};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::api::types::RustChromaprintResult;
 use crate::buffer::ResolvedCoreSource;
 use crate::core::dual_source::{AudioSourceCore, DualSource, StreamingDeck};
 
 use super::biquad::BiquadDf2t;
-use super::chromaprint_fast::{CachedChromaprintSession, CHROMAPRINT_MAX_DURATION_SECS};
+use super::chromaprint_fast::CachedChromaprintSession;
+#[cfg(not(target_arch = "wasm32"))]
+use super::chromaprint_fast::CHROMAPRINT_MAX_DURATION_SECS;
 
 /// Computed ReplayGain loudness metrics.
 #[repr(C)]
@@ -27,18 +31,26 @@ pub struct ReplayGainData {
 
 /// ITU-R BS.1770-4 K-Weighting Filter Pair and Dual-Gated Loudness Integrator.
 pub struct Bs1770LoudnessAnalyzer {
+    /// Stage 1 K-weighting high-shelf filter for the left channel.
     hs_l: BiquadDf2t,
+    /// Stage 2 K-weighting RLB high-pass filter for the left channel.
     hp_l: BiquadDf2t,
+    /// Stage 1 K-weighting high-shelf filter for the right channel.
     hs_r: BiquadDf2t,
+    /// Stage 2 K-weighting RLB high-pass filter for the right channel.
     hp_r: BiquadDf2t,
+    /// Number of frames constituting a 100 ms integration sub-interval.
     samples_per_100ms: usize,
+    /// Frames accumulated so far in the active 100 ms sub-interval.
     current_interval_samples: usize,
+    /// Running squared K-weighted energy sums `[left, right]` for the active 100 ms sub-interval.
     current_interval_sq: [f64; 2],
+    /// Completed 100 ms mean-square energy values used for 400 ms dual-gated LUFS integration.
     interval_energies: Vec<f32>,
 }
 
 impl Bs1770LoudnessAnalyzer {
-    /// Constructs a new `Bs1770LoudnessAnalyzer` tuned for the specified sample rate.
+    /// Constructs a new `Bs1770LoudnessAnalyzer` tuned for `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
         let (hs, hp) = Self::design_k_weighting_filters(sample_rate);
         let samples_per_100ms = (0.1 * (sample_rate as f64) + 0.5).max(1.0) as usize;
@@ -54,6 +66,7 @@ impl Bs1770LoudnessAnalyzer {
         }
     }
 
+    /// Designs the two-stage ITU-R BS.1770-4 K-weighting cascade (`high_shelf`, `high_pass`) for `sample_rate`.
     fn design_k_weighting_filters(sample_rate: u32) -> (BiquadDf2t, BiquadDf2t) {
         if sample_rate == 0 {
             return (BiquadDf2t::identity(), BiquadDf2t::identity());
@@ -94,7 +107,7 @@ impl Bs1770LoudnessAnalyzer {
         (hs, hp)
     }
 
-    /// Feeds a stereo frame through K-weighting filters and accumulates 100 ms energy intervals.
+    /// Feeds a stereo frame (`s_l`, `s_r`) through K-weighting filters and accumulates 100 ms energy intervals.
     #[inline]
     pub fn push_stereo_frame(&mut self, s_l: f32, s_r: f32) {
         let y_l = self.hp_l.process(self.hs_l.process(s_l));
@@ -113,8 +126,10 @@ impl Bs1770LoudnessAnalyzer {
         }
     }
 
+    /// Flushes subnormal state registers below `1e-20` across all four K-weighting biquads at 100 ms boundaries.
     #[inline]
     fn flush_denormals_100ms(&mut self) {
+        /// Magnitude threshold below which K-weighting biquad states are flushed to zero.
         const THRESHOLD: f32 = 1e-20;
         for f in [&mut self.hs_l, &mut self.hp_l, &mut self.hs_r, &mut self.hp_r] {
             if f.s1.abs() < THRESHOLD {
@@ -126,6 +141,7 @@ impl Bs1770LoudnessAnalyzer {
         }
     }
 
+    /// Commits a completed 100 ms interval's mean-square energy, resets accumulators, and flushes denormals.
     #[inline]
     fn finish_interval(&mut self) {
         let energy = (self.current_interval_sq[0] + self.current_interval_sq[1])
@@ -136,7 +152,7 @@ impl Bs1770LoudnessAnalyzer {
         self.flush_denormals_100ms();
     }
 
-    /// Feeds a contiguous slice of interleaved PCM frames (`channels` per frame)
+    /// Feeds a contiguous slice of interleaved `pcm` frames (`channels` per frame)
     /// into K-weighting filters and 100 ms energy accumulators.
     pub fn push_slice(&mut self, pcm: &[f32], channels: usize) {
         if channels == 0 || pcm.is_empty() {
@@ -168,6 +184,7 @@ impl Bs1770LoudnessAnalyzer {
         }
     }
 
+    /// Processes a `mono` slice through K-weighting filters, mirroring energy onto L/R accumulators.
     fn push_mono_slice(&mut self, mono: &[f32]) {
         let hs_b0 = self.hs_l.b0;
         let hs_b1 = self.hs_l.b1;
@@ -236,6 +253,10 @@ impl Bs1770LoudnessAnalyzer {
         self.hp_r.s2 = hp_s2;
     }
 
+    /// Processes an interleaved `stereo` slice through K-weighting filters using SSE2 vector intrinsics.
+    ///
+    /// # Safety
+    /// Caller must ensure SSE2 is supported on the executing CPU (architecturally guaranteed on `x86_64`).
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse2")]
     unsafe fn push_stereo_slice_sse2(&mut self, stereo: &[f32]) {
@@ -327,11 +348,13 @@ impl Bs1770LoudnessAnalyzer {
         self.hp_r.s2 = tmp[1];
     }
 
+    /// Scalar fallback processing an interleaved `stereo` slice via [`Self::push_multichannel_slice`].
     #[cfg(not(target_arch = "x86_64"))]
     fn push_stereo_slice_scalar(&mut self, stereo: &[f32]) {
         self.push_multichannel_slice(stereo, 2);
     }
 
+    /// Processes an interleaved `pcm` slice with `channels >= 2` (K-weighting channels 0 and 1).
     fn push_multichannel_slice(&mut self, pcm: &[f32], channels: usize) {
         let hs_b0 = self.hs_l.b0;
         let hs_b1 = self.hs_l.b1;
@@ -423,7 +446,7 @@ impl Bs1770LoudnessAnalyzer {
         self.hp_r.s2 = hp_s2_r;
     }
 
-    /// Computes the gated integrated loudness (LUFS) and target gain difference in dB.
+    /// Computes the gated integrated loudness (LUFS) relative to `target_lufs` and returns [`ReplayGainData`] with `peak`.
     pub fn finalize(mut self, target_lufs: f32, peak: f32) -> ReplayGainData {
         if self.current_interval_samples > 0 {
             let energy = (self.current_interval_sq[0] + self.current_interval_sq[1])
@@ -450,7 +473,9 @@ impl Bs1770LoudnessAnalyzer {
         }
     }
 
+    /// Evaluates BS.1770-4 absolute (-70 LUFS) and relative (-10 LU) dual-gated loudness over 100 ms `interval_energies`.
     fn compute_gated_lufs(interval_energies: &[f32]) -> f32 {
+        /// ITU-R BS.1770-4 absolute silence gating threshold in LUFS.
         const ABS_GATE_LUFS: f32 = -70.0;
 
         if interval_energies.len() < 4 {
@@ -518,11 +543,17 @@ impl Bs1770LoudnessAnalyzer {
 /// Ensures energy/waveform accumulation memory remains strictly bounded (< 16 KB)
 /// across any file duration from seconds to 10+ hours.
 pub struct AdaptiveWaveformAccumulator {
+    /// Desired number of normalized output waveform points.
     target_points: usize,
+    /// Dynamically decimated RMS energy buckets capped at [`Self::MAX_BUCKETS`].
     buckets: Vec<f32>,
+    /// Running squared amplitude sum in the active frame block.
     current_block_sq: f64,
+    /// Number of frames accumulated in the active block.
     current_block_frames: usize,
+    /// Current decimation block size in frames (doubles on every 2:1 decimation pass).
     frames_per_block: usize,
+    /// Tracks whether at least one valid frame has been ingested.
     has_samples: bool,
 }
 
@@ -542,25 +573,7 @@ impl AdaptiveWaveformAccumulator {
         }
     }
 
-    /// Feeds an instantaneous stereo frame into the accumulator.
-    #[inline]
-    pub fn push_frame(&mut self, s_l: f32, s_r: f32) {
-        self.has_samples = true;
-        let power = (s_l as f64 * s_l as f64 + s_r as f64 * s_r as f64) * 0.5;
-        self.current_block_sq += power;
-        self.current_block_frames += 1;
-        if self.current_block_frames >= self.frames_per_block {
-            let rms = (self.current_block_sq / self.current_block_frames as f64).sqrt() as f32;
-            self.buckets.push(rms);
-            self.current_block_sq = 0.0;
-            self.current_block_frames = 0;
-
-            if self.buckets.len() >= Self::MAX_BUCKETS {
-                self.decimate_buckets_in_place();
-            }
-        }
-    }
-
+    /// Merges adjacent pairs of RMS buckets in-place and doubles `frames_per_block` to bound memory.
     #[inline]
     fn decimate_buckets_in_place(&mut self) {
         let pairs = self.buckets.len() / 2;
@@ -574,7 +587,7 @@ impl AdaptiveWaveformAccumulator {
         self.frames_per_block *= 2;
     }
 
-    /// Feeds an interleaved PCM chunk into the waveform accumulator in tight block loops
+    /// Feeds an interleaved `pcm` chunk (`channels` per frame) into the waveform accumulator in tight block loops
     /// with in-place 2:1 bucket decimation (zero heap allocations).
     pub fn push_slice(&mut self, pcm: &[f32], channels: usize) {
         if channels == 0 || pcm.is_empty() {
@@ -697,6 +710,7 @@ impl AdaptiveWaveformAccumulator {
     }
 }
 
+/// Computes the maximum absolute sample amplitude across `pcm` for the active `channels`.
 #[inline]
 pub fn slice_peak(pcm: &[f32], channels: usize) -> f32 {
     if channels == 0 || pcm.is_empty() {
@@ -727,28 +741,40 @@ pub fn slice_peak(pcm: &[f32], channels: usize) -> f32 {
     }
 }
 
+/// Persistent worker pool and bounded L3-resident buffer recycler for multi-stage offline analysis.
 #[cfg(not(target_arch = "wasm32"))]
 mod worker_pool {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, OnceLock};
     use crossbeam_channel::{unbounded, Receiver, Sender};
 
+    /// Target number of PCM frames dispatched per analysis batch.
     const TARGET_BATCH_FRAMES: usize = 16_384;
+    /// Bounded queue depth per parallel DSP analysis stage.
     const CHANNEL_BOUND: usize = 6;
+    /// Maximum number of pre-allocated batch buffers kept in the recycler pool.
     const RECYCLER_CAPACITY: usize = 12;
 
+    /// Type-erased one-shot worker closure executed by the global analysis pool.
     type Job = Box<dyn FnOnce() + Send + 'static>;
 
+    /// Publicly exposed batch frame size for the analysis pipeline.
     pub(super) const BATCH_FRAMES: usize = TARGET_BATCH_FRAMES;
+    /// Publicly exposed bounded channel depth between decoder and worker stages.
     pub(super) const STAGE_QUEUE_BOUND: usize = CHANNEL_BOUND;
+    /// Publicly exposed buffer recycler capacity.
     pub(super) const RECYCLE_POOL_CAP: usize = RECYCLER_CAPACITY;
 
+    /// RAII reservation token ensuring `active_workers` is decremented if dropped before submission.
     pub(super) struct WorkerSlot {
+        /// Shared active-worker atomic counter.
         counter: Arc<AtomicUsize>,
+        /// Whether ownership of the slot was transferred to a queued job.
         submitted: bool,
     }
 
     impl Drop for WorkerSlot {
+        /// Releases the reserved worker slot if the token was dropped prior to job submission.
         fn drop(&mut self) {
             if !self.submitted {
                 self.counter.fetch_sub(1, Ordering::AcqRel);
@@ -756,23 +782,31 @@ mod worker_pool {
         }
     }
 
+    /// RAII guard decrementing `active_workers` once a submitted analysis stage finishes.
     struct ActiveGuard {
+        /// Shared active-worker atomic counter.
         counter: Arc<AtomicUsize>,
     }
 
     impl Drop for ActiveGuard {
+        /// Decrements `counter` when the worker closure exits or unwinds.
         fn drop(&mut self) {
             self.counter.fetch_sub(1, Ordering::AcqRel);
         }
     }
 
+    /// Fixed-size global thread pool executing parallel offline audio analysis stages.
     pub(super) struct AnalysisWorkerPool {
+        /// Unbounded job submission sender consumed by pool worker threads.
         job_tx: Sender<Job>,
+        /// Maximum number of worker threads spawned for the pool.
         max_workers: usize,
+        /// Number of currently reserved or executing worker slots.
         active_workers: Arc<AtomicUsize>,
     }
 
     impl AnalysisWorkerPool {
+        /// Returns the singleton [`AnalysisWorkerPool`], lazily spawning `2..=6` worker threads.
         pub(super) fn global() -> &'static Self {
             static INSTANCE: OnceLock<AnalysisWorkerPool> = OnceLock::new();
             INSTANCE.get_or_init(|| {
@@ -783,15 +817,30 @@ mod worker_pool {
                 let (job_tx, job_rx) = unbounded::<Job>();
                 let active_workers = Arc::new(AtomicUsize::new(0));
 
+                crate::map_log!(
+                    3,
+                    "[ANALYSIS] Initializing global analysis worker pool (workers={}, hw_threads={})",
+                    max_workers,
+                    hw
+                );
+
                 for idx in 0..max_workers {
                     let rx: Receiver<Job> = job_rx.clone();
-                    let _ = std::thread::Builder::new()
+                    if let Err(e) = std::thread::Builder::new()
                         .name(format!("ma-analysis-w{}", idx))
                         .spawn(move || {
                             while let Ok(job) = rx.recv() {
                                 job();
                             }
-                        });
+                        })
+                    {
+                        crate::map_log!(
+                            1,
+                            "[ANALYSIS] Failed to spawn analysis worker {}: {:?}",
+                            idx,
+                            e
+                        );
+                    }
                 }
 
                 Self {
@@ -808,6 +857,12 @@ mod worker_pool {
             loop {
                 let cur = self.active_workers.load(Ordering::Acquire);
                 if cur >= self.max_workers {
+                    crate::map_log!(
+                        4,
+                        "[ANALYSIS] Worker pool saturated ({}/{}), falling back to inline stage",
+                        cur,
+                        self.max_workers
+                    );
                     return None;
                 }
                 if self
@@ -823,6 +878,7 @@ mod worker_pool {
             }
         }
 
+        /// Submits closure `f` for execution using the reserved `slot`.
         pub(super) fn submit<F>(&self, mut slot: WorkerSlot, f: F)
         where
             F: FnOnce() + Send + 'static,
@@ -834,18 +890,24 @@ mod worker_pool {
                 f();
             });
             if let Err(crossbeam_channel::SendError(rejected)) = self.job_tx.send(job) {
+                crate::map_log!(1, "[ANALYSIS] Failed to submit job to worker pool channel");
                 drop(rejected);
             }
         }
     }
 
+    /// Reference-counted PCM batch buffer that returns its backing `Vec<f32>` to `recycler` on drop.
     pub(super) struct PooledChunk {
+        /// Backing interleaved PCM buffer.
         pub(super) data: Vec<f32>,
+        /// Number of valid `f32` samples in `data`.
         pub(super) len: usize,
+        /// Channel returning the cleared `Vec<f32>` allocation to the producer recycler.
         pub(super) recycler: Sender<Vec<f32>>,
     }
 
     impl PooledChunk {
+        /// Returns a read-only slice over the `len` valid samples in `data`.
         #[inline]
         pub(super) fn as_slice(&self) -> &[f32] {
             &self.data[..self.len]
@@ -853,6 +915,7 @@ mod worker_pool {
     }
 
     impl Drop for PooledChunk {
+        /// Clears the backing PCM buffer and recycles its allocation back to `recycler`.
         fn drop(&mut self) {
             let mut buf = std::mem::take(&mut self.data);
             buf.clear();
@@ -862,7 +925,10 @@ mod worker_pool {
 }
 
 /// Performs comprehensive, memory-bounded ($O(1)$ RAM) acoustic, loudness, waveform,
-/// and metadata analysis on an arbitrary [`AudioSourceCore`].
+/// and metadata analysis on `source` using `config`.
+///
+/// # Errors
+/// Returns an error string if creating the analysis deck or opening `source` fails.
 pub fn analyze_audio_source(
     source: AudioSourceCore,
     config: RustAnalysisConfig,
@@ -871,14 +937,29 @@ pub fn analyze_audio_source(
 }
 
 /// Performs comprehensive, memory-bounded ($O(1)$ RAM) acoustic, loudness, waveform,
-/// and metadata analysis using an optional pre-resolved Dart source payload.
+/// and metadata analysis on `source` with `config`, using an optional `pre_resolved` Dart source payload.
+///
+/// # Errors
+/// Returns an error string if creating the analysis deck or opening `source` fails.
 pub fn analyze_audio_source_with_resolved(
     source: AudioSourceCore,
     pre_resolved: Option<ResolvedCoreSource>,
     config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
-    let mut deck = StreamingDeck::new_analysis_deck(44100, 2)
-        .map_err(|e| format!("Failed to create analysis deck: {}", e))?;
+    crate::map_log!(
+        4,
+        "[ANALYSIS] Starting analysis (rg={}, wf={}, cp={}, meta={}, max_ms={:?})",
+        config.replay_gain,
+        config.waveform,
+        config.chromaprint,
+        config.metadata,
+        config.max_duration_ms
+    );
+
+    let mut deck = StreamingDeck::new_analysis_deck(44100, 2).map_err(|e| {
+        crate::map_log!(1, "[ANALYSIS] Failed to create analysis deck: {}", e);
+        format!("Failed to create analysis deck: {}", e)
+    })?;
 
     let res = DualSource::open_deck_with_pre_resolved(
         &mut deck,
@@ -890,6 +971,12 @@ pub fn analyze_audio_source_with_resolved(
     );
     if res != 0 {
         let detail = deck.take_last_open_error_message();
+        crate::map_log!(
+            1,
+            "[ANALYSIS] Failed to open audio source (code={}, detail={:?})",
+            res,
+            detail
+        );
         return Err(detail.unwrap_or_else(|| format!("Failed to open audio source (code: {})", res)));
     }
 
@@ -897,6 +984,10 @@ pub fn analyze_audio_source_with_resolved(
     // whole-track acoustic metrics (ReplayGain, Waveform, Chromaprint).
     // Instead, only container format info and metadata (if requested) are extracted; duration is returned as null.
     if deck.is_live_stream() {
+        crate::map_log!(
+            3,
+            "[ANALYSIS] Livestream detected; skipping whole-track acoustic metrics"
+        );
         let mut audio_info = deck.get_audio_info();
         audio_info.duration_ms = None;
         let metadata = if config.metadata {
@@ -929,6 +1020,13 @@ pub fn analyze_audio_source_with_resolved(
 
     // Fast path: if neither ReplayGain, Waveform, nor Chromaprint is requested, return early
     if !config.replay_gain && !config.waveform && !config.chromaprint {
+        crate::map_log!(
+            4,
+            "[ANALYSIS] Metadata-only fast path (sr={}, ch={}, dur_ms={})",
+            sample_rate,
+            channels,
+            duration_ms
+        );
         let metadata = if config.metadata {
             deck.get_parsed_metadata()
         } else {
@@ -1383,6 +1481,20 @@ pub fn analyze_audio_source_with_resolved(
     }
 
     deck.stop();
+
+    crate::map_log!(
+        4,
+        "[ANALYSIS] Completed analysis (frames={}, sr={}, ch={}, has_rg={}, lufs={:.2}, gain_db={:.2}, wf_pts={}, has_cp={}, has_meta={})",
+        total_decoded_frames,
+        sample_rate,
+        channels,
+        has_replay_gain,
+        replay_gain.lufs,
+        replay_gain.gain_db,
+        waveform_peaks.len(),
+        has_chromaprint,
+        metadata.is_some()
+    );
 
     Ok(RustAudioAnalysisResult {
         audio_info,

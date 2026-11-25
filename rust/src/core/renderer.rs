@@ -19,21 +19,44 @@ use crate::dsp::visualizer::VisualizerData;
 use crate::sync::ring_buffer::AudioConsumer;
 use crate::sync::seqlock::CachePaddedSeqlock;
 
-/// SPSC lock-free control commands dispatched from PlayerCoordinator to AudioRenderer.
+/// SPSC lock-free control commands dispatched to [`AudioRenderer`].
 #[derive(Clone, Copy, Debug)]
 pub enum DspCommand {
+    /// Sets master output linear volume.
     SetVolume(f32),
+    /// Replaces all parametric equalizer parameters.
     SetEqualizerParams(EqualizerParams),
-    SetEqualizerBand { band: usize, gain_db: f32 },
+    /// Updates a single equalizer band gain.
+    SetEqualizerBand {
+        /// Zero-based equalizer band index.
+        band: usize,
+        /// Gain adjustment in decibels.
+        gain_db: f32,
+    },
+    /// Sets equalizer pre-amplification gain in decibels.
     SetPreamp(f32),
+    /// Configures ReplayGain loudness normalization.
     SetReplayGain(ReplayGainConfig),
+    /// Sets stereo pan balance (`-1.0` left to `1.0` right).
     SetBalance(f32),
+    /// Enables or disables mono downmix.
     SetMono(bool),
-    SetSpatializer { enabled: bool, width: f32 },
+    /// Configures stereo spatializer width processing.
+    SetSpatializer {
+        /// Whether spatializer processing is active.
+        enabled: bool,
+        /// Stereo width multiplier.
+        width: f32,
+    },
+    /// Configures headphone crossfeed processing.
     SetCrossfeed(CrossfeedConfig),
+    /// Configures algorithmic reverb processing.
     SetReverb(ReverbConfig),
+    /// Enables or disables the output soft limiter.
     SetLimiter(bool),
+    /// Enables or disables real-time FFT visualizer capture.
     SetVisualizerEnabled(bool),
+    /// Updates the DSP and Sonic resampler sample rate in Hertz.
     SetSampleRate(u32),
 }
 
@@ -47,7 +70,12 @@ pub struct PcmRendererHeader {
     pub notif_fn: unsafe extern "C" fn(ptr: *mut std::os::raw::c_void, notif: i32),
 }
 
-/// C trampoline forwarding audio frame requests to [`AudioRenderer::render_pcm`].
+/// C trampoline forwarding audio frame requests from `ptr` into `output` for `count` frames via [`AudioRenderer::render_pcm`].
+///
+/// # Safety
+///
+/// `ptr` must point to a valid, exclusively accessible [`AudioRenderer`] instance for the duration of the call,
+/// and `output` must be valid for writing `count * device_channels` interleaved `f32` samples.
 pub unsafe extern "C" fn audio_renderer_render_trampoline(
     ptr: *mut std::os::raw::c_void,
     output: *mut f32,
@@ -57,7 +85,11 @@ pub unsafe extern "C" fn audio_renderer_render_trampoline(
     r.render_pcm(output, count);
 }
 
-/// C trampoline forwarding hardware device notifications to [`AudioRenderer::on_device_notification`].
+/// C trampoline forwarding hardware device notification `notif` for renderer `ptr` to [`AudioRenderer::on_device_notification`].
+///
+/// # Safety
+///
+/// `ptr` must point to a valid [`AudioRenderer`] instance for the duration of the call.
 pub unsafe extern "C" fn audio_renderer_notif_trampoline(
     ptr: *mut std::os::raw::c_void,
     notif: i32,
@@ -69,12 +101,15 @@ pub unsafe extern "C" fn audio_renderer_notif_trampoline(
 /// Anti-pop micro-fade duration (~5.3ms at 48 kHz) applied around underrun, pause, and resume transitions.
 const ANTI_POP_FADE_FRAMES: usize = 256;
 
-/// Lock-free, allocation-free smoothing state preventing step discontinuities in `AudioRenderer`.
+/// Lock-free, allocation-free smoothing state preventing step discontinuities in [`AudioRenderer`].
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct AntiPopState {
+    /// Last emitted sample value per channel (up to 16 channels) for smooth fade-out transitions.
     pub last_samples: [f32; 16],
+    /// Whether the renderer output is currently ramped down to silence.
     pub output_silenced: bool,
+    /// Whether the next valid audio block should apply a fade-in ramp.
     pub need_fade_in: bool,
 }
 
@@ -91,42 +126,73 @@ impl Default for AntiPopState {
 /// Decoupled, real-time safe audio renderer passed exclusively to the hardware audio callback.
 #[repr(C)]
 pub struct AudioRenderer {
+    /// C-ABI dispatch header invoked by the native audio backend.
     pub header: PcmRendererHeader,
+    /// Identifier of the audio deck owning this renderer.
     pub deck_id: usize,
+    /// Lock-free SPSC PCM sample consumer fed by the decoder worker.
     pub consumer: AudioConsumer,
+    /// Lock-free SPSC DSP command queue consumer.
     pub cmd_consumer: rtrb::Consumer<DspCommand>,
 
+    /// Atomic representation of [`PlaybackState`].
     pub state: Arc<AtomicI32>,
+    /// Source stream sample rate in Hertz.
     pub sample_rate: Arc<AtomicU32>,
+    /// Source stream channel count.
     pub channels: Arc<AtomicU32>,
+    /// Output hardware sample rate in Hertz.
     pub device_sample_rate: Arc<AtomicU32>,
+    /// Output hardware channel count.
     pub device_channels: Arc<AtomicU32>,
+    /// Atomic `f32` bit-pattern of the linear playback volume.
     pub volume: Arc<AtomicU32>,
+    /// Atomic `f32` bit-pattern of the playback speed multiplier.
     pub rate: Arc<AtomicU32>,
+    /// Atomic `f32` bit-pattern of the pitch shift multiplier.
     pub pitch: Arc<AtomicU32>,
+    /// Accumulated source playback position in 1/1024-frame subframes.
     pub position_frames: Arc<AtomicI64>,
+    /// Current playback position in milliseconds.
     pub position_ms: Arc<AtomicI64>,
+    /// Total track duration in milliseconds (`<= 0` when unknown).
     pub duration_ms: Arc<AtomicI64>,
 
+    /// Flag set by the decoder when the input stream reaches EOF.
     pub decoder_eof: Arc<AtomicBool>,
+    /// Pending seek target in milliseconds (`< 0` when no seek is pending).
     pub seek_request_ms: Arc<AtomicI64>,
+    /// Flag indicating whether the current source is a live/network stream.
     pub is_stream: Arc<AtomicBool>,
+    /// Flag indicating whether playback is caught up to the live edge of a stream.
     pub at_live_edge: Arc<AtomicBool>,
 
+    /// Monotonic flush generation counter incremented by control threads.
     pub flush_generation: Arc<AtomicU64>,
+    /// Latest flush generation observed and applied by the RT audio thread.
     pub flush_acknowledged: Arc<AtomicU64>,
+    /// Local cached copy of the last acknowledged flush generation.
     pub local_flush_gen: u64,
 
+    /// Flag set once `decoder_eof` is true and all buffered samples have drained.
     pub track_exhausted: Arc<AtomicBool>,
+    /// Flag indicating whether stream playback is currently paused for rebuffering.
     pub is_buffering: Arc<AtomicBool>,
 
+    /// Real-time DSP processing chain for this deck.
     pub dsp: DspChain,
+    /// Time-stretch and pitch-shift processor instance.
     pub sonic: SonicStream,
+    /// Pre-allocated scratch buffer feeding samples into `sonic`.
     pub sonic_in_buf: Vec<f32>,
+    /// Lock-free seqlock publishing visualizer spectrum/waveform snapshots.
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
+    /// Flag enabling real-time visualizer snapshot updates.
     pub visualizer_enabled: Arc<AtomicBool>,
 
+    /// Optional callback invoked when the native backend emits a device notification.
     pub notification_callback: Option<Arc<dyn Fn(i32) + Send + Sync>>,
+    /// Anti-pop micro-fade transition state.
     pub anti_pop: AntiPopState,
 }
 
@@ -134,6 +200,7 @@ pub struct AudioRenderer {
 unsafe impl Send for AudioRenderer {}
 
 impl AudioRenderer {
+    /// Drains and applies all pending commands from `cmd_consumer` without blocking.
     #[inline]
     fn drain_dsp_commands(&mut self) {
         while let Ok(cmd) = self.cmd_consumer.pop() {
@@ -141,6 +208,7 @@ impl AudioRenderer {
         }
     }
 
+    /// Applies a single [`DspCommand`] `cmd` to the local DSP chain and Sonic processor.
     #[inline]
     fn apply_dsp_command(&mut self, cmd: DspCommand) {
         match cmd {
@@ -168,11 +236,13 @@ impl AudioRenderer {
         }
     }
 
+    /// Evaluates a cubic smoothstep curve at normalized position `u` in `[0.0, 1.0]`.
     #[inline]
     fn smoothstep(u: f32) -> f32 {
         u * u * (3.0 - 2.0 * u)
     }
 
+    /// Writes silence into `out_slice` for `frame_count` frames across `ch` channels, applying a short fade-out if audio was active.
     #[inline]
     fn emit_silence_or_fade_out(
         &mut self,
@@ -208,6 +278,7 @@ impl AudioRenderer {
         self.anti_pop.need_fade_in = true;
     }
 
+    /// Fades out the tail of a partially filled `out_slice` (`read_frames` valid frames across `ch` channels) and zeros the remainder.
     #[inline]
     fn smooth_partial_tail(
         &mut self,
@@ -239,6 +310,7 @@ impl AudioRenderer {
         self.anti_pop.need_fade_in = true;
     }
 
+    /// Applies a fade-in ramp when resuming from silence and stores the last sample frame from `valid_frames` across `ch` channels in `out_slice`.
     #[inline]
     fn apply_fade_in_and_track(
         &mut self,
@@ -286,6 +358,7 @@ impl AudioRenderer {
         }
     }
 
+    /// Resolves clamped `(rate, pitch, is_stretched)` parameters, clamping rate to `1.0` at the live stream edge.
     #[inline]
     fn resolved_stretch_params(&self) -> (f32, f32, bool) {
         let mut requested_rate = f32::from_bits(self.rate.load(Ordering::Relaxed));
@@ -298,6 +371,7 @@ impl AudioRenderer {
         (cur_rate, cur_pitch, is_stretched)
     }
 
+    /// Pulls up to `frame_count` frames across `ch` channels into `out_slice`, routing through Sonic when time/pitch stretched, and returns `(samples_written, un_stretched_frames)`.
     #[inline]
     fn pull_audio_frames(
         &mut self,
@@ -333,6 +407,7 @@ impl AudioRenderer {
         (frames_out * ch, un_stretched)
     }
 
+    /// Updates buffering/EOF flags, applies anti-pop ramps to `out_slice` given `read_samples` of `total_samples` (`frame_count` frames, `ch` channels), and advances position using `un_stretched_frames_consumed`.
     #[inline]
     fn update_playback_state_and_position(
         &mut self,
@@ -392,6 +467,7 @@ impl AudioRenderer {
         }
     }
 
+    /// Runs the deck's real-time `DspChain` over `out_slice` and publishes visualizer frames when enabled.
     #[inline]
     fn apply_realtime_dsp_and_visualizer(&mut self, out_slice: &mut [f32]) {
         let vol = f32::from_bits(self.volume.load(Ordering::Relaxed)).max(0.0);
@@ -404,12 +480,12 @@ impl AudioRenderer {
         }
     }
 
-    /// Render interleaved 32-bit floating point PCM audio frames into the output buffer provided by miniaudio.
+    /// Renders `frame_count` interleaved 32-bit floating-point PCM audio frames into `output_frames`.
     ///
     /// GUARANTEES:
     /// - 100% Lock-Free: Acquires zero OS Mutexes or RwLocks.
     /// - 100% Allocation-Free: Never allocates on the heap.
-    /// - Wait-Free: Returns in bounded $\mathcal{O}(frame\_count \times channels)$ execution time.
+    /// - Wait-Free: Returns in bounded `O(frame_count * channels)` execution time.
     #[inline]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn render_pcm(&mut self, output_frames: *mut f32, frame_count: usize) {
@@ -469,7 +545,7 @@ impl AudioRenderer {
         self.apply_realtime_dsp_and_visualizer(out_slice);
     }
 
-    /// Dispatches hardware device state change notifications to registered listener callbacks.
+    /// Dispatches hardware device state change `notification_type` to registered listener callbacks.
     #[inline]
     pub fn on_device_notification(&self, notification_type: i32) {
         if let Some(ref cb) = self.notification_callback {

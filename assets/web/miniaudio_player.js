@@ -224,7 +224,7 @@ let wasm_bindgen = (function(exports) {
     exports.rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer = rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustMiniaudioPlayer;
 
     /**
-     * Closes a Pull audio tap handle safely from Web JS (`try_read`/`try_write`, zero `Atomics.wait`).
+     * Closes Pull audio tap `tap_id` safely from Web JS (`try_read`/`try_write`, zero `Atomics.wait`).
      * @param {number} tap_id
      */
     function wasm_close_pull_audio_tap(tap_id) {
@@ -233,7 +233,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_close_pull_audio_tap = wasm_close_pull_audio_tap;
 
     /**
-     * Returns cumulative dropped frames observed by a Pull tap handle as an exact JS number (`<= 2^53`).
+     * Returns cumulative dropped frames observed by Pull tap `tap_id` as an exact JS number (`<= 2^53`).
      * @param {number} tap_id
      * @returns {number}
      */
@@ -305,6 +305,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_get_web_capture_samples_written = wasm_get_web_capture_samples_written;
 
     /**
+     * Marks the capture device for `slot_idx` and `generation` as failed with `error_message` and wakes watchers.
      * @param {number} slot_idx
      * @param {number} generation
      * @param {string} error_message
@@ -319,7 +320,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_notify_web_capture_failed = wasm_notify_web_capture_failed;
 
     /**
-     * Polls up to `max_frames` of encoded PCM bytes into caller-owned `dst` without heap allocations.
+     * Polls up to `max_frames` of encoded PCM bytes from `tap_id` into caller-owned `dst` without heap allocations.
      * @param {number} tap_id
      * @param {Uint8Array} dst
      * @param {number} max_frames
@@ -332,6 +333,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_poll_audio_tap_bytes = wasm_poll_audio_tap_bytes;
 
     /**
+     * Pushes mono PCM `samples` from JS (`sample_rate` Hz) into capture slot `slot_idx` if `generation` matches.
      * @param {number} slot_idx
      * @param {number} generation
      * @param {Float32Array} samples
@@ -343,8 +345,8 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_push_web_capture_pcm = wasm_push_web_capture_pcm;
 
     /**
-     * Legacy `ScriptProcessorNode` fallback consumer reading from `WasmWebAudioRing` without
-     * throwing away buffered audio via prebuffering snap-backs.
+     * Legacy `ScriptProcessorNode` fallback consumer rendering `frames` stereo frames from
+     * `WasmWebAudioRing` without throwing away buffered audio via prebuffering snap-backs.
      * @param {number} frames
      * @returns {Float32Array}
      */
@@ -355,7 +357,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_render_web_audio = wasm_render_web_audio;
 
     /**
-     * Records the actual browser `AudioContext.sampleRate` so Web pumping matches it cleanly.
+     * Records the actual browser `AudioContext.sampleRate` (`sample_rate`) so Web pumping matches it cleanly.
      * @param {number} sample_rate
      */
     function wasm_set_web_audio_sample_rate(sample_rate) {
@@ -364,6 +366,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_set_web_audio_sample_rate = wasm_set_web_audio_sample_rate;
 
     /**
+     * Updates the cached browser capture device list from JS `ids`, `names`, and `defaults` arrays.
      * @param {any} ids
      * @param {any} names
      * @param {any} defaults
@@ -374,6 +377,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_set_web_capture_devices = wasm_set_web_capture_devices;
 
     /**
+     * Updates the browser `AudioContext.sampleRate` for capture slot `slot_idx` matching `generation` to `sample_rate`.
      * @param {number} slot_idx
      * @param {number} generation
      * @param {number} sample_rate
@@ -389,6 +393,7 @@ let wasm_bindgen = (function(exports) {
     exports.wasm_start_callback = wasm_start_callback;
 
     /**
+     * Entry point invoked by spawned Web Workers to execute a boxed [`ThreadTask`] at `task_ptr`.
      * @param {number} task_ptr
      */
     function wasm_thread_entry_point(task_ptr) {
@@ -731,17 +736,17 @@ let wasm_bindgen = (function(exports) {
                 return ret;
             },
             __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2467, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2492, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
                 const ret = makeMutClosure(arg0, arg1, wasm_bindgen_27dc6de82d54d230___convert__closures_____invoke___web_sys_ddbf30fba81e3d5___features__gen_MessageEvent__MessageEvent______true_);
                 return ret;
             },
             __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2467, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2492, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
                 const ret = makeMutClosure(arg0, arg1, wasm_bindgen_27dc6de82d54d230___convert__closures_____invoke___web_sys_ddbf30fba81e3d5___features__gen_MessageEvent__MessageEvent______true__32);
                 return ret;
             },
             __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2462, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+                // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2487, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
                 const ret = makeMutClosure(arg0, arg1, wasm_bindgen_27dc6de82d54d230___convert__closures_____invoke_______true_);
                 return ret;
             },
@@ -763,7 +768,7 @@ let wasm_bindgen = (function(exports) {
                 table.set(1026, true);
                 table.set(1027, false);
             },
-            memory: memory || new WebAssembly.Memory({initial:25,maximum:16384,shared:true}),
+            memory: memory || new WebAssembly.Memory({initial:26,maximum:16384,shared:true}),
         };
         return {
             __proto__: null,

@@ -93,6 +93,7 @@ impl SlidingWindowConfig {
 }
 
 impl Default for SlidingWindowConfig {
+    /// Returns the default sliding-window configuration.
     fn default() -> Self {
         Self {
             back_duration_ms: Self::DEFAULT_BACK_DURATION_MS,
@@ -155,7 +156,8 @@ pub struct SlidingWindowState {
 }
 
 impl SlidingWindowState {
-    /// Creates a new `SlidingWindowState` and resolves byte dimensions for `capacity`.
+    /// Creates a new `SlidingWindowState` from `config`, `byte_rate_per_sec`, and `playback_rate`,
+    /// resolving initial byte dimensions for `capacity`.
     pub fn new(
         config: SlidingWindowConfig,
         byte_rate_per_sec: u64,
@@ -209,31 +211,46 @@ impl SlidingWindowState {
 pub enum BufferBackend {
     /// Non-circular linear storage with configurable minimum growth step (used for `Head`).
     Linear {
+        /// Contiguous linear byte storage.
         data: Vec<u8>,
+        /// Minimum allocation growth step in bytes when expanding `data`.
         min_growth: usize,
     },
     /// Non-circular sparse virtual address space (used for `Metadata`).
     Sparse {
+        /// Offset-indexed contiguous metadata chunks stored in ascending order.
         chunks: BTreeMap<u64, Vec<u8>>,
+        /// Known virtual length of the sparse stream in bytes, if bounded.
         virtual_size: Option<u64>,
+        /// Minimum growth step hint in bytes configured at construction.
         min_growth: usize,
+        /// Optional live ICY metadata override payload replacing sparse chunk reads.
         icy_override: Vec<u8>,
     },
     /// Circular bidirectional sliding window (`[Back | Ahead]`) with progressive block coalescing (used for `Body`).
     Circular {
+        /// Fixed-size ring backing array of length `capacity`.
         storage: Vec<u8>,
+        /// Total capacity of the circular ring buffer in bytes.
         capacity: usize,
+        /// Stream byte offset anchored at ring index `0`.
         anchor_offset: u64,
+        /// Lowest valid stream byte offset currently retained in the ring.
         range_start: u64,
+        /// Exclusive upper stream byte offset currently buffered in the ring.
         range_end: u64,
+        /// Known upper byte boundary of the audio payload, if bounded.
         audio_end: Option<u64>,
+        /// Resolved temporal sliding-window dimensions and phase state.
         window: SlidingWindowState,
+        /// True while an active background push-streaming thread feeds this ring.
         push_streaming: bool,
+        /// Optional on-demand range fetcher invoked outside the buffer lock on pull/cache-miss reads.
         fetcher: Option<ByteFetchTask>,
     },
 }
 
-/// Coalesces `(offset, data)` into a sparse `BTreeMap<u64, Vec<u8>>`, merging overlapping or adjacent ranges.
+/// Coalesces `data` at `offset` into the sparse `chunks` map, merging overlapping or adjacent ranges.
 fn insert_and_coalesce_sparse(chunks: &mut BTreeMap<u64, Vec<u8>>, offset: u64, data: &[u8]) {
     if data.is_empty() {
         return;
@@ -292,14 +309,23 @@ fn insert_and_coalesce_sparse(chunks: &mut BTreeMap<u64, Vec<u8>>, offset: u64, 
 /// - `ByteFetchTask` (`getRealBytes`) is always cloned as an `Arc` and executed **outside** the
 ///   mutex guard, strictly upholding the rule of never holding locks across I/O.
 pub struct StreamBuffer {
+    /// Mutex-guarded backing storage variant (`Linear`, `Sparse`, or `Circular`).
     backend: Mutex<BufferBackend>,
+    /// Condition variable signaled on writes, cursor movement, EOF, abort, or config updates.
     data_signal: Condvar,
+    /// Atomic current byte read cursor offset.
     read_cursor: AtomicU64,
+    /// True when `backend` is `BufferBackend::Circular`.
     is_circular: bool,
+    /// True while a reader is stalled awaiting asynchronous data arrival.
     is_buffering: AtomicBool,
+    /// True while a producer thread is suspended in `wait_for_next_block` or `wait_for_free_space`.
     is_producer_waiting: AtomicBool,
+    /// True once end-of-stream has been reached or explicitly marked.
     is_eof: AtomicBool,
+    /// True once `abort` has been called to unblock waiting readers/producers.
     should_abort: AtomicBool,
+    /// Monotonic mutation counter incremented whenever buffer contents or boundaries change.
     version: AtomicU32,
 }
 
@@ -313,10 +339,17 @@ impl StreamBuffer {
     /// Default free-space hysteresis threshold (256 KB) before waking a throttled producer.
     pub const DEFAULT_FREE_SPACE_RESUME_BYTES: usize = 256 * 1024;
 
-    /// Creates a non-circular linear `StreamBuffer` (used for `Head`).
+    /// Creates a non-circular linear `StreamBuffer` (used for `Head`) with `initial_size`
+    /// capacity and `min_growth` expansion increment.
     pub fn new_linear(initial_size: usize, min_growth: usize) -> Arc<Self> {
         let cap = initial_size.max(1024);
         let growth = min_growth.max(1024);
+        crate::map_log!(
+            4,
+            "[BUFFER] StreamBuffer::new_linear initial_size={}, min_growth={}",
+            cap,
+            growth
+        );
         Arc::new(Self {
             backend: Mutex::new(BufferBackend::Linear {
                 data: Vec::with_capacity(cap),
@@ -333,13 +366,21 @@ impl StreamBuffer {
         })
     }
 
-    /// Creates a non-circular sparse `StreamBuffer` (used for `Metadata`).
+    /// Creates a non-circular sparse `StreamBuffer` (used for `Metadata`) with `min_growth`
+    /// step hint and optional bounded `virtual_size`.
     pub fn new_sparse(min_growth: usize, virtual_size: Option<u64>) -> Arc<Self> {
+        let growth = min_growth.max(4096);
+        crate::map_log!(
+            4,
+            "[BUFFER] StreamBuffer::new_sparse min_growth={}, virtual_size={:?}",
+            growth,
+            virtual_size
+        );
         Arc::new(Self {
             backend: Mutex::new(BufferBackend::Sparse {
                 chunks: BTreeMap::new(),
                 virtual_size,
-                min_growth: min_growth.max(4096),
+                min_growth: growth,
                 icy_override: Vec::new(),
             }),
             data_signal: Condvar::new(),
@@ -353,7 +394,8 @@ impl StreamBuffer {
         })
     }
 
-    /// Creates a circular bidirectional sliding-window `StreamBuffer` (used for `Body`).
+    /// Creates a circular bidirectional sliding-window `StreamBuffer` (used for `Body`)
+    /// with `capacity` bytes, sliding-window `config`, and optional pull-mode `fetcher`.
     pub fn new_circular(
         capacity: usize,
         config: SlidingWindowConfig,
@@ -364,6 +406,7 @@ impl StreamBuffer {
         } else {
             Self::DEFAULT_BODY_CAPACITY
         };
+        crate::map_log!(4, "[BUFFER] StreamBuffer::new_circular capacity={}", cap);
         let window = SlidingWindowState::new(
             config,
             SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC,
@@ -393,7 +436,9 @@ impl StreamBuffer {
         })
     }
 
-    /// Pure deterministic evaluator for the 3-phase progressive block-coalescing scheduler.
+    /// Pure deterministic evaluator for the 3-phase progressive block-coalescing scheduler,
+    /// computing the next fetch order from `cursor`, `capacity`, `anchor_offset`, `range_start`,
+    /// `range_end`, `audio_end`, `is_eof`, and `window`.
     #[allow(clippy::too_many_arguments)]
     fn compute_next_block_order_locked(
         cursor: u64,
@@ -434,6 +479,7 @@ impl StreamBuffer {
         let deficit = window.ahead_target_bytes.saturating_sub(ahead_bytes);
         let remaining_to_eof = audio_end.map(|end| end.saturating_sub(range_end) as usize);
 
+        /// Maximum byte size of an urgent Phase-1 bootstrap request.
         const MAX_URGENT_BOOTSTRAP_BYTES: usize = 256 * 1024;
         let (phase, raw_req_len) = if ahead_bytes < win_size {
             // Phase 1 (UrgentBootstrap): ahead < 1 window -> request up to 1 base window,
@@ -492,7 +538,8 @@ impl StreamBuffer {
         })
     }
 
-    /// Updates `window.window_filled` and `is_eof` after bytes are written into a `Circular` buffer.
+    /// Updates `window.window_filled` and `is_eof` after bytes are written into a `Circular`
+    /// buffer bounded by `anchor_offset`, `range_start`, `range_end`, and `audio_end`.
     #[inline]
     fn refresh_circular_window_fill_locked(
         &self,
@@ -522,13 +569,23 @@ impl StreamBuffer {
         }
     }
 
-    /// Configures the temporal sliding window parameters, stream byte rate, and playback rate.
+    /// Configures the temporal sliding-window `config`, stream `byte_rate_per_sec`, and `playback_rate`.
     pub fn configure_sliding_window(
         &self,
         config: SlidingWindowConfig,
         byte_rate_per_sec: u64,
         playback_rate: f32,
     ) {
+        crate::map_log!(
+            4,
+            "[BUFFER] configure_sliding_window byte_rate={}, playback_rate={:.2}, back_ms={}, ahead_ms={}, win_ms={}, coalesce={}",
+            byte_rate_per_sec,
+            playback_rate,
+            config.back_duration_ms,
+            config.ahead_duration_ms,
+            config.window_duration_ms,
+            config.coalesce_windows
+        );
         {
             let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
@@ -561,11 +618,17 @@ impl StreamBuffer {
         self.data_signal.notify_all();
     }
 
-    /// Updates the playback speed multiplier and dynamically scales forward prefetch/window sizes.
+    /// Updates the `playback_rate` multiplier and dynamically scales forward prefetch/window sizes.
     pub fn set_playback_rate(&self, playback_rate: f32) {
         if !playback_rate.is_finite() || playback_rate <= 0.0 {
+            crate::map_log!(
+                2,
+                "[BUFFER] set_playback_rate ignored invalid rate={}",
+                playback_rate
+            );
             return;
         }
+        crate::map_log!(4, "[BUFFER] set_playback_rate rate={:.2}", playback_rate);
         {
             let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
@@ -715,8 +778,8 @@ impl StreamBuffer {
         self.read_cursor.load(Ordering::Acquire)
     }
 
-    /// Updates the read cursor offset, clears `window_filled` when remaining lookahead drops
-    /// below the coalesce threshold, and wakes any waiting producer thread.
+    /// Updates the read cursor to `offset`, clearing `window_filled` when remaining lookahead
+    /// drops below the coalesce threshold, and wakes any waiting producer thread.
     #[inline]
     pub fn set_cursor(&self, offset: u64) {
         self.read_cursor.store(offset, Ordering::Release);
@@ -822,6 +885,11 @@ impl StreamBuffer {
 
     /// Marks end-of-stream and wakes any waiting readers.
     pub fn mark_eof(&self) {
+        crate::map_log!(
+            4,
+            "[BUFFER] StreamBuffer::mark_eof is_circular={}",
+            self.is_circular
+        );
         self.is_eof.store(true, Ordering::Release);
         self.is_buffering.store(false, Ordering::Release);
         self.data_signal.notify_all();
@@ -829,6 +897,11 @@ impl StreamBuffer {
 
     /// Aborts pending reads/writes and wakes all waiting threads.
     pub fn abort(&self) {
+        crate::map_log!(
+            3,
+            "[BUFFER] StreamBuffer::abort is_circular={}",
+            self.is_circular
+        );
         self.should_abort.store(true, Ordering::Release);
         self.is_buffering.store(false, Ordering::Release);
         self.data_signal.notify_all();
@@ -839,7 +912,7 @@ impl StreamBuffer {
         self.should_abort.store(false, Ordering::Release);
     }
 
-    /// Configures whether a background push streamer thread is actively feeding this circular buffer.
+    /// Sets `active` to indicate whether a background push streamer thread feeds this circular buffer.
     pub fn set_push_streaming(&self, active: bool) {
         let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
@@ -851,7 +924,7 @@ impl StreamBuffer {
         }
     }
 
-    /// Configures the circular buffer anchor offset (`audio_start`) and resets its window if empty.
+    /// Configures the circular buffer `anchor` offset (`audio_start`) and resets its window if empty.
     pub fn set_circular_anchor(&self, anchor: u64) {
         let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
@@ -871,7 +944,7 @@ impl StreamBuffer {
         self.data_signal.notify_all();
     }
 
-    /// Sets the upper byte boundary of the audio payload (`audio_end`).
+    /// Sets the upper byte boundary `end` of the audio payload (`audio_end`).
     pub fn set_audio_end(&self, end: Option<u64>) {
         let mut guard = lock_unpoisoned(&self.backend);
         if let BufferBackend::Circular {
@@ -951,7 +1024,10 @@ impl StreamBuffer {
         }
     }
 
-    /// Commits a chunk at an explicit `stream_offset`.
+    /// Commits `chunk` at an explicit `stream_offset`.
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if the buffer has been aborted.
     pub fn commit_chunk(&self, stream_offset: u64, chunk: &[u8]) -> Result<usize, BufferError> {
         if self.should_abort.load(Ordering::Acquire) {
             return Err(BufferError::Aborted);
@@ -1052,8 +1128,12 @@ impl StreamBuffer {
         Ok(chunk.len())
     }
 
-    /// Appends sequential stream bytes into a `Circular` buffer, enforcing backpressure
-    /// against `eviction_floor = max(anchor_offset, floor_cursor - back_retention_bytes)`.
+    /// Appends sequential `chunk` bytes into a `Circular` buffer (or linear/sparse backend),
+    /// enforcing backpressure against `eviction_floor = max(anchor_offset, floor_cursor - back_retention_bytes)`.
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if aborted or [`BufferError::Busy`] if writing `chunk`
+    /// would overwrite protected backward-retention data.
     pub fn feed_sequential(
         &self,
         floor_cursor: u64,
@@ -1140,6 +1220,11 @@ impl StreamBuffer {
 
     /// Flushes the circular buffer and re-anchors it at `new_stream_offset`, marking `is_buffering = true`.
     pub fn flush_circular(&self, new_stream_offset: u64) {
+        crate::map_log!(
+            4,
+            "[BUFFER] flush_circular new_stream_offset={}",
+            new_stream_offset
+        );
         {
             let mut guard = lock_unpoisoned(&self.backend);
             if let BufferBackend::Circular {
@@ -1163,11 +1248,15 @@ impl StreamBuffer {
         self.data_signal.notify_all();
     }
 
-    /// Non-blocking read at `offset`.
+    /// Non-blocking read at `offset` into `out`.
     ///
     /// - If `is_circular == false` and `offset` is not in memory (and no sync fetcher resolves it),
     ///   returns `Err(BufferError::WouldBlock)` immediately so metadata parsers never stall.
     /// - If `is_circular == true`, evaluates progressive block prefetching and on-demand `fetcher` (`getRealBytes`).
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if aborted or [`BufferError::WouldBlock`] if the requested
+    /// range is not currently cached and cannot be fetched synchronously.
     pub fn read_at(&self, offset: u64, out: &mut [u8]) -> Result<usize, BufferError> {
         if self.should_abort.load(Ordering::Acquire) {
             return Err(BufferError::Aborted);
@@ -1286,9 +1375,19 @@ impl StreamBuffer {
 
                         drop(guard);
                         if let Some((fetch_fn, f_pos, f_len)) = pending_prefetch {
-                            if let Ok(bytes) = fetch_fn(f_pos, f_len) {
-                                if !bytes.is_empty() {
+                            match fetch_fn(f_pos, f_len) {
+                                Ok(bytes) if !bytes.is_empty() => {
                                     let _ = self.commit_chunk(f_pos, &bytes);
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    crate::map_log!(
+                                        2,
+                                        "[BUFFER] read_at prefetch fetch error at offset={}, len={}: {}",
+                                        f_pos,
+                                        f_len,
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -1324,6 +1423,12 @@ impl StreamBuffer {
 
         // Execute cache-miss `getRealBytes(position, size)` completely outside the lock
         if let Some((fetch_fn, f_pos, f_len)) = cache_miss_fetch {
+            crate::map_log!(
+                4,
+                "[BUFFER] read_at cache-miss fetch offset={}, len={}",
+                f_pos,
+                f_len
+            );
             match fetch_fn(f_pos, f_len) {
                 Ok(bytes) if !bytes.is_empty() => {
                     let _ = self.commit_chunk(f_pos, &bytes);
@@ -1366,7 +1471,14 @@ impl StreamBuffer {
                         return Ok(0);
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    crate::map_log!(
+                        2,
+                        "[BUFFER] read_at cache-miss fetch error at offset={}, len={}: {}",
+                        f_pos,
+                        f_len,
+                        e
+                    );
                     return Err(BufferError::WouldBlock);
                 }
             }
@@ -1375,7 +1487,12 @@ impl StreamBuffer {
         Err(BufferError::WouldBlock)
     }
 
-    /// Blocking read at `offset` with reactive `Condvar` suspension while awaiting stream bytes.
+    /// Blocking read at `offset` into `out` with reactive `Condvar` suspension up to `timeout`
+    /// while awaiting stream bytes.
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if aborted or [`BufferError::WouldBlock`] if `timeout`
+    /// elapses (or immediately on non-circular buffers when uncached).
     pub fn read_blocking(
         &self,
         offset: u64,
@@ -1401,6 +1518,12 @@ impl StreamBuffer {
 
                     let elapsed = start_time.elapsed();
                     if elapsed >= max_wait {
+                        crate::map_log!(
+                            2,
+                            "[BUFFER] StreamBuffer::read_blocking timed out at offset={} after {:?}",
+                            offset,
+                            max_wait
+                        );
                         return Err(BufferError::WouldBlock);
                     }
                     let remaining = max_wait - elapsed;
@@ -1416,7 +1539,7 @@ impl StreamBuffer {
         }
     }
 
-    /// Updates dynamic ICY stream metadata bytes in a `Sparse` metadata buffer.
+    /// Updates dynamic ICY stream metadata `data` in a `Sparse` metadata buffer.
     pub fn set_icy_meta(&self, data: &[u8]) {
         {
             let mut guard = lock_unpoisoned(&self.backend);
@@ -1450,10 +1573,12 @@ impl StreamBuffer {
                     return Vec::new();
                 }
                 let mut out = Vec::with_capacity(total_cap);
+                /// Sony Wave64 RIFF container GUID (`riff....`).
                 const W64_RIFF_GUID: [u8; 16] = [
                     0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04,
                     0xc1, 0x00, 0x00,
                 ];
+                /// Sony Wave64 `data` chunk GUID.
                 const W64_DATA_GUID: [u8; 16] = [
                     0x64, 0x61, 0x74, 0x61, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04,
                     0xc1, 0x00, 0x00,
@@ -1531,10 +1656,12 @@ impl StreamBuffer {
 
 /// RAII guard enabling isolated container/seek probe reads without flushing the `Body` ring.
 pub struct ProbeGuard {
+    /// Shared active probe nesting depth counter decremented when this guard is dropped.
     depth: Arc<AtomicUsize>,
 }
 
 impl Drop for ProbeGuard {
+    /// Decrements the active probe depth counter upon leaving the probe scope.
     fn drop(&mut self) {
         self.depth.fetch_sub(1, Ordering::AcqRel);
     }
@@ -1543,20 +1670,28 @@ impl Drop for ProbeGuard {
 /// Callback fetching up to `len` bytes starting at `offset` for isolated probe/seek reads.
 pub type ProbeFetcherFn = Arc<dyn Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync>;
 
+/// Single cached byte page stored in [`ProbePageCache`].
 struct ProbePage {
+    /// Absolute stream byte offset where `data` starts.
     offset: u64,
+    /// Cached byte slice fetched at `offset`.
     data: Vec<u8>,
 }
 
+/// Bounded FIFO page cache backing isolated container/seek probe reads without disturbing `Body`.
 #[derive(Default)]
 struct ProbePageCache {
+    /// Cached pages ordered from oldest (`front`) to most recently inserted (`back`).
     pages: VecDeque<ProbePage>,
 }
 
 impl ProbePageCache {
+    /// Default page size (64 KB) aligned for probe/seek range fetches.
     const PAGE_SIZE: usize = 64 * 1024;
+    /// Maximum number of pages retained in the cache before FIFO eviction.
     const MAX_PAGES: usize = 48;
 
+    /// Copies cached bytes starting at `offset` into `out`, returning the byte count copied (`0` on miss).
     fn read_cached(&self, offset: u64, out: &mut [u8]) -> usize {
         if out.is_empty() {
             return 0;
@@ -1574,6 +1709,7 @@ impl ProbePageCache {
         0
     }
 
+    /// Inserts `data` at `offset`, replacing any existing page at `offset` and evicting the oldest page if full.
     fn insert(&mut self, offset: u64, data: Vec<u8>) {
         if data.is_empty() {
             return;
@@ -1585,6 +1721,7 @@ impl ProbePageCache {
         self.pages.push_back(ProbePage { offset, data });
     }
 
+    /// Removes all cached probe pages.
     fn clear(&mut self) {
         self.pages.clear();
     }
@@ -1593,23 +1730,37 @@ impl ProbePageCache {
 /// Container-specific framing parameters for exact in-RAM buffered range scanning.
 #[derive(Debug, Clone)]
 pub enum BufferedBoundaryKind {
+    /// No container-specific frame snapping; uses raw `ByteTimeMap` interpolation.
     None,
+    /// Ogg bitstream framing parameters for page-boundary scanning.
     Ogg {
+        /// Logical bitstream serial number to match during Ogg page scans.
         serial: u32,
+        /// Audio sample rate in Hz used to convert granule positions to milliseconds.
         sample_rate: u32,
+        /// Initial codec pre-skip samples subtracted from granule positions.
         pre_skip: u64,
     },
+    /// Native FLAC framing parameters for frame-header scanning.
     Flac {
+        /// Stream sample rate in Hz.
         sample_rate: u32,
+        /// Minimum block size in samples from `STREAMINFO`.
         min_bs: u16,
+        /// Maximum block size in samples from `STREAMINFO`.
         max_bs: u16,
     },
+    /// WavPack block framing parameters for block-header scanning.
     WavPack {
+        /// Stream sample rate in Hz.
         sample_rate: u32,
     },
+    /// Matroska/WebM container framing parameters for Cluster scanning.
     Mkv {
+        /// Matroska `TimecodeScale` in nanoseconds per tick.
         timecode_scale_ns: u64,
     },
+    /// MP3 stream with Xing/LAME VBR timing, applying a conservative tail safety margin.
     Mp3Xing,
     /// Sorted exact frame boundaries `(byte_offset, start_ms)` with terminal `(end_byte, dur_ms)`.
     ExactFrames(Vec<(u64, i64)>),
@@ -1706,38 +1857,61 @@ pub enum VodAction {
     },
 }
 
+/// Mutex-protected mutable state of an [`HlsVodState`] prefetch and seek coordinator.
 struct HlsVodInner {
+    /// Index of the next playlist segment to fetch sequentially.
     next_fetch_idx: usize,
+    /// End timestamp in milliseconds of the furthest fetched segment in the current epoch.
     loaded_end_ms: i64,
+    /// Cumulative byte offset in the body ring reached by segments committed in the current epoch.
     cum_bytes: u64,
+    /// Cumulative media timestamp in milliseconds reached by segments committed in the current epoch.
     cum_ms: i64,
+    /// Active jump epoch currently being fetched by the background streamer.
     current_epoch: u64,
+    /// Highest jump epoch whose ring flush and window reset have completed.
     accepted_epoch: u64,
+    /// Queued `(segment_index, epoch)` jump waiting for the streamer to acknowledge.
     pending_jump: Option<(usize, u64)>,
+    /// True once EOF has been dispatched for `current_epoch`.
     eof_marked: bool,
+    /// Ordered `(seg_idx, byte_start, byte_end, start_ms, end_ms)` spans fed into the ring.
     fed_spans: Vec<(usize, u64, u64, i64, i64)>,
+    /// Bounded FIFO cache of `(seg_idx, raw_bytes)` for fast backward segment seeks.
     cached_segments: VecDeque<(usize, Vec<u8>)>,
 }
 
 /// Shared synchronization controller coordinating bounded HLS VOD prefetching and segment-level seeks.
 pub struct HlsVodState {
+    /// Ordered list of media segments in the VOD playlist.
     segments: Vec<HlsVodSegment>,
+    /// Total VOD playlist duration in milliseconds.
     total_duration_ms: i64,
+    /// Initial stream byte offset where demuxed audio payload starts.
     audio_start_offset: u64,
+    /// Bounded forward lookahead window target in milliseconds.
     lookahead_ms: i64,
+    /// Current playback cursor position in milliseconds.
     cursor_ms: AtomicI64,
+    /// Atomic mirror of `inner.loaded_end_ms` for lock-free lookahead checks.
     loaded_end_ms_atomic: AtomicI64,
+    /// Monotonic counter incremented on each requested segment jump.
     jump_epoch: AtomicU64,
+    /// Mutex-protected HLS VOD fetch and jump state.
     inner: Mutex<HlsVodInner>,
+    /// Condition variable waking the streamer and seek waiters.
     wake: Condvar,
 }
 
 impl HlsVodState {
     /// Default bounded forward prefetch window in milliseconds (`30s`, ~3 segments on 10s HLS).
     pub const DEFAULT_LOOKAHEAD_MS: i64 = 30_000;
+    /// Maximum number of downloaded HLS segments retained in the in-memory FIFO cache.
     const MAX_CACHED_SEGMENTS: usize = 8;
 
-    /// Initializes HLS VOD state right after segment `0` has been pushed into `session`.
+    /// Initializes HLS VOD state from `segments`, `total_duration_ms`, and `audio_start_offset`
+    /// right after segment `0` (`first_segment_bytes`, ending at `first_body_end` with `first_dur_ms`)
+    /// has been pushed into the session.
     pub fn new(
         segments: Vec<HlsVodSegment>,
         total_duration_ms: i64,
@@ -1746,6 +1920,13 @@ impl HlsVodState {
         first_body_end: u64,
         first_dur_ms: i64,
     ) -> Arc<Self> {
+        crate::map_log!(
+            3,
+            "[HLS_VOD] HlsVodState::new segments={}, total_duration_ms={}, audio_start={}",
+            segments.len(),
+            total_duration_ms,
+            audio_start_offset
+        );
         let mut cached = VecDeque::with_capacity(Self::MAX_CACHED_SEGMENTS);
         cached.push_back((0, first_segment_bytes));
         let fed_spans = vec![(0, audio_start_offset, first_body_end, 0, first_dur_ms)];
@@ -1798,13 +1979,13 @@ impl HlsVodState {
         idx.min(self.segments.len() - 1)
     }
 
-    /// Returns segment descriptor by index.
+    /// Returns the segment descriptor at `idx`, if in bounds.
     #[inline]
     pub fn segment(&self, idx: usize) -> Option<&HlsVodSegment> {
         self.segments.get(idx)
     }
 
-    /// Updates playback cursor timestamp (ms) and wakes the streamer when lookahead falls below target.
+    /// Updates playback cursor timestamp `ms` and wakes the streamer when lookahead falls below target.
     pub fn update_cursor_ms(&self, ms: i64) {
         let clamped = ms.max(0);
         self.cursor_ms.store(clamped, Ordering::Release);
@@ -1854,6 +2035,12 @@ impl HlsVodState {
         let mut guard = lock_unpoisoned(&self.inner);
         let epoch = self.jump_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         guard.pending_jump = Some((clamped_idx, epoch));
+        crate::map_log!(
+            4,
+            "[HLS_VOD] request_jump seg_idx={}, epoch={}",
+            clamped_idx,
+            epoch
+        );
         self.wake.notify_all();
         epoch
     }
@@ -1893,6 +2080,13 @@ impl HlsVodState {
         guard.fed_spans.clear();
         self.loaded_end_ms_atomic.store(start_ms, Ordering::Release);
         self.cursor_ms.store(start_ms, Ordering::Release);
+        crate::map_log!(
+            4,
+            "[HLS_VOD] take_pending_jump seg_idx={}, epoch={}, start_ms={}",
+            seg_idx,
+            epoch,
+            start_ms
+        );
         Some((seg_idx, epoch, start_ms))
     }
 
@@ -1900,6 +2094,7 @@ impl HlsVodState {
     pub fn mark_jump_accepted(&self, epoch: u64) {
         let mut guard = lock_unpoisoned(&self.inner);
         guard.accepted_epoch = guard.accepted_epoch.max(epoch);
+        crate::map_log!(4, "[HLS_VOD] mark_jump_accepted epoch={}", epoch);
         self.wake.notify_all();
     }
 
@@ -1940,7 +2135,8 @@ impl HlsVodState {
             .map(|(_, bytes)| bytes.clone())
     }
 
-    /// Stores downloaded segment bytes in a bounded FIFO cache so local backward seeks avoid HTTP fetches.
+    /// Stores downloaded segment `bytes` for `seg_idx` in a bounded FIFO cache so local backward
+    /// seeks avoid HTTP fetches.
     pub fn put_cached_segment(&self, seg_idx: usize, bytes: Vec<u8>) {
         let mut guard = lock_unpoisoned(&self.inner);
         if guard.cached_segments.iter().any(|(idx, _)| *idx == seg_idx) {
@@ -1952,7 +2148,8 @@ impl HlsVodState {
         guard.cached_segments.push_back((seg_idx, bytes));
     }
 
-    /// Records a newly fetched segment under `epoch`, returning `(end_byte, end_ms)` when `epoch` is still current.
+    /// Records a newly fetched `seg_idx` of `payload_len` bytes and `duration_ms` under `epoch`,
+    /// returning `(end_byte, end_ms)` when `epoch` is still current.
     pub fn commit_segment_span(
         &self,
         epoch: u64,
@@ -1999,7 +2196,8 @@ impl StreamSession {
     /// Default circular audio ring capacity (8 MB).
     pub const DEFAULT_RING_CAPACITY: usize = StreamBuffer::DEFAULT_BODY_CAPACITY;
 
-    /// Creates a new three-buffer `StreamSession`.
+    /// Creates a new three-buffer `StreamSession` with `capacity_bytes`, optional `total_size`,
+    /// and `is_live` flag using the default sliding-window configuration.
     pub fn new(capacity_bytes: usize, total_size: Option<u64>, is_live: bool) -> Self {
         Self::with_config(
             capacity_bytes,
@@ -2010,7 +2208,8 @@ impl StreamSession {
         )
     }
 
-    /// Creates a new three-buffer `StreamSession` with custom [`SlidingWindowConfig`] and optional `ByteFetchTask`.
+    /// Creates a new three-buffer `StreamSession` with `capacity_bytes`, optional `total_size`,
+    /// `is_live` mode, custom sliding-window `config`, and optional pull-mode `fetcher`.
     pub fn with_config(
         capacity_bytes: usize,
         total_size: Option<u64>,
@@ -2018,6 +2217,13 @@ impl StreamSession {
         config: SlidingWindowConfig,
         fetcher: Option<ByteFetchTask>,
     ) -> Self {
+        crate::map_log!(
+            3,
+            "[SESSION] StreamSession::with_config capacity={}, total_size={:?}, is_live={}",
+            capacity_bytes,
+            total_size,
+            is_live
+        );
         let head = StreamBuffer::new_linear(
             StreamBuffer::DEFAULT_HEAD_INITIAL_SIZE,
             StreamBuffer::DEFAULT_MIN_GROWTH,
@@ -2070,6 +2276,7 @@ impl StreamSession {
         session
     }
 
+    /// Returns the sliding-window configuration used when full-file RAM prefetch is active.
     #[inline]
     fn full_file_prefetch_window_config() -> SlidingWindowConfig {
         SlidingWindowConfig {
@@ -2106,6 +2313,12 @@ impl StreamSession {
             .saturating_sub(start);
         let cap = self.body.circular_metrics().2;
         if payload_bytes > 0 && payload_bytes <= cap as u64 {
+            crate::map_log!(
+                3,
+                "[SESSION] enable_full_file_prefetch_if_fits enabled (payload_bytes={}, capacity={})",
+                payload_bytes,
+                cap
+            );
             self.full_file_prefetch.store(true, Ordering::Release);
             let (byte_rate, playback_rate) = self
                 .body
@@ -2138,6 +2351,15 @@ impl StreamSession {
             SlidingWindowConfig::DEFAULT_BYTE_RATE_PER_SEC
         };
 
+        crate::map_log!(
+            4,
+            "[SESSION] configure_stream_timing bitrate_bps={}, duration_ms={}, playback_rate={:.2}, resolved_byte_rate={}",
+            bitrate_bps,
+            duration_ms,
+            playback_rate,
+            byte_rate
+        );
+
         let cfg = if self.full_file_prefetch.load(Ordering::Acquire) {
             Self::full_file_prefetch_window_config()
         } else {
@@ -2150,7 +2372,7 @@ impl StreamSession {
             .configure_sliding_window(cfg, byte_rate, playback_rate);
     }
 
-    /// Updates the playback speed multiplier on `Body` to dynamically scale forward prefetch/window sizes.
+    /// Updates the `playback_rate` multiplier on `Body` to dynamically scale forward prefetch/window sizes.
     pub fn set_playback_rate(&self, playback_rate: f32) {
         self.body.set_playback_rate(playback_rate);
     }
@@ -2190,7 +2412,8 @@ impl StreamSession {
         }
     }
 
-    /// Marks whether the tail region past `audio_end` contains required container atoms (e.g. non-faststart MP4 `moov`).
+    /// Sets `has_tail` indicating whether the tail region past `audio_end` contains required
+    /// container atoms (e.g. non-faststart MP4 `moov`).
     #[inline]
     pub fn set_has_container_tail(&self, has_tail: bool) {
         self.has_container_tail.store(has_tail, Ordering::Release);
@@ -2216,7 +2439,8 @@ impl StreamSession {
         self.ingest_classified_with_options(initial_data, tail_data, false)
     }
 
-    /// Variant of [`Self::ingest_classified`] allowing offline analysis decks to skip populating `Body` RAM.
+    /// Variant of [`Self::ingest_classified`] ingesting `initial_data` and optional `tail_data`,
+    /// with `skip_body_payload` allowing offline analysis decks to skip populating `Body` RAM.
     pub fn ingest_classified_with_options(
         &self,
         initial_data: &[u8],
@@ -2242,6 +2466,15 @@ impl StreamSession {
 
         let (boundary, slices) =
             StreamClassifier::classify_initial_stream(initial_data, resolved_tail, total_size_i64);
+
+        crate::map_log!(
+            4,
+            "[SESSION] ingest_classified initial_len={}, audio_start={}, audio_end={}, skip_body={}",
+            initial_data.len(),
+            boundary.audio_start,
+            boundary.audio_end,
+            skip_body_payload
+        );
 
         if boundary.audio_start > 0 {
             self.set_audio_start(boundary.audio_start as u64);
@@ -2275,7 +2508,7 @@ impl StreamSession {
         boundary
     }
 
-    /// Populates trailing metadata at `tail_offset` in the `Metadata` sparse buffer
+    /// Populates trailing metadata `tail_bytes` at `tail_offset` in the `Metadata` sparse buffer
     /// and sets `audio_end` on the `Body` buffer to prevent EOF decoder chirps.
     pub fn set_tail(&self, tail_bytes: &[u8], tail_offset: Option<u64>) {
         let resolved_offset = tail_offset
@@ -2302,7 +2535,7 @@ impl StreamSession {
         Vec::new()
     }
 
-    /// Configures the byte offset where the audio payload begins in the stream.
+    /// Configures the byte offset `start` where the audio payload begins in the stream.
     pub fn set_audio_start(&self, start: u64) {
         self.audio_start.store(start, Ordering::Release);
         self.body.set_circular_anchor(start);
@@ -2314,13 +2547,13 @@ impl StreamSession {
         self.audio_start.load(Ordering::Acquire)
     }
 
-    /// Configures the byte offset where the audio payload ends in the stream.
+    /// Configures the byte offset `end` where the audio payload ends in the stream.
     pub fn set_audio_end(&self, end: u64) {
         self.audio_end.store(end, Ordering::Release);
         self.body.set_audio_end(Some(end));
     }
 
-    /// Configures whether the consumer is actively decoding audio frames.
+    /// Sets `decoding` to indicate whether the consumer is actively decoding audio frames.
     pub fn set_decoding_audio(&self, decoding: bool) {
         self.is_decoding_audio.store(decoding, Ordering::Release);
     }
@@ -2331,13 +2564,18 @@ impl StreamSession {
         self.is_decoding_audio.load(Ordering::Acquire)
     }
 
-    /// Feeds a sequential audio chunk into the circular `Body` buffer.
+    /// Feeds a sequential audio `chunk` into the circular `Body` buffer.
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if aborted or [`BufferError::Busy`] if the ring cannot
+    /// accept `chunk` without overwriting protected backward-retention data.
     pub fn feed_chunk(&self, chunk: &[u8]) -> Result<usize, BufferError> {
         let cursor = self.body.cursor();
         self.body.feed_sequential(cursor, chunk)
     }
 
-    /// Suspends the producer thread until `min_free_bytes` are available in the circular `Body` buffer.
+    /// Suspends the producer thread until `min_free_bytes` are available in the circular `Body`
+    /// buffer, or until `timeout` elapses or the session is aborted.
     pub fn wait_for_free_space(&self, min_free_bytes: usize, timeout: Duration) -> bool {
         self.body.wait_for_free_space(min_free_bytes, timeout)
     }
@@ -2348,6 +2586,9 @@ impl StreamSession {
     }
 
     /// Writes `bytes` at an explicit `offset` into the appropriate tier (`Head` or `Body`).
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if the target buffer has been aborted.
     pub fn write_at(&self, offset: u64, bytes: &[u8]) -> Result<usize, BufferError> {
         if bytes.is_empty() {
             return Ok(0);
@@ -2367,7 +2608,11 @@ impl StreamSession {
         }
     }
 
-    /// Non-blocking composite read across `Head`, `Body`, and (when probing) `Metadata`.
+    /// Non-blocking composite read at `offset` into `out` across `Head`, `Body`, and (when probing) `Metadata`.
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if aborted or [`BufferError::WouldBlock`] if the requested
+    /// range is not currently cached.
     pub fn read_at(&self, offset: u64, out: &mut [u8]) -> Result<usize, BufferError> {
         if out.is_empty() {
             return Ok(0);
@@ -2454,7 +2699,7 @@ impl StreamSession {
         }
     }
 
-    /// Publishes a newly dispatched seek generation and wakes any blocked reader thread.
+    /// Publishes a newly dispatched seek generation `gen` and wakes any blocked reader thread.
     pub fn publish_seek_gen(&self, gen: u64) {
         self.latest_seek_gen.fetch_max(gen, Ordering::SeqCst);
         let _guard = lock_unpoisoned(&self.body.backend);
@@ -2479,7 +2724,12 @@ impl StreamSession {
         self.latest_seek_gen.load(Ordering::Acquire) > self.ack_seek_gen.load(Ordering::Acquire)
     }
 
-    /// Blocking composite read across `Head` and `Body` with `Condvar` suspension.
+    /// Blocking composite read at `offset` into `out` across `Head` and `Body` with `Condvar`
+    /// suspension bounded by idle `timeout`.
+    ///
+    /// # Errors
+    /// Returns [`BufferError::Aborted`] if aborted, [`BufferError::SeekInterrupted`] if preempted
+    /// by a newer seek generation, or [`BufferError::WouldBlock`] on idle/hard timeout.
     pub fn read_blocking(
         &self,
         offset: u64,
@@ -2494,6 +2744,11 @@ impl StreamSession {
 
         loop {
             if self.has_pending_seek_preempt() {
+                crate::map_log!(
+                    4,
+                    "[SESSION] read_blocking preempted by pending seek at offset={}",
+                    offset
+                );
                 return Err(BufferError::SeekInterrupted);
             }
             match self.read_at(offset, out) {
@@ -2503,6 +2758,11 @@ impl StreamSession {
                         return Err(BufferError::Aborted);
                     }
                     if self.has_pending_seek_preempt() {
+                        crate::map_log!(
+                            4,
+                            "[SESSION] read_blocking preempted by pending seek at offset={}",
+                            offset
+                        );
                         return Err(BufferError::SeekInterrupted);
                     }
                     let (r_start, r_end, _) = self.body.circular_metrics();
@@ -2527,6 +2787,13 @@ impl StreamSession {
                     let idle_elapsed = idle_start.elapsed();
                     let hard_elapsed = hard_start.elapsed();
                     if idle_elapsed >= max_wait || hard_elapsed >= hard_cap {
+                        crate::map_log!(
+                            2,
+                            "[SESSION] read_blocking timed out at offset={} (idle={:?}, hard={:?})",
+                            offset,
+                            idle_elapsed,
+                            hard_elapsed
+                        );
                         return Err(BufferError::WouldBlock);
                     }
                     let slice_wait = (max_wait - idle_elapsed)
@@ -2546,7 +2813,7 @@ impl StreamSession {
         }
     }
 
-    /// Advances the active read cursor on `Body` and notifies any bounded HLS VOD lookahead controller.
+    /// Advances the active read `cursor` on `Body` and notifies any bounded HLS VOD lookahead controller.
     pub fn advance_read_cursor(&self, cursor: u64) {
         self.body.set_cursor(cursor);
         if let Some(ref vod) = *read_unpoisoned(&self.hls_vod) {
@@ -2555,7 +2822,7 @@ impl StreamSession {
         }
     }
 
-    /// Attaches an [`HlsVodState`] controller for bounded-lookahead streaming and segment seeks.
+    /// Attaches an [`HlsVodState`] controller `vod` for bounded-lookahead streaming and segment seeks.
     pub fn set_hls_vod(&self, vod: Arc<HlsVodState>) {
         let mut guard = write_unpoisoned(&self.hls_vod);
         *guard = Some(vod);
@@ -2572,7 +2839,8 @@ impl StreamSession {
         self.body.data_signal.notify_all();
     }
 
-    /// Resets [`ByteTimeMap`] anchors for a fresh HLS VOD segment window starting at `(audio_start, start_ms)`.
+    /// Resets [`ByteTimeMap`] anchors for a fresh HLS VOD segment window starting at
+    /// `(audio_start, start_ms)` with length `duration_ms`.
     pub fn reset_hls_vod_window(&self, audio_start: u64, start_ms: i64, duration_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.reset_window(audio_start, start_ms, duration_ms);
@@ -2580,6 +2848,11 @@ impl StreamSession {
 
     /// Flushes `Body` to `new_stream_offset` after an uncached seek.
     pub fn flush(&self, new_stream_offset: u64) {
+        crate::map_log!(
+            4,
+            "[SESSION] flush new_stream_offset={}",
+            new_stream_offset
+        );
         self.last_flush_target
             .store(new_stream_offset, Ordering::Release);
         self.last_flush_seq.fetch_add(1, Ordering::AcqRel);
@@ -2605,7 +2878,7 @@ impl StreamSession {
         self.probe_read_end.store(0, Ordering::Release);
     }
 
-    /// Records a demuxer seek target byte encountered while in probe mode and resets the
+    /// Records a demuxer seek target byte `offset` encountered while in probe mode and resets the
     /// sequential post-seek probe read cursor so earlier bisection jumps don't pollute it.
     #[inline]
     pub fn note_probe_seek_target(&self, offset: u64) {
@@ -2613,7 +2886,7 @@ impl StreamSession {
         self.probe_read_end.store(offset, Ordering::Release);
     }
 
-    /// Records the cursor offset after a sequential probe read.
+    /// Records the cursor offset `end_offset` after a sequential probe read.
     #[inline]
     pub fn note_probe_read_end(&self, end_offset: u64) {
         self.probe_read_end.store(end_offset, Ordering::Release);
@@ -2631,6 +2904,12 @@ impl StreamSession {
     /// probing reads came from `ProbePageCache` rather than triggering `flush_circular`, seeding
     /// any cached bytes up to `resume_cursor` so `MediaSourceStream` continues cleanly with zero shift.
     pub fn reanchor_circular_after_probe_seek(&self, anchor_byte: u64, resume_cursor: u64) {
+        crate::map_log!(
+            4,
+            "[SESSION] reanchor_circular_after_probe_seek anchor_byte={}, resume_cursor={}",
+            anchor_byte,
+            resume_cursor
+        );
         let audio_start = self.audio_start.load(Ordering::Acquire);
         if anchor_byte < audio_start {
             return;
@@ -2683,6 +2962,9 @@ impl StreamSession {
 
     /// Updates the read cursor to `target_offset`, serving from `[Back | Ahead]` on a cache hit
     /// or re-anchoring the circular window (`flush_circular`) on an uncached seek during audio decoding.
+    ///
+    /// # Errors
+    /// Currently infallible (`Ok(())`), returning `Result` for seek API compatibility.
     pub fn seek(&self, target_offset: u64) -> Result<(), BufferError> {
         let head_len = self.head.linear_len() as u64;
         let audio_start = self.audio_start.load(Ordering::Acquire);
@@ -2709,7 +2991,7 @@ impl StreamSession {
         } else if self.is_decoding_audio.load(Ordering::Acquire) && target_offset >= audio_start {
             crate::map_log!(
                 4,
-                "StreamSession::seek flush_circular target={} (r_start={}, r_end={}, head={}, eof={}, probe={})",
+                "[SESSION] StreamSession::seek flush_circular target={} (r_start={}, r_end={}, head={}, eof={}, probe={})",
                 target_offset,
                 r_start,
                 r_end,
@@ -2764,6 +3046,7 @@ impl StreamSession {
 
     /// Marks EOF on `Head`, `Body`, and `Metadata`.
     pub fn mark_eof(&self) {
+        crate::map_log!(4, "[SESSION] StreamSession::mark_eof");
         self.head.mark_eof();
         self.body.mark_eof();
         self.metadata.mark_eof();
@@ -2771,6 +3054,7 @@ impl StreamSession {
 
     /// Aborts pending operations on `Head`, `Body`, and `Metadata`.
     pub fn abort(&self) {
+        crate::map_log!(3, "[SESSION] StreamSession::abort");
         self.head.abort();
         self.body.abort();
         self.metadata.abort();
@@ -2817,7 +3101,7 @@ impl StreamSession {
         self.metadata.version()
     }
 
-    /// Updates dynamic ICY stream metadata in `Metadata`.
+    /// Updates dynamic ICY stream metadata `data` in `Metadata`.
     pub fn set_icy_meta(&self, data: &[u8]) {
         self.metadata.set_icy_meta(data);
     }
@@ -2876,7 +3160,7 @@ impl StreamSession {
         self.supports_range.load(Ordering::Acquire)
     }
 
-    /// Sets whether the underlying stream source supports HTTP Range (`206`) random access.
+    /// Sets `supported` indicating whether the underlying stream source supports HTTP Range (`206`) random access.
     #[inline]
     pub fn set_supports_range(&self, supported: bool) {
         self.supports_range.store(supported, Ordering::Release);
@@ -2898,8 +3182,13 @@ impl StreamSession {
         self.probe_depth.load(Ordering::Acquire) > 0
     }
 
-    /// Attaches or clears the on-demand range fetcher used during isolated probe/seek reads.
+    /// Attaches or clears the on-demand range `fetcher` used during isolated probe/seek reads.
     pub fn set_probe_fetcher(&self, fetcher: Option<ProbeFetcherFn>) {
+        crate::map_log!(
+            4,
+            "[SESSION] set_probe_fetcher active={}",
+            fetcher.is_some()
+        );
         let mut slot = write_unpoisoned(&self.probe_fetcher);
         *slot = fetcher;
     }
@@ -2918,8 +3207,8 @@ impl StreamSession {
         read_unpoisoned(&self.probe_fetcher).clone()
     }
 
-    /// Serves an isolated probe/seek read from the bounded probe cache or via HTTP Range
-    /// without mutating or flushing the circular `Body` ring buffer.
+    /// Serves an isolated probe/seek read at `offset` into `out` from the bounded probe cache
+    /// or via HTTP Range without mutating or flushing the circular `Body` ring buffer.
     ///
     /// Returns `None` when random-access probing is unavailable (caller should fall back
     /// to standard streaming wait).
@@ -2985,6 +3274,12 @@ impl StreamSession {
         let fetch_len = (clamped_end - fetch_start) as usize;
 
         let mut page_offset = fetch_start;
+        crate::map_log!(
+            5,
+            "[SESSION] read_via_probe_cache fetch offset={}, len={}",
+            fetch_start,
+            fetch_len
+        );
         let mut data = fetcher(fetch_start, fetch_len);
         // If aligned page ended before requested offset (short read), retry directly at offset.
         if let Some(ref bytes) = data {
@@ -3009,6 +3304,12 @@ impl StreamSession {
         }
 
         let Some(bytes) = data else {
+            crate::map_log!(
+                2,
+                "[SESSION] read_via_probe_cache probe fetcher returned None at offset={}, len={}",
+                page_offset,
+                fetch_len
+            );
             return None;
         };
         if bytes.is_empty() {
@@ -3047,12 +3348,6 @@ impl StreamSession {
         self.body.circular_metrics()
     }
 
-    /// Returns the current physical read cursor of `Body`.
-    #[inline]
-    pub fn body_cursor(&self) -> u64 {
-        self.body.cursor()
-    }
-
     /// Returns bytes currently available ahead of `Body`'s read cursor inside RAM without waiting on HTTP.
     #[inline]
     pub fn body_unread_ahead(&self) -> u64 {
@@ -3065,38 +3360,33 @@ impl StreamSession {
         }
     }
 
-    /// Installs container framing rules for exact decodable buffered range snapping.
+    /// Installs container framing rules `kind` for exact decodable buffered range snapping.
     pub fn set_buffered_boundary_kind(&self, kind: BufferedBoundaryKind) {
+        crate::map_log!(4, "[SESSION] set_buffered_boundary_kind");
         *write_unpoisoned(&self.boundary_kind) = kind;
         *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Reads bytes directly from the in-RAM circular `Body` cache at `offset` without HTTP I/O.
+    /// Reads bytes directly from the in-RAM circular `Body` cache at `offset` into `out` without HTTP I/O.
     pub fn read_cached_body_at(&self, offset: u64, out: &mut [u8]) -> usize {
         self.body.read_at(offset, out).unwrap_or(0)
     }
 
-    /// Inserts a probed byte slice into `ProbePageCache` for subsequent zero-HTTP reuse.
-    pub fn cache_probe_slice(&self, offset: u64, data: Vec<u8>) {
-        let mut cache = lock_unpoisoned(&self.probe_cache);
-        cache.insert(offset, data);
-    }
-
-    /// Configures stream payload bounds and total duration on the internal [`ByteTimeMap`].
+    /// Configures stream payload bounds (`audio_start`, `audio_end`) and `duration_ms` on the internal [`ByteTimeMap`].
     pub fn configure_byte_time_map(&self, audio_start: u64, audio_end: u64, duration_ms: i64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.set_bounds(audio_start, audio_end, duration_ms);
         *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Refines the logical start byte offset where `t = 0 ms` begins on [`ByteTimeMap`].
+    /// Refines the logical start byte offset `first_audio_byte` where `t = 0 ms` begins on [`ByteTimeMap`].
     pub fn refine_byte_time_audio_start(&self, first_audio_byte: u64) {
         let mut map = write_unpoisoned(&self.byte_time_map);
         map.refine_audio_start(first_audio_byte);
         *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Installs pre-extracted container index `(byte_offset, time_ms)` anchors.
+    /// Installs pre-extracted container index `(byte_offset, time_ms)` anchors `pts`.
     pub fn set_byte_time_anchors(&self, pts: Vec<(u64, i64)>) {
         if pts.is_empty() {
             return;
@@ -3106,7 +3396,7 @@ impl StreamSession {
         *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Merges newly discovered anchors with any existing runtime/seek anchors cleanly.
+    /// Merges newly discovered anchors `pts` with any existing runtime/seek anchors cleanly.
     pub fn merge_byte_time_anchors(&self, pts: Vec<(u64, i64)>) {
         if pts.is_empty() {
             return;
@@ -3121,7 +3411,8 @@ impl StreamSession {
         read_unpoisoned(&self.byte_time_map).anchors().to_vec()
     }
 
-    /// Estimates the timestamp in milliseconds for an arbitrary `byte_offset` via [`ByteTimeMap`].
+    /// Estimates the timestamp in milliseconds for an arbitrary `byte_offset` via [`ByteTimeMap`],
+    /// using conservative clamping when `is_range_start` is true.
     pub fn mapped_byte_to_ms(&self, byte_offset: u64, is_range_start: bool) -> i64 {
         read_unpoisoned(&self.byte_time_map).byte_to_ms(byte_offset, is_range_start)
     }
@@ -3136,12 +3427,6 @@ impl StreamSession {
         read_unpoisoned(&self.byte_time_map).has_anchors()
     }
 
-    /// Records a monotonic packet `(byte_offset, time_ms)` observation into [`ByteTimeMap`].
-    pub fn record_byte_time_anchor(&self, byte_offset: u64, time_ms: i64) {
-        let mut map = write_unpoisoned(&self.byte_time_map);
-        map.record_anchor(byte_offset, time_ms);
-    }
-
     /// Records an authoritative seek/frame anchor `(byte_offset, time_ms)`, overriding
     /// conflicting nearby coarse probe anchors so `mapped_buffered_range` matches the actual seek.
     pub fn record_verified_byte_time_anchor(&self, byte_offset: u64, time_ms: i64) {
@@ -3150,7 +3435,7 @@ impl StreamSession {
         *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Marks whether the open FLAC stream already carried an embedded `SEEKTABLE` block.
+    /// Sets `present` indicating whether the open FLAC stream already carried an embedded `SEEKTABLE` block.
     #[inline]
     pub fn set_has_native_flac_seektable(&self, present: bool) {
         self.has_native_flac_seektable.store(present, Ordering::Release);
@@ -3162,7 +3447,7 @@ impl StreamSession {
         self.has_native_flac_seektable.load(Ordering::Acquire)
     }
 
-    /// Records verified `(file_byte_offset, sample_number)` FLAC frame seek points for synthetic
+    /// Records verified `(file_byte_offset, sample_number)` FLAC frame seek points `pts` for synthetic
     /// `SEEKTABLE` synthesis on seektable-less streams.
     pub fn record_flac_seek_points(&self, pts: &[(u64, u64)]) {
         if pts.is_empty() {
@@ -3186,8 +3471,8 @@ impl StreamSession {
         *lock_unpoisoned(&self.last_mapped_window) = None;
     }
 
-    /// Maps the active circular `[start_byte, end_byte]` cache window into conservative `[start_ms, end_ms]`,
-    /// snapping endpoints to 100% complete decodable container units inside RAM with zero HTTP I/O.
+    /// Maps the active circular `[start_byte, end_byte]` cache window into conservative `[start_ms, end_ms]`
+    /// clamped against `duration_ms`, snapping endpoints to 100% complete decodable container units inside RAM with zero HTTP I/O.
     pub fn mapped_buffered_range(&self, duration_ms: i64) -> (i64, i64) {
         let (r_start, r_end, _cap) = self.body.circular_metrics();
         if r_end <= r_start {

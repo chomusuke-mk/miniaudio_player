@@ -27,39 +27,69 @@ use crate::sync::{lock_unpoisoned, read_unpoisoned, CancelToken};
 /// or active track replacement after `removeAt`) so UI telemetry stays synchronized.
 pub type AsyncCommitCallback = Arc<dyn Fn(TrackTransitionSnapshot) + Send + Sync>;
 
+/// Internal wake messages sent to the `map-ctrl-coord` coordinator thread.
 enum CoordWake {
-    PrewarmCheck { retry_if_failed: bool },
+    /// Triggers an asynchronous standby prewarm evaluation.
+    PrewarmCheck {
+        /// When `true`, retries prewarming even if the same `(epoch, deck, item)` was already attempted.
+        retry_if_failed: bool,
+    },
+    /// Requests the coordinator thread to exit cleanly.
     Shutdown,
 }
 
+/// Planning outcome produced on `map-engine-clock` for a user-initiated playback transition.
 enum PlannedDispatch {
+    /// Transition completed immediately without opening a new stream (e.g. standby promoted or seek).
     Immediate {
+        /// Authoritative post-transition track snapshot.
         snap: TrackTransitionSnapshot,
+        /// Whether a standby prewarm check should be scheduled immediately.
         needs_prewarm: bool,
     },
+    /// Transition requires opening a track asynchronously on [`IoWorkerPool`].
     NeedOpen {
+        /// Specification of the track and deck configuration to open off-clock.
         spec: PlannedOpenSpec,
+        /// Provisional UI snapshot emitted immediately while I/O opens in the background.
         provisional_snap: TrackTransitionSnapshot,
+        /// Whether ReplayGain telemetry should be recalculated upon commit.
         include_replay_gain: bool,
     },
 }
 
+/// Shared inner state owned by [`ControlCoordinator`] and its background coordinator thread.
 struct CoordInner {
+    /// Handle to the single-owner real-time engine actor.
     engine: EngineActorHandle,
+    /// Interruptible I/O worker pool executing active opens and standby prewarms.
     io_pool: Mutex<Option<Arc<IoWorkerPool>>>,
+    /// Registry of active custom PCM/demuxed stream factories aborted on queue reset/stop.
     custom_registry: CustomSourceRegistry,
+    /// Monotonic epoch incremented on user transport/queue commands to discard stale opens.
     transport_epoch: AtomicU64,
+    /// Monotonic epoch incremented when queue mutations invalidate standby prewarms.
     prewarm_epoch: AtomicU64,
+    /// Monotonic epoch incremented on seeks, loop-mode changes, and transport resets.
     auto_advance_epoch: AtomicU64,
+    /// Serializes foreground transition planning, open submission, and commit operations.
     dispatch_lock: Mutex<()>,
+    /// Serializes standby prewarm candidate evaluation.
     prewarm_lock: Mutex<()>,
+    /// Deduplication key for the last scheduled prewarm: `(prewarm_epoch, deck_id, open_gen, item_id, source, retried)`.
     last_prewarm: Mutex<Option<(u64, usize, u64, i64, String, bool)>>,
+    /// Deduplication key for an in-flight auto-advance open: `(deck_id, open_gen, seek_epoch)`.
     auto_advance_inflight: Mutex<Option<(usize, u64, u64)>>,
+    /// Indicates whether [`ControlCoordinator::shutdown`] has been invoked.
     disposed: AtomicBool,
+    /// Callback invoked on asynchronous background commits and provisional dispatches.
     on_async_commit: AsyncCommitCallback,
+    /// Bounded wake channel driving `map-ctrl-coord`.
     wake_tx: Sender<CoordWake>,
 }
 
+/// Returns `true` when `active` has reached the auto-crossfade window (`should_auto_xfade` with
+/// `auto_ms > 0`) or hit EOF/track exhaustion.
 #[inline]
 fn is_auto_advance_due(active: &StreamingDeck, should_auto_xfade: bool, auto_ms: u64) -> bool {
     let pos = active.position_ms.load(Ordering::Relaxed);
@@ -76,17 +106,22 @@ fn is_auto_advance_due(active: &StreamingDeck, should_auto_xfade: bool, auto_ms:
 /// Non-blocking orchestrator separating fast RT engine commands from interruptible track I/O.
 #[derive(Clone)]
 pub struct ControlCoordinator {
+    /// Shared coordinator state accessed by FFI callers, `map-ctrl-coord`, and I/O callbacks.
     inner: Arc<CoordInner>,
+    /// Join handle for the `map-ctrl-coord` background thread.
     coord_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl ControlCoordinator {
+    /// Spawns the `map-ctrl-coord` thread and its backing [`IoWorkerPool`], wiring `engine`,
+    /// `custom_registry`, the RT `hint_rx` channel, and the `on_async_commit` callback.
     pub fn spawn(
         engine: EngineActorHandle,
         custom_registry: CustomSourceRegistry,
         hint_rx: Receiver<RtControlHint>,
         on_async_commit: AsyncCommitCallback,
     ) -> Self {
+        crate::map_log!(3, "[COORD] Spawning ControlCoordinator");
         let (wake_tx, wake_rx) = crossbeam_channel::bounded::<CoordWake>(64);
         let reaper = engine.reaper().clone();
 
@@ -136,10 +171,16 @@ impl ControlCoordinator {
 
         let coord_jh = {
             let weak = Arc::downgrade(&inner);
-            thread::Builder::new()
+            match thread::Builder::new()
                 .name("map-ctrl-coord".to_string())
                 .spawn(move || Self::coord_loop(weak, hint_rx, wake_rx))
-                .ok()
+            {
+                Ok(jh) => Some(jh),
+                Err(e) => {
+                    crate::map_log!(1, "[COORD] Failed to spawn map-ctrl-coord thread: {}", e);
+                    None
+                }
+            }
         };
 
         Self {
@@ -148,6 +189,8 @@ impl ControlCoordinator {
         }
     }
 
+    /// Event loop running on `map-ctrl-coord`, multiplexing `wake_rx` control messages and
+    /// `hint_rx` engine lifecycle hints until shutdown or `weak` upgrade failure.
     fn coord_loop(
         weak: Weak<CoordInner>,
         hint_rx: Receiver<RtControlHint>,
@@ -213,24 +256,33 @@ impl ControlCoordinator {
         }
     }
 
-    /// Attaches the shared Dart resolution bridge for subsequent track opens.
+    /// Attaches the shared `dart_resolver` bridge for subsequent track opens.
     pub fn set_dart_resolver(&self, dart_resolver: Arc<DartResolveRegistry>) {
         let _ = self.inner.engine.exec(move |ply| {
             ply.music_manager.set_dart_resolver(dart_resolver);
         });
     }
 
-    /// Replaces the playback queue using fresh pre-built decks so `map-engine-clock` never joins threads.
+    /// Replaces the playback queue with `items` and `custom_factory` using fresh pre-built decks
+    /// so `map-engine-clock` never joins threads.
     pub fn set_queue(
         &self,
         items: Vec<AudioSourceCore>,
         custom_factory: CustomSourceFactory,
     ) -> Result<(f32, f32), String> {
+        let queue_len = items.len();
+        crate::map_log!(3, "[COORD] set_queue(len={})", queue_len);
         let sr = self.inner.engine.snapshots().sample_rate;
-        let clean_a = StreamingDeck::new_deck(sr, 2, 1024)
-            .map_err(|e| format!("Failed to allocate clean deck A: {}", e))?;
-        let clean_b = StreamingDeck::new_deck(sr, 2, 1024)
-            .map_err(|e| format!("Failed to allocate clean deck B: {}", e))?;
+        let clean_a = StreamingDeck::new_deck(sr, 2, 1024).map_err(|e| {
+            let msg = format!("Failed to allocate clean deck A: {}", e);
+            crate::map_log!(1, "[COORD] {}", msg);
+            msg
+        })?;
+        let clean_b = StreamingDeck::new_deck(sr, 2, 1024).map_err(|e| {
+            let msg = format!("Failed to allocate clean deck B: {}", e);
+            crate::map_log!(1, "[COORD] {}", msg);
+            msg
+        })?;
 
         let pre_epoch = self.inner.bump_epochs();
         self.inner.cancel_all_io(pre_epoch);
@@ -257,7 +309,9 @@ impl ControlCoordinator {
         Ok(rg)
     }
 
+    /// Appends `items` to the end of the playback queue and invalidates any stale prewarm.
     pub fn append(&self, items: Vec<AudioSourceCore>) -> Result<(), String> {
+        crate::map_log!(4, "[COORD] append(count={})", items.len());
         self.inner.bump_prewarm_epoch();
         self.inner.cancel_prewarms();
         self.inner.engine.exec(move |ply| {
@@ -267,7 +321,9 @@ impl ControlCoordinator {
         Ok(())
     }
 
+    /// Inserts `item` immediately after the current track and invalidates any stale prewarm.
     pub fn insert_next(&self, item: AudioSourceCore) -> Result<(), String> {
+        crate::map_log!(4, "[COORD] insert_next(track_id={})", item.id);
         self.inner.bump_prewarm_epoch();
         self.inner.cancel_prewarms();
         self.inner.engine.exec(move |ply| {
@@ -277,6 +333,8 @@ impl ControlCoordinator {
         Ok(())
     }
 
+    /// Removes the queue entry at `index`, opening the replacement active track with optional
+    /// `include_meta` metadata if the removed entry was playing, returning `(removed, current_index, reopened)`.
     pub fn remove_at(
         &self,
         index: usize,
@@ -307,10 +365,17 @@ impl ControlCoordinator {
                 return Ok((false, cur_idx, false));
             }
             let Some(spec) = spec_opt else {
+                crate::map_log!(4, "[COORD] remove_at(index={}) removed non-active item", index);
                 self.schedule_prewarm();
                 return Ok((true, cur_idx, false));
             };
 
+            crate::map_log!(
+                3,
+                "[COORD] remove_at(index={}) opening replacement track_id={}",
+                index,
+                spec.item.id
+            );
             let epoch = self.inner.bump_epochs();
             let waiter = OpenWaiter::new();
             self.inner.submit_open_spec(
@@ -335,6 +400,7 @@ impl ControlCoordinator {
         Ok((true, self.inner.engine.snapshots().current_index(), false))
     }
 
+    /// Moves a queue item from `old_index` to `new_index` and refreshes prewarming if changed.
     pub fn reorder(&self, old_index: usize, new_index: usize) -> Result<bool, String> {
         self.inner.bump_prewarm_epoch();
         self.inner.cancel_prewarms();
@@ -343,25 +409,32 @@ impl ControlCoordinator {
             .engine
             .exec(move |ply| ply.music_manager.reorder(old_index, new_index))?;
         if moved {
+            crate::map_log!(4, "[COORD] reorder({} -> {})", old_index, new_index);
             self.schedule_prewarm();
         }
         Ok(moved)
     }
 
+    /// Reorders the queue to match `ordered_ids` and refreshes prewarming if the order changed.
     pub fn reorder_by_ids(&self, ordered_ids: Vec<i64>) -> Result<bool, String> {
         self.inner.bump_prewarm_epoch();
         self.inner.cancel_prewarms();
+        let count = ordered_ids.len();
         let changed = self
             .inner
             .engine
             .exec(move |ply| ply.music_manager.reorder_by_ids(&ordered_ids))?;
         if changed {
+            crate::map_log!(4, "[COORD] reorder_by_ids(count={}) applied", count);
             self.schedule_prewarm();
         }
         Ok(changed)
     }
 
+    /// Clears the queue (preserving the active track when `keep_current` is `true`) and cancels
+    /// affected I/O opens.
     pub fn clear_queue(&self, keep_current: bool) -> Result<i64, String> {
+        crate::map_log!(3, "[COORD] clear_queue(keep_current={})", keep_current);
         if keep_current {
             self.inner.bump_prewarm_epoch();
             self.inner.cancel_prewarms();
@@ -387,6 +460,8 @@ impl ControlCoordinator {
         Ok(idx)
     }
 
+    /// Updates the queue loop `mode` (clamped to `0..=2`), cancelling stale auto-advances and
+    /// prewarms when the mode changes.
     pub fn set_loop_mode(&self, mode: i32) -> Result<bool, String> {
         let clamped = mode.clamp(0, 2);
         let changed = self.inner.engine.exec(move |ply| {
@@ -399,6 +474,7 @@ impl ControlCoordinator {
             }
         })?;
         if changed {
+            crate::map_log!(3, "[COORD] Loop mode changed to {}", clamped);
             self.inner.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
             *lock_unpoisoned(&self.inner.auto_advance_inflight) = None;
             if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
@@ -411,6 +487,7 @@ impl ControlCoordinator {
         Ok(changed)
     }
 
+    /// Updates queue shuffle state to `enabled`, returning the updated `current_index` if changed.
     pub fn set_shuffle(&self, enabled: bool) -> Result<Option<i64>, String> {
         self.inner.bump_prewarm_epoch();
         self.inner.cancel_prewarms();
@@ -425,11 +502,14 @@ impl ControlCoordinator {
             }
         })?;
         if res.is_some() {
+            crate::map_log!(3, "[COORD] Shuffle changed to {}", enabled);
             self.schedule_prewarm();
         }
         Ok(res)
     }
 
+    /// Executes a serialized transition planned by `plan_fn` on `map-engine-clock`, either
+    /// committing immediately or submitting an interruptible open with `include_meta` and waiting.
     fn execute_planned_transition<F>(
         &self,
         include_meta: bool,
@@ -485,6 +565,8 @@ impl ControlCoordinator {
         result
     }
 
+    /// Starts or resumes playback, optionally targeting queue item `id` or `position`, applying
+    /// `shuffled`, seeking to `seek_ms`, and returning metadata when `include_meta` is `true`.
     pub fn play(
         &self,
         id: Option<i64>,
@@ -493,6 +575,14 @@ impl ControlCoordinator {
         seek_ms: Option<i64>,
         include_meta: bool,
     ) -> Result<Option<TrackTransitionSnapshot>, String> {
+        crate::map_log!(
+            3,
+            "[COORD] play(id={:?}, pos={:?}, shuffled={:?}, seek_ms={:?})",
+            id,
+            position,
+            shuffled,
+            seek_ms
+        );
         self.execute_planned_transition(include_meta, move |ply, has_inflight| {
             let prev_ids = snapshot_queue_ids(ply).0;
             let plan = ply
@@ -532,11 +622,14 @@ impl ControlCoordinator {
         })
     }
 
+    /// Advances to the next queue track using optional `manual_crossfade_ms` and returning
+    /// metadata when `include_meta` is `true`.
     pub fn next(
         &self,
         manual_crossfade_ms: Option<u64>,
         include_meta: bool,
     ) -> Result<Option<TrackTransitionSnapshot>, String> {
+        crate::map_log!(3, "[COORD] next(crossfade_ms={:?})", manual_crossfade_ms);
         self.execute_planned_transition(include_meta, move |ply, has_inflight| {
             let plan = ply
                 .music_manager
@@ -571,7 +664,9 @@ impl ControlCoordinator {
         })
     }
 
+    /// Steps back to the previous queue track, returning metadata when `include_meta` is `true`.
     pub fn previous(&self, include_meta: bool) -> Result<Option<TrackTransitionSnapshot>, String> {
+        crate::map_log!(3, "[COORD] previous()");
         self.execute_planned_transition(include_meta, move |ply, has_inflight| {
             let plan = ply.music_manager.inner.plan_previous(has_inflight);
             match plan {
@@ -603,8 +698,9 @@ impl ControlCoordinator {
         })
     }
 
-    /// Cancels any pending automatic track advances and seeks within the active deck.
+    /// Cancels any pending automatic track advances and seeks to `position_ms` within the active deck.
     pub fn seek(&self, position_ms: i64) -> Result<(i64, i32, bool, bool), String> {
+        crate::map_log!(4, "[COORD] seek(position_ms={})", position_ms);
         self.inner.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
         if let Some(ref pool) = *lock_unpoisoned(&self.inner.io_pool) {
             pool.cancel_auto_advance();
@@ -635,6 +731,7 @@ impl ControlCoordinator {
 
     /// Cancels any pending opens immediately without waiting and pauses the active deck.
     pub fn pause(&self) -> Result<(i32, bool), String> {
+        crate::map_log!(3, "[COORD] pause()");
         let pre_epoch = self.inner.bump_epochs();
         self.inner.cancel_all_io(pre_epoch);
 
@@ -656,6 +753,7 @@ impl ControlCoordinator {
 
     /// Cancels any pending opens immediately without waiting and stops playback.
     pub fn stop(&self) -> Result<(i32, bool), String> {
+        crate::map_log!(3, "[COORD] stop()");
         let pre_epoch = self.inner.bump_epochs();
         self.inner.cancel_all_io(pre_epoch);
         self.inner.custom_registry.abort_all();
@@ -685,6 +783,7 @@ impl ControlCoordinator {
         if self.inner.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
+        crate::map_log!(3, "[COORD] Shutting down ControlCoordinator");
         let epoch = self.inner.bump_epochs();
         self.inner.cancel_all_io(epoch);
         self.inner.custom_registry.abort_all();
@@ -699,6 +798,8 @@ impl ControlCoordinator {
 }
 
 impl CoordInner {
+    /// Advances prewarm, auto-advance, and transport epochs, clearing in-flight auto-advance
+    /// tracking and returning the new `transport_epoch`.
     fn bump_epochs(&self) -> u64 {
         self.prewarm_epoch.fetch_add(1, Ordering::AcqRel);
         self.auto_advance_epoch.fetch_add(1, Ordering::AcqRel);
@@ -706,28 +807,33 @@ impl CoordInner {
         self.transport_epoch.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    /// Increments and returns the updated `prewarm_epoch`.
     fn bump_prewarm_epoch(&self) -> u64 {
         self.prewarm_epoch.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    /// Returns `true` when [`IoWorkerPool`] has any queued or in-flight active open.
     fn has_active_io(&self) -> bool {
         lock_unpoisoned(&self.io_pool)
             .as_ref()
             .is_some_and(|p| p.has_active_work())
     }
 
+    /// Cancels all active and standby I/O jobs and records `epoch` as the stale-open floor.
     fn cancel_all_io(&self, epoch: u64) {
         if let Some(ref pool) = *lock_unpoisoned(&self.io_pool) {
             pool.cancel_all_at_epoch(epoch);
         }
     }
 
+    /// Cancels all queued and in-flight standby prewarm jobs without disturbing active opens.
     fn cancel_prewarms(&self) {
         if let Some(ref pool) = *lock_unpoisoned(&self.io_pool) {
             pool.cancel_prewarms();
         }
     }
 
+    /// Posts a [`CoordWake::PrewarmCheck`] wake request carrying `retry_if_failed` to `map-ctrl-coord`.
     fn schedule_prewarm(&self, retry_if_failed: bool) {
         if self.disposed.load(Ordering::Acquire) {
             return;
@@ -735,6 +841,8 @@ impl CoordInner {
         let _ = self.wake_tx.try_send(CoordWake::PrewarmCheck { retry_if_failed });
     }
 
+    /// Submits an [`ActiveOpenJob`] constructed from `spec` at `epoch` with flags
+    /// `queue_changed`, `include_meta`, `include_replay_gain`, and optional `waiter`.
     fn submit_open_spec(
         &self,
         epoch: u64,
@@ -770,6 +878,8 @@ impl CoordInner {
         pool.submit_active(job);
     }
 
+    /// Evaluates whether the upcoming queue item needs standby prewarming and submits a
+    /// [`PrewarmJob`] when eligible (retrying previously attempted keys only if `retry_if_failed`).
     fn run_prewarm_check(&self, retry_if_failed: bool) {
         if self.disposed.load(Ordering::Acquire) || self.has_active_io() {
             return;
@@ -827,6 +937,12 @@ impl CoordInner {
         }
 
         if let Some(pool) = lock_unpoisoned(&self.io_pool).clone() {
+            crate::map_log!(
+                4,
+                "[COORD] Scheduling standby prewarm for track_id={} (prewarm_epoch={})",
+                item.id,
+                p_epoch
+            );
             pool.submit_prewarm(PrewarmJob {
                 epoch: p_epoch,
                 item,
@@ -838,6 +954,9 @@ impl CoordInner {
         }
     }
 
+    /// Validates an engine auto-advance hint against `expected_deck_id`, `expected_open_gen`,
+    /// `expected_seek_epoch`, `next_idx`, `hint_item`, `should_auto_xfade`, and `auto_ms`, and
+    /// dispatches an [`ActiveOpenKind::AutoAdvance`] open if still due.
     #[allow(clippy::too_many_arguments)]
     fn handle_auto_advance_hint(
         &self,
@@ -903,6 +1022,15 @@ impl CoordInner {
         let epoch = self.bump_epochs();
         let auto_epoch = self.auto_advance_epoch.load(Ordering::Acquire);
         *lock_unpoisoned(&self.auto_advance_inflight) = Some(key);
+        crate::map_log!(
+            4,
+            "[COORD] Submitting auto-advance open (epoch={}, next_idx={}, track_id={}, xfade={}, auto_ms={})",
+            epoch,
+            next_idx,
+            live_item.id,
+            should_auto_xfade,
+            auto_ms
+        );
         pool.submit_active(ActiveOpenJob {
             epoch,
             item: live_item,
@@ -926,12 +1054,28 @@ impl CoordInner {
         });
     }
 
+    /// Processes an [`IoCompletion`] callback from [`IoWorkerPool`], committing non-stale decks,
+    /// reconciling failed/aborted transitions, reaping unused decks, and resolving waiters.
     fn handle_io_completion(self: &Arc<Self>, completion: IoCompletion) {
         let reaper = self.engine.reaper().clone();
         match completion {
             IoCompletion::Prewarm { job, outcome } => {
-                let IoOpenOutcome::Opened(deck) = outcome else {
-                    return;
+                let deck = match outcome {
+                    IoOpenOutcome::Opened(deck) => deck,
+                    IoOpenOutcome::Failed(code, ref msg) => {
+                        crate::map_log!(
+                            2,
+                            "[COORD] Prewarm open failed (track_id={}, code={}, err={:?})",
+                            job.item.id,
+                            code,
+                            msg
+                        );
+                        return;
+                    }
+                    IoOpenOutcome::Aborted => {
+                        crate::map_log!(4, "[COORD] Prewarm open aborted (track_id={})", job.item.id);
+                        return;
+                    }
                 };
                 if job.epoch != self.prewarm_epoch.load(Ordering::Acquire)
                     || self.disposed.load(Ordering::Acquire)
@@ -949,8 +1093,24 @@ impl CoordInner {
                         return;
                     }
                     match ply.music_manager.inner.commit_prepared_standby(deck, &item) {
-                        Ok(displaced) => reaper_cb.reap_value(displaced),
-                        Err(unused) => reaper_cb.reap_value(unused),
+                        Ok(displaced) => {
+                            crate::map_log!(
+                                4,
+                                "[COORD] Committed standby prewarm (track_id={}, epoch={})",
+                                item.id,
+                                expected_epoch
+                            );
+                            reaper_cb.reap_value(displaced);
+                        }
+                        Err(unused) => {
+                            crate::map_log!(
+                                4,
+                                "[COORD] Discarded standby prewarm (track_id={}, epoch={})",
+                                item.id,
+                                expected_epoch
+                            );
+                            reaper_cb.reap_value(unused);
+                        }
                     }
                 });
             }
@@ -965,6 +1125,12 @@ impl CoordInner {
                 if job.epoch != self.transport_epoch.load(Ordering::Acquire)
                     || self.disposed.load(Ordering::Acquire)
                 {
+                    crate::map_log!(
+                        4,
+                        "[COORD] Discarding stale active I/O completion (job_epoch={}, track_id={})",
+                        job.epoch,
+                        job.item.id
+                    );
                     if let IoOpenOutcome::Opened(deck) = outcome {
                         reaper.reap_value(deck);
                     }
@@ -974,6 +1140,12 @@ impl CoordInner {
 
                 match outcome {
                     IoOpenOutcome::Aborted => {
+                        crate::map_log!(
+                            4,
+                            "[COORD] Active I/O open aborted (epoch={}, track_id={})",
+                            job.epoch,
+                            job.item.id
+                        );
                         let coord = self.clone();
                         let expected_epoch = job.epoch;
                         let auto_epoch_opt = match job.kind {
@@ -1030,6 +1202,14 @@ impl CoordInner {
                         resolve_ok_none();
                     }
                     IoOpenOutcome::Failed(code, detail_msg) => {
+                        crate::map_log!(
+                            1,
+                            "[COORD] Active I/O open failed (epoch={}, track_id={}, code={}, err={:?})",
+                            job.epoch,
+                            job.item.id,
+                            code,
+                            detail_msg
+                        );
                         let auto_params = match job.kind {
                             ActiveOpenKind::AutoAdvance {
                                 expected_deck_id,
@@ -1177,6 +1357,7 @@ impl CoordInner {
                         let coord = self.clone();
                         let expected_epoch = job.epoch;
                         let item = job.item.clone();
+                        let item_id = item.id;
                         let seek_ms = job.seek_ms;
                         let kind = job.kind.clone();
                         let queue_changed = job.queue_changed;
@@ -1294,6 +1475,12 @@ impl CoordInner {
 
                         match outcome_res {
                             CommitResult::Committed(displaced_opt, snap) => {
+                                crate::map_log!(
+                                    3,
+                                    "[COORD] Active I/O open committed (epoch={}, track_id={})",
+                                    expected_epoch,
+                                    item_id
+                                );
                                 if let Some(displaced) = displaced_opt {
                                     reaper.reap_value(displaced);
                                 }
@@ -1304,10 +1491,22 @@ impl CoordInner {
                                 }
                             }
                             CommitResult::Unused(unused_deck) => {
+                                crate::map_log!(
+                                    4,
+                                    "[COORD] Discarding unused opened deck (epoch={}, track_id={})",
+                                    expected_epoch,
+                                    item_id
+                                );
                                 reaper.reap_value(unused_deck);
                                 resolve_ok_none();
                             }
                             CommitResult::EngineErr => {
+                                crate::map_log!(
+                                    2,
+                                    "[COORD] Engine error committing opened deck (epoch={}, track_id={})",
+                                    expected_epoch,
+                                    item_id
+                                );
                                 resolve_ok_none();
                             }
                         }

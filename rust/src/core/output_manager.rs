@@ -24,14 +24,23 @@ use crate::sync::seqlock::CachePaddedSeqlock;
 /// Real-time safe audio renderer reading from an SPSC ring buffer for an active output device.
 #[repr(C)]
 pub struct OutputDeviceRenderer {
+    /// C-compatible function pointer header invoked by miniaudio playback callbacks.
     pub header: PcmRendererHeader,
+    /// Lock-free SPSC ring buffer consumer feeding interleaved PCM frames to the hardware device.
     pub consumer: rtrb::Consumer<f32>,
+    /// Interleaved channel count expected by the hardware output stream.
     pub channels: usize,
+    /// Optional condition-variable trigger notified on device disconnect or stop notifications.
     pub device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
 }
 
 unsafe impl Send for OutputDeviceRenderer {}
 
+/// C trampoline forwarding miniaudio playback render requests to [`OutputDeviceRenderer::render_pcm`].
+///
+/// # Safety
+/// `ptr` must point to a valid [`OutputDeviceRenderer`] and `output` must be writable for at least
+/// `count * (*ptr).channels` `f32` samples.
 pub unsafe extern "C" fn output_device_render_trampoline(
     ptr: *mut c_void,
     output: *mut f32,
@@ -46,6 +55,11 @@ pub unsafe extern "C" fn output_device_render_trampoline(
     r.render_pcm(out_slice);
 }
 
+/// C trampoline handling miniaudio device lifecycle notifications (`notif == 1` stopped, `notif == 2` rerouted)
+/// for the [`OutputDeviceRenderer`] at `ptr`.
+///
+/// # Safety
+/// `ptr` must be null or point to a valid [`OutputDeviceRenderer`].
 pub unsafe extern "C" fn output_device_notif_trampoline(ptr: *mut c_void, notif: i32) {
     if ptr.is_null() {
         return;
@@ -63,6 +77,7 @@ pub unsafe extern "C" fn output_device_notif_trampoline(ptr: *mut c_void, notif:
 }
 
 impl OutputDeviceRenderer {
+    /// Pulls available PCM frames from the SPSC ring buffer into `out_slice`, zero-filling any underrun tail.
     #[inline]
     pub fn render_pcm(&mut self, out_slice: &mut [f32]) {
         let total_samples = out_slice.len();
@@ -90,11 +105,17 @@ impl OutputDeviceRenderer {
 
 /// Symmetrical active physical audio device managed by miniaudio.
 pub struct ActiveOutputDevice {
+    /// Requested logical device identifier (`"AUTO"` or OS endpoint ID).
     pub device_id: String,
+    /// Resolved physical OS playback endpoint identifier.
     pub resolved_id: String,
+    /// Audio bus routed to this physical output destination.
     pub source: AudioOutputSource,
+    /// Raw pointer to the native miniaudio playback device context.
     pub device_ctx: *mut MapDeviceContext,
+    /// Raw pointer to the heap-allocated [`OutputDeviceRenderer`].
     pub renderer_ptr: *mut c_void,
+    /// Lock-free SPSC ring buffer producer pushing rendered PCM frames to this device.
     pub producer: rtrb::Producer<f32>,
 }
 
@@ -102,7 +123,15 @@ unsafe impl Send for ActiveOutputDevice {}
 unsafe impl Sync for ActiveOutputDevice {}
 
 impl Drop for ActiveOutputDevice {
+    /// Destroys the native miniaudio device context and frees the associated [`OutputDeviceRenderer`].
     fn drop(&mut self) {
+        map_log!(
+            4,
+            "[OUTPUT_MGR] Destroying physical output device '{}' (resolved='{}', source={:?})",
+            self.device_id,
+            self.resolved_id,
+            self.source
+        );
         if !self.device_ctx.is_null() {
             unsafe {
                 map_device_destroy(self.device_ctx);
@@ -120,18 +149,27 @@ impl Drop for ActiveOutputDevice {
 
 /// Pre-opened physical output changes staged off `map-engine-clock`.
 pub struct PreparedOutputs {
+    /// Desired declarative output configurations requested by the caller.
     pub desired_outputs: Vec<RustAudioOutput>,
+    /// Target `(device_id, resolved_id, source)` tuples to retain or reconcile.
     pub keep_keys: Vec<(String, String, i32)>,
+    /// Newly opened physical output devices ready to be swapped into `active_devices`.
     pub new_devices: Vec<ActiveOutputDevice>,
 }
 
 /// Active recording handles extracted atomically from `OutputManager` for off-clock finalization.
 pub struct DetachedRecording {
+    /// Destination file path for the finalized recording.
     pub path: String,
+    /// Background disk writer [`LiveRecorder`] instance.
     pub recorder: LiveRecorder,
+    /// Detached SPSC ring buffer producer whose drop signals EOF to the writer thread.
     pub producer: Option<rtrb::Producer<f32>>,
+    /// Total number of recorded interleaved samples.
     pub sample_count: u64,
+    /// Total recorded duration in milliseconds.
     pub duration_ms: u64,
+    /// Number of frames dropped due to recording ring-buffer backpressure.
     pub dropped_frames: u64,
 }
 
@@ -147,47 +185,72 @@ pub struct OutputManager {
     // =========================================================================
     // Recording Subsystem (first-class, with source selection)
     // =========================================================================
+    /// Active background disk recorder handle when a recording session is in progress.
     pub live_recorder: Option<LiveRecorder>,
+    /// Lock-free SPSC ring buffer producer feeding PCM frames to the active recorder.
     pub record_producer: Option<rtrb::Producer<f32>>,
+    /// Audio bus source selected for live disk recording.
     pub recording_source: AudioOutputSource,
+    /// Atomic flag indicating whether live recording is currently active.
     pub is_recording: Arc<AtomicBool>,
+    /// Atomic counter of frames successfully enqueued into the recording buffer.
     pub recorded_frames: Arc<AtomicU64>,
+    /// Atomic counter of frames dropped due to recording ring-buffer overflow.
     pub recording_dropped_frames: Arc<AtomicU64>,
+    /// Output file path of the active recording session.
     pub recording_path: Option<String>,
+    /// Tracks whether an asynchronous recording failure has already been reported and handled.
     recording_error_reported: bool,
 
     // =========================================================================
     // Visualizer Subsystem (first-class)
     // =========================================================================
+    /// Real-time FFT spectrum and waveform analyzer.
     pub visualizer: Visualizer,
+    /// Atomic flag controlling whether visualizer FFT computation is active.
     pub visualizer_enabled: Arc<AtomicBool>,
+    /// Atomic [`AudioOutputSource`] discriminant selecting which bus feeds the visualizer.
     pub visualizer_source: Arc<AtomicU8>,
+    /// Cache-padded seqlock publishing the latest [`VisualizerData`] snapshot wait-free.
     pub visualizer_seqlock: Arc<CachePaddedSeqlock<VisualizerData>>,
 
     // =========================================================================
     // Multi-Bus Audio Tap Matrix (Lock-free Push Broadcast & Zero-Alloc Pull)
     // =========================================================================
+    /// Real-time push matrix broadcasting audio buses to registered tap consumers.
     tap_rt: TapRtMatrix,
+    /// Shared tap bus registry used by FFI/Dart tap consumers off the RT thread.
     pub tap_registry: Arc<TapBusRegistry>,
 
+    /// Whether playback automatically pauses when the OS default audio output device changes.
     pub pause_on_device_change: Arc<AtomicBool>,
+    /// Master engine sample rate in Hz.
     pub sample_rate: u32,
+    /// Master engine channel count.
     pub channels: usize,
 }
 
 impl Drop for OutputManager {
+    /// Stops active taps/recording and releases all physical output devices on drop.
     fn drop(&mut self) {
         self.dispose();
     }
 }
 
 impl OutputManager {
-    /// Creates a new `OutputManager` for the specified sample rate and channel count.
+    /// Creates a new `OutputManager` for the specified `sample_rate`, `channels` count,
+    /// and optional `device_trigger` condvar notification primitive.
     pub fn new(
         sample_rate: u32,
         channels: usize,
         device_trigger: Option<Arc<(Mutex<bool>, Condvar)>>,
     ) -> Self {
+        map_log!(
+            3,
+            "[OUTPUT_MGR] Initialized OutputManager (sr={}, ch={})",
+            sample_rate,
+            channels
+        );
         let (tap_rt, tap_registry) = create_tap_pair(sample_rate, channels);
         Self {
             outputs: Vec::new(),
@@ -217,28 +280,45 @@ impl OutputManager {
     // Symmetrical Output Hardware Management
     // =========================================================================
 
-    /// Resolves a requested device ID ("AUTO" or specific ID) to a physical OS device endpoint ID.
+    /// Resolves a requested `device_id` (`"AUTO"` or specific ID) to a physical OS playback device endpoint ID.
     pub fn resolve_physical_output_id(device_id: &str) -> Option<String> {
         if device_id == "AUTO" || device_id == "auto" || device_id.is_empty() {
-            if let Ok(devs) = crate::bridge::ffi::safe_enumerate_playback_devices() {
-                let mut found = None;
-                for d in &devs {
-                    if d.is_default != 0 && d.is_auto == 0 {
-                        found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
-                        break;
-                    }
-                }
-                if found.is_none() {
+            match crate::bridge::ffi::safe_enumerate_playback_devices() {
+                Ok(devs) => {
+                    let mut found = None;
                     for d in &devs {
-                        if d.is_auto == 0 {
+                        if d.is_default != 0 && d.is_auto == 0 {
                             found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
                             break;
                         }
                     }
+                    if found.is_none() {
+                        for d in &devs {
+                            if d.is_auto == 0 {
+                                found = Some(crate::api::types::c_buf_to_string(&d.effective_id));
+                                break;
+                            }
+                        }
+                    }
+                    if found.is_none() {
+                        map_log!(
+                            2,
+                            "[OUTPUT_MGR] No physical playback device found while resolving '{}'",
+                            device_id
+                        );
+                    }
+                    found
                 }
-                return found;
+                Err(code) => {
+                    map_log!(
+                        2,
+                        "[OUTPUT_MGR] Failed to enumerate playback devices for '{}' (code={})",
+                        device_id,
+                        code
+                    );
+                    None
+                }
             }
-            None
         } else {
             Some(device_id.to_string())
         }
@@ -252,6 +332,8 @@ impl OutputManager {
             .collect()
     }
 
+    /// Deduplicates and resolves requested `outputs` to physical endpoint IDs, optionally reusing
+    /// `pre_resolved_auto_id` to avoid redundant device enumeration.
     fn resolve_effective_configs(
         outputs: &[RustAudioOutput],
         pre_resolved_auto_id: Option<String>,
@@ -290,6 +372,8 @@ impl OutputManager {
         effective_configs
     }
 
+    /// Opens and starts a physical playback device for `cfg` at `sample_rate` and `channels`,
+    /// attaching `device_trigger` and targeting `target_resolved_id`.
     fn open_physical_device(
         sample_rate: u32,
         channels: usize,
@@ -350,14 +434,22 @@ impl OutputManager {
 
         if !ctx.is_null() && dev_res == 0 {
             let t_start = Instant::now();
-            unsafe {
-                map_device_start(ctx);
+            let start_res = unsafe { map_device_start(ctx) };
+            if start_res != 0 {
+                map_log!(
+                    2,
+                    "[OUTPUT_MGR:START:WARN] map_device_start returned code={} for '{}' in {}ms",
+                    start_res,
+                    target_resolved_id,
+                    t_start.elapsed().as_millis()
+                );
+            } else {
+                map_log!(
+                    3,
+                    "[OUTPUT_MGR:START:DONE] map_device_start succeeded in {}ms",
+                    t_start.elapsed().as_millis()
+                );
             }
-            map_log!(
-                3,
-                "[OUTPUT_MGR:START:DONE] map_device_start succeeded in {}ms",
-                t_start.elapsed().as_millis()
-            );
             Some(ActiveOutputDevice {
                 device_id: cfg.device_id.clone(),
                 resolved_id: target_resolved_id.to_string(),
@@ -380,8 +472,9 @@ impl OutputManager {
         }
     }
 
-    /// Resolves and opens any newly needed physical output devices completely outside
-    /// `map-engine-clock`.
+    /// Resolves and opens any newly needed physical output devices for `outputs` completely outside
+    /// `map-engine-clock`, using `sample_rate`, `channels`, `device_trigger`, `existing_open` keys,
+    /// and optional `pre_resolved_auto_id`.
     pub fn prepare_outputs_off_rt(
         sample_rate: u32,
         channels: usize,
@@ -390,6 +483,12 @@ impl OutputManager {
         outputs: Vec<RustAudioOutput>,
         pre_resolved_auto_id: Option<String>,
     ) -> PreparedOutputs {
+        map_log!(
+            4,
+            "[OUTPUT_MGR] Preparing {} requested outputs off-RT (existing_open={})",
+            outputs.len(),
+            existing_open.len()
+        );
         let effective_configs = Self::resolve_effective_configs(&outputs, pre_resolved_auto_id);
         let keep_keys: Vec<(String, String, i32)> = effective_configs
             .iter()
@@ -421,7 +520,7 @@ impl OutputManager {
         }
     }
 
-    /// Swaps pre-opened devices into `active_devices` in O(N) without touching OS APIs,
+    /// Swaps pre-opened devices from `batch` into `active_devices` in O(N) without touching OS APIs,
     /// returning displaced devices so the caller / `map-reaper` can drop them off-RT.
     pub fn apply_prepared_outputs(&mut self, batch: PreparedOutputs) -> Vec<ActiveOutputDevice> {
         self.outputs = batch.desired_outputs;
@@ -454,10 +553,19 @@ impl OutputManager {
             }
         }
         self.active_devices = kept;
+        map_log!(
+            3,
+            "[OUTPUT_MGR] Applied prepared outputs (active={}, evicted={})",
+            self.active_devices.len(),
+            evicted.len()
+        );
         evicted
     }
 
-    /// Updates the active outputs and synchronizes physical audio devices.
+    /// Updates the active `outputs` and synchronizes physical audio devices.
+    ///
+    /// # Errors
+    /// Currently always returns `Ok(())`; device open failures are logged and skipped individually.
     pub fn set_outputs(&mut self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         let existing = self.current_device_keys();
         let batch = Self::prepare_outputs_off_rt(
@@ -477,7 +585,8 @@ impl OutputManager {
     // Selective Recording Subsystem
     // =========================================================================
 
-    /// Installs a pre-opened `LiveRecorder` and ring-buffer producer without touching disk/threads.
+    /// Installs a pre-opened `recorder` and ring-buffer `producer` for `path` and `source`
+    /// without touching disk or spawning threads, returning any previously installed handles.
     pub fn attach_prepared_recording(
         &mut self,
         path: String,
@@ -485,6 +594,12 @@ impl OutputManager {
         recorder: LiveRecorder,
         producer: rtrb::Producer<f32>,
     ) -> (Option<LiveRecorder>, Option<rtrb::Producer<f32>>) {
+        map_log!(
+            3,
+            "[OUTPUT_MGR] Recording started: path='{}', source={:?}",
+            path,
+            source
+        );
         let prev_prod = self.record_producer.take();
         let prev_rec = self.live_recorder.take();
         self.live_recorder = Some(recorder);
@@ -505,27 +620,45 @@ impl OutputManager {
         }
         let rec = self.live_recorder.as_ref()?;
         let msg = rec.poll_async_error()?;
+        map_log!(1, "[OUTPUT_MGR] Asynchronous recording error: {}", msg);
         self.recording_error_reported = true;
         self.is_recording.store(false, Ordering::Release);
         Some(msg)
     }
 
     /// Extracts the active recording handles atomically without joining the writer thread.
+    ///
+    /// # Errors
+    /// Returns an error string if no recording path or live recorder is currently active.
     pub fn detach_recording_for_stop(&mut self) -> Result<DetachedRecording, String> {
         self.is_recording.store(false, Ordering::Release);
         let producer = self.record_producer.take();
-        let path = self
-            .recording_path
-            .take()
-            .ok_or_else(|| "Recording was not active (code: -6)".to_string())?;
-        let recorder = self
-            .live_recorder
-            .take()
-            .ok_or_else(|| "Live recorder was not initialized (code: -6)".to_string())?;
+        let path = self.recording_path.take().ok_or_else(|| {
+            map_log!(
+                2,
+                "[OUTPUT_MGR] detach_recording_for_stop called while no recording path was active"
+            );
+            "Recording was not active (code: -6)".to_string()
+        })?;
+        let recorder = self.live_recorder.take().ok_or_else(|| {
+            map_log!(
+                2,
+                "[OUTPUT_MGR] detach_recording_for_stop called while live_recorder was uninitialized"
+            );
+            "Live recorder was not initialized (code: -6)".to_string()
+        })?;
         let sample_count = self.recorded_frames.load(Ordering::Relaxed) * self.channels as u64;
         let duration_ms = (sample_count * 1000)
             / (self.sample_rate as u64 * self.channels as u64).max(1);
         let dropped_frames = self.recording_dropped_frames.load(Ordering::Relaxed);
+        map_log!(
+            3,
+            "[OUTPUT_MGR] Detached recording for stop: path='{}', duration_ms={}, samples={}, dropped_frames={}",
+            path,
+            duration_ms,
+            sample_count,
+            dropped_frames
+        );
         Ok(DetachedRecording {
             path,
             recorder,
@@ -536,11 +669,33 @@ impl OutputManager {
         })
     }
 
-    /// Stops the active recording session and returns (path, duration_ms, bytes_written, sample_count).
+    /// Stops the active recording session and returns `(path, duration_ms, bytes_written, sample_count)`.
+    ///
+    /// # Errors
+    /// Returns an error string if no recording is active or finalizing the output file fails.
     pub fn stop_recording(&mut self) -> Result<(String, u64, usize, u64), String> {
         let mut detached = self.detach_recording_for_stop()?;
         drop(detached.producer);
-        let bytes_written = detached.recorder.stop()? as usize;
+        let bytes_written = match detached.recorder.stop() {
+            Ok(bytes) => bytes as usize,
+            Err(e) => {
+                map_log!(
+                    1,
+                    "[OUTPUT_MGR] Failed to finalize recording '{}': {}",
+                    detached.path,
+                    e
+                );
+                return Err(e);
+            }
+        };
+        map_log!(
+            3,
+            "[OUTPUT_MGR] Stopped recording '{}': duration_ms={}, bytes_written={}, samples={}",
+            detached.path,
+            detached.duration_ms,
+            bytes_written,
+            detached.sample_count
+        );
         Ok((
             detached.path,
             detached.duration_ms,
@@ -566,9 +721,10 @@ impl OutputManager {
     // Visualizer & Configuration
     // =========================================================================
 
-    /// Enables or disables real-time FFT spectrum visualizer computation.
+    /// Enables or disables real-time FFT spectrum visualizer computation according to `enabled`.
     #[inline]
     pub fn set_visualizer_enabled(&mut self, enabled: bool) {
+        map_log!(4, "[OUTPUT_MGR] Visualizer enabled={}", enabled);
         self.visualizer_enabled.store(enabled, Ordering::Release);
         self.visualizer.set_enabled(enabled);
         if !enabled {
@@ -576,9 +732,10 @@ impl OutputManager {
         }
     }
 
-    /// Sets the audio source bus that feeds the real-time FFT spectrum visualizer.
+    /// Sets the audio `source` bus that feeds the real-time FFT spectrum visualizer.
     #[inline]
     pub fn set_visualizer_source(&mut self, source: AudioOutputSource) {
+        map_log!(4, "[OUTPUT_MGR] Visualizer source={:?}", source);
         self.visualizer_source.store(source as u8, Ordering::Release);
         self.visualizer.reset();
         self.visualizer_seqlock.write(|d| *d = VisualizerData::default());
@@ -596,9 +753,10 @@ impl OutputManager {
         self.visualizer_seqlock.read()
     }
 
-    /// Sets whether playback automatically pauses when the OS default audio output changes.
+    /// Sets whether playback automatically pauses when the OS default audio output changes (`enabled`).
     #[inline]
     pub fn set_pause_on_device_change(&self, enabled: bool) {
+        map_log!(4, "[OUTPUT_MGR] pause_on_device_change={}", enabled);
         self.pause_on_device_change.store(enabled, Ordering::Release);
     }
 
@@ -606,7 +764,9 @@ impl OutputManager {
     // Real-Time Audio Dispatch
     // =========================================================================
 
-    /// Dispatches the finished audio buffers to all active physical devices, disk recording, and visualizer.
+    /// Dispatches `frame_count` frames across `all_buffer`, `music_mix_buffer`, `active_buffer`,
+    /// `standby_buffer`, and `voice_buffer` to all active physical devices, disk recording,
+    /// visualizer, and multi-bus audio taps.
     pub fn dispatch(
         &mut self,
         all_buffer: &[f32],
@@ -700,8 +860,14 @@ impl OutputManager {
         );
     }
 
-    /// Stops all live recording sessions and releases all physical output audio devices.
+    /// Stops all live recording sessions, shuts down taps, and releases all physical output audio devices.
     pub fn dispose(&mut self) {
+        map_log!(
+            3,
+            "[OUTPUT_MGR] Disposing OutputManager (active_devices={}, recording={})",
+            self.active_devices.len(),
+            self.is_recording.load(Ordering::Relaxed)
+        );
         self.tap_registry.shutdown();
         let _ = self.stop_recording();
         self.active_devices.clear();

@@ -30,15 +30,22 @@ pub fn create_codec_registry() -> CodecRegistry {
     symphonia::default::register_enabled_codecs(&mut registry);
     registry.register_audio_decoder::<OpusDecoder>();
     registry.register_audio_decoder::<RustyAacDecoder>();
+    crate::map_log!(
+        4,
+        "[SYMPHONIA] Created CodecRegistry with OpusDecoder and RustyAacDecoder"
+    );
     registry
 }
 
 /// Returns a process-wide cached `CodecRegistry` so repeated stream opens skip rebuilding codec lookup tables.
 pub fn shared_codec_registry() -> &'static CodecRegistry {
+    /// Process-wide lazily initialized Symphonia codec registry.
     static REGISTRY: std::sync::OnceLock<CodecRegistry> = std::sync::OnceLock::new();
     REGISTRY.get_or_init(create_codec_registry)
 }
 
+/// Maps a Symphonia `codec` identifier and optional `explicit_bps` bit depth to
+/// `(canonical_codec_name, is_lossless, resolved_bits_per_sample)`.
 fn classify_symphonia_codec(
     codec: AudioCodecId,
     explicit_bps: Option<u32>,
@@ -102,6 +109,8 @@ fn classify_symphonia_codec(
     }
 }
 
+/// Maps a Symphonia `format_id`, `short_name`, optional `hint_extension`, and fallback `codec`
+/// name to a canonical container format string.
 fn classify_symphonia_container(
     format_id: FormatId,
     short_name: &str,
@@ -145,23 +154,44 @@ fn classify_symphonia_container(
 
 /// Encapsulates Symphonia container reading, packet filtering, and audio frame decoding.
 struct SymphoniaTrackSession {
+    /// Active Symphonia container demuxer.
     format_reader: Box<dyn FormatReader>,
+    /// Active Symphonia audio frame decoder for `track_id`.
     decoder: Box<dyn AudioDecoder>,
+    /// Selected primary audio track identifier within `format_reader`.
     track_id: u32,
+    /// Decoded output sample rate in Hz (always `48000` for Opus).
     sample_rate: u32,
+    /// Native stream sample rate reported in container/codec headers before Opus resampling.
     raw_sample_rate: Option<u32>,
+    /// Number of decoded interleaved audio channels.
     channels: u32,
+    /// Bits per sample if known from codec parameters.
     bits_per_sample: Option<u32>,
+    /// Canonical codec name (for example `"MP3"`, `"FLAC"`, `"AAC"`).
     codec: &'static str,
+    /// Canonical container format name (for example `"MP4"`, `"Matroska"`, `"Ogg"`).
     container_format: &'static str,
+    /// `true` if the track uses a lossless audio codec.
     lossless: bool,
+    /// Total stream duration in milliseconds if derivable from headers or metadata tags.
     duration_ms: Option<u64>,
+    /// Metadata tags, cover art, and chapters extracted from `format_reader` at open time.
     symphonia_meta: SymphoniaExtractedMeta,
+    /// `true` if the most recent packet read failed with `ErrorKind::UnexpectedEof`.
     last_io_unexpected_eof: bool,
+    /// `true` after `format_reader.next_packet()` returned `Ok(None)`.
     reached_eof: bool,
 }
 
 impl SymphoniaTrackSession {
+    /// Probes `source` with an optional `hint_extension` and opens a [`SymphoniaTrackSession`] on
+    /// the primary audio track.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if container probing fails, no valid audio track exists,
+    /// audio parameters are invalid, or decoder instantiation fails.
     fn open(
         source: Box<dyn MediaSource>,
         hint_extension: Option<&str>,
@@ -172,12 +202,22 @@ impl SymphoniaTrackSession {
         }
 
         let mss = MediaSourceStream::new(source, MediaSourceStreamOptions::default());
-        let mut format_reader = symphonia::default::get_probe().probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )?;
+        let mut format_reader = symphonia::default::get_probe()
+            .probe(
+                &hint,
+                mss,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
+            .map_err(|err| {
+                crate::map_log!(
+                    2,
+                    "[SYMPHONIA] Probe failed (hint={:?}): {:?}",
+                    hint_extension,
+                    err
+                );
+                err
+            })?;
 
         let (track_id, audio_params, time_base, duration, num_frames) =
             Self::select_primary_audio_track(&*format_reader)?;
@@ -202,7 +242,29 @@ impl SymphoniaTrackSession {
         let symphonia_meta = SymphoniaExtractedMeta::from_format_reader(&mut *format_reader);
 
         let decoder = shared_codec_registry()
-            .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())?;
+            .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
+            .map_err(|err| {
+                crate::map_log!(
+                    1,
+                    "[SYMPHONIA] Failed to create audio decoder for codec {} ({:?}): {:?}",
+                    codec,
+                    audio_params.codec,
+                    err
+                );
+                err
+            })?;
+
+        crate::map_log!(
+            3,
+            "[SYMPHONIA] Opened track {}: container={}, codec={}, sr={}Hz, ch={}, bps={:?}, dur_ms={:?}",
+            track_id,
+            container_format,
+            codec,
+            sample_rate,
+            channels,
+            bits_per_sample,
+            duration_ms
+        );
 
         Ok(Self {
             format_reader,
@@ -222,6 +284,8 @@ impl SymphoniaTrackSession {
         })
     }
 
+    /// Selects the first non-null audio track from `format_reader` and returns its
+    /// `(track_id, audio_params, time_base, duration, num_frames)`.
     fn select_primary_audio_track(
         format_reader: &dyn FormatReader,
     ) -> Result<
@@ -266,6 +330,8 @@ impl SymphoniaTrackSession {
         ))
     }
 
+    /// Validates that `params` specifies a non-zero sample rate, `1..=32` channels, and a
+    /// non-zero bit depth when present, returning `(sample_rate, channels)`.
     fn validate_audio_params(params: &AudioCodecParameters) -> Result<(u32, u32), SymphoniaError> {
         let sample_rate = params.sample_rate.unwrap_or(0);
         if sample_rate == 0 {
@@ -285,6 +351,7 @@ impl SymphoniaTrackSession {
         Ok((sample_rate, channels))
     }
 
+    /// Computes duration in milliseconds from `time_base` and either `duration` or `num_frames`.
     fn compute_duration_ms(
         time_base: Option<TimeBase>,
         duration: Option<SymphoniaDuration>,
@@ -301,6 +368,7 @@ impl SymphoniaTrackSession {
         }
     }
 
+    /// Searches per-track and media metadata revisions on `format_reader` for a `DURATION` tag.
     fn extract_metadata_duration_ms(format_reader: &mut dyn FormatReader) -> Option<u64> {
         let metadata = format_reader.metadata();
         let rev = metadata.current()?;
@@ -312,6 +380,7 @@ impl SymphoniaTrackSession {
         Self::find_duration_in_tags(&rev.media.tags)
     }
 
+    /// Scans `tags` for the first parseable duration tag and returns its value in milliseconds.
     fn find_duration_in_tags(tags: &[symphonia::core::meta::Tag]) -> Option<u64> {
         for tag in tags {
             if let Some(ms) = Self::parse_raw_duration_tag(&tag.raw) {
@@ -321,6 +390,8 @@ impl SymphoniaTrackSession {
         None
     }
 
+    /// Parses a [`RawTag`] `raw` if its key contains `"DURATION"` (case-insensitive) and its
+    /// value is a formatted duration string.
     fn parse_raw_duration_tag(raw: &RawTag) -> Option<u64> {
         if !raw.key.to_ascii_uppercase().contains("DURATION") {
             return None;
@@ -332,11 +403,14 @@ impl SymphoniaTrackSession {
         }
     }
 
+    /// Decodes the next non-empty audio frame into `out_pcm` after clearing it.
     fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
         self.decode_next_frame_append(out_pcm)
     }
 
+    /// Decodes packets from `self.format_reader` until an audio frame is produced, appending
+    /// interleaved `f32` samples to `out_pcm`.
     fn decode_next_frame_append(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         self.last_io_unexpected_eof = false;
         loop {
@@ -355,7 +429,10 @@ impl SymphoniaTrackSession {
                     self.last_io_unexpected_eof = true;
                     return Ok(false);
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    crate::map_log!(1, "[SYMPHONIA] Demux next_packet error: {:?}", err);
+                    return Err(err);
+                }
             };
 
             if packet.track_id != self.track_id {
@@ -382,14 +459,19 @@ impl SymphoniaTrackSession {
                     return Ok(true);
                 }
                 Err(SymphoniaError::DecodeError(err)) => {
-                    log::warn!("Symphonia decode frame error skipped: {}", err);
+                    crate::map_log!(2, "[SYMPHONIA] Decode frame error skipped: {}", err);
                     continue;
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    crate::map_log!(1, "[SYMPHONIA] Fatal decode error: {:?}", err);
+                    return Err(err);
+                }
             }
         }
     }
 
+    /// Advances demuxed packets without decoding until packet PTS reaches `target_stop_ms` or
+    /// `is_cancelled` returns `true`, returning the last observed packet timestamp in milliseconds.
     fn advance_to_ms_cancellable<F: Fn() -> bool>(
         &mut self,
         target_stop_ms: u64,
@@ -428,6 +510,8 @@ impl SymphoniaTrackSession {
         last_ms
     }
 
+    /// Performs a coarse seek to `position_ms`, handling `0ms` timestamp fallback and
+    /// Matroska/WebM out-of-range cluster backoff recovery, and returns the actual landed timestamp.
     fn seek_ms(&mut self, position_ms: u64) -> Result<u64, SymphoniaError> {
         let tb = self
             .format_reader
@@ -489,55 +573,102 @@ impl SymphoniaTrackSession {
                         {
                             actual_ms = pkt_ms;
                         }
+                        crate::map_log!(
+                            4,
+                            "[SYMPHONIA] Recovered MKV/WebM out-of-range seek to {}ms at {}ms (backoff={}ms)",
+                            position_ms,
+                            actual_ms,
+                            backoff
+                        );
                         recovered = true;
                         break;
                     }
                 }
                 if !recovered {
+                    crate::map_log!(
+                        1,
+                        "[SYMPHONIA] MKV/WebM out-of-range seek to {}ms failed after backoff",
+                        position_ms
+                    );
                     res?;
                 }
             } else {
+                crate::map_log!(1, "[SYMPHONIA] Seek to {}ms out of range", position_ms);
                 res?;
             }
         } else {
+            if let Err(ref err) = res {
+                crate::map_log!(1, "[SYMPHONIA] Seek to {}ms failed: {:?}", position_ms, err);
+            }
             res?;
         }
 
         self.last_io_unexpected_eof = false;
         self.reached_eof = false;
         self.decoder.reset();
+        crate::map_log!(
+            4,
+            "[SYMPHONIA] Seek to {}ms -> actual_ms={}",
+            position_ms,
+            actual_ms
+        );
         Ok(actual_ms)
     }
 }
 
+/// Active concrete decoder backend selected by [`SymphoniaEngine`].
 enum EngineBackend {
+    /// Generic Symphonia demuxer and codec session.
     Symphonia(SymphoniaTrackSession),
+    /// Native extended PCM reader (`RF64`, `RIFX`, `W64`, `CAF` LPCM).
     ExtendedPcm(ExtendedPcmReader),
+    /// Native Sony DSF 1-bit PDM reader and Kaiser FIR decimator.
     Dsf(DsfReader),
+    /// Native Monkey's Audio (`.ape`) reader.
     Ape(ApeReader),
+    /// Native streaming WavPack (`.wv`) reader.
     WavPack(WavpackReader),
 }
 
 /// Universal audio decoding engine probing and decoding audio streams into interleaved float PCM.
 pub struct SymphoniaEngine {
+    /// Active format-specific decoder backend.
     backend: EngineBackend,
+    /// Output PCM sample rate in Hz.
     sample_rate: u32,
+    /// Native source sample rate before decimation/resampling if applicable.
     raw_sample_rate: Option<u32>,
+    /// Number of interleaved audio channels.
     channels: u32,
+    /// Source sample bit depth if known.
     bits_per_sample: Option<u32>,
+    /// Canonical codec name.
     codec: &'static str,
+    /// Canonical container format name.
     container_format: &'static str,
+    /// `true` if the active codec is lossless.
     lossless: bool,
+    /// Total stream duration in milliseconds if known.
     duration_ms: Option<u64>,
+    /// Metadata tags, cover art, and chapters extracted at stream open.
     symphonia_meta: SymphoniaExtractedMeta,
+    /// Playback position anchor timestamp in milliseconds after open or seek.
     anchor_ms: u64,
+    /// Number of decoded PCM frames emitted since `anchor_ms`.
     frames_from_anchor: u64,
+    /// Reusable scratch buffer for backends whose `decode_next_frame` clears `out_pcm`.
     append_scratch: Vec<f32>,
+    /// `true` if this engine was opened via a windowed non-seekable mid-stream source.
     is_windowed: bool,
 }
 
 impl SymphoniaEngine {
-    /// Probes and instantiates the appropriate format reader and decoder for `source`.
+    /// Probes and instantiates the appropriate format reader and decoder for `source` using
+    /// optional `hint_extension`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if no supported format matches or initialization fails.
     pub fn new<M: MediaSource + 'static>(
         source: M,
         hint_extension: Option<&str>,
@@ -545,9 +676,14 @@ impl SymphoniaEngine {
         Self::new_with_options(source, hint_extension, true)
     }
 
-    /// Probes and instantiates the appropriate format reader and decoder for `source`.
+    /// Probes and instantiates the appropriate format reader and decoder for `source` with
+    /// optional `hint_extension`.
     /// When `allow_full_stream_scan` is `false`, skips synchronous full-stream ADTS scans
     /// that would stall or truncate over partially buffered network readers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if no supported format matches or initialization fails.
     pub fn new_with_options<M: MediaSource + 'static>(
         source: M,
         hint_extension: Option<&str>,
@@ -556,7 +692,12 @@ impl SymphoniaEngine {
         Self::from_boxed_with_options(Box::new(source), hint_extension, allow_full_stream_scan)
     }
 
-    /// Probes and instantiates from a pre-boxed `MediaSource` (used by dynamic reopen paths).
+    /// Probes and instantiates from a pre-boxed `boxed_source` (used by dynamic reopen paths)
+    /// with optional `hint_extension` and `allow_full_stream_scan` flag.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if all native probes and Symphonia probing fail.
     pub fn from_boxed_with_options(
         boxed_source: Box<dyn MediaSource>,
         hint_extension: Option<&str>,
@@ -565,6 +706,13 @@ impl SymphoniaEngine {
         let boxed_source = match ExtendedPcmReader::try_new(boxed_source)? {
             ExtendedPcmProbe::Matched(pcm) => {
                 let sr = pcm.sample_rate();
+                crate::map_log!(
+                    3,
+                    "[DECODER] Selected ExtendedPcm backend: container={}, sr={}Hz, ch={}",
+                    pcm.container_format(),
+                    sr,
+                    pcm.channels()
+                );
                 return Ok(Self {
                     sample_rate: sr,
                     raw_sample_rate: Some(sr),
@@ -587,6 +735,13 @@ impl SymphoniaEngine {
 
         let boxed_source = match DsfReader::try_new(boxed_source)? {
             DsfProbe::Matched(dsf) => {
+                crate::map_log!(
+                    3,
+                    "[DECODER] Selected Dsf backend: pcm_sr={}Hz, raw_sr={}Hz, ch={}",
+                    dsf.sample_rate(),
+                    dsf.raw_sample_rate(),
+                    dsf.channels()
+                );
                 return Ok(Self {
                     sample_rate: dsf.sample_rate(),
                     raw_sample_rate: Some(dsf.raw_sample_rate()),
@@ -610,6 +765,12 @@ impl SymphoniaEngine {
         let boxed_source = match ApeReader::try_new(boxed_source)? {
             ApeProbe::Matched(ape) => {
                 let sr = ape.sample_rate();
+                crate::map_log!(
+                    3,
+                    "[DECODER] Selected Ape backend: sr={}Hz, ch={}",
+                    sr,
+                    ape.channels()
+                );
                 return Ok(Self {
                     sample_rate: sr,
                     raw_sample_rate: Some(sr),
@@ -633,6 +794,12 @@ impl SymphoniaEngine {
         let mut boxed_source = match WavpackReader::try_new(boxed_source)? {
             WavpackProbe::Matched(wv) => {
                 let sr = wv.sample_rate();
+                crate::map_log!(
+                    3,
+                    "[DECODER] Selected WavPack backend: sr={}Hz, ch={}",
+                    sr,
+                    wv.channels()
+                );
                 return Ok(Self {
                     sample_rate: sr,
                     raw_sample_rate: Some(sr),
@@ -798,7 +965,11 @@ impl SymphoniaEngine {
         matches!(&self.backend, EngineBackend::Symphonia(s) if s.container_format == "MP4")
     }
 
-    /// Decodes the next packet or block into interleaved normalized float PCM samples.
+    /// Decodes the next packet or block into `out_pcm` as interleaved normalized float PCM samples.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] on unrecoverable I/O or decode failures.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         let ok = match &mut self.backend {
             EngineBackend::ExtendedPcm(pcm) => pcm.decode_next_frame(out_pcm)?,
@@ -865,12 +1036,20 @@ impl SymphoniaEngine {
         )
     }
 
-    /// Seeks the underlying container stream to the specified position in milliseconds.
+    /// Seeks the underlying container stream to the specified `position_ms` in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if the active backend fails to seek.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         self.seek_ms_with_actual(position_ms).map(|_| ())
     }
 
     /// Seeks to `position_ms` and returns the actual keyframe/block start timestamp landed on.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if the active backend fails to seek.
     pub fn seek_ms_with_actual(&mut self, position_ms: u64) -> Result<u64, SymphoniaError> {
         let actual_ms = match &mut self.backend {
             EngineBackend::ExtendedPcm(pcm) => {
@@ -961,7 +1140,7 @@ impl SymphoniaEngine {
         }
     }
 
-    /// Injects cached RAM `(sample_index, byte_offset)` checkpoints into `WavpackReader`.
+    /// Injects cached RAM `(sample_index, byte_offset)` checkpoints from `pts` into `WavpackReader`.
     pub fn inject_wavpack_checkpoints(&mut self, pts: &[(u64, u64)]) {
         if let EngineBackend::WavPack(ref mut wv) = self.backend {
             wv.inject_checkpoints(pts);
@@ -986,7 +1165,7 @@ impl SymphoniaEngine {
         }
     }
 
-    /// Updates the decoder playback timestamp anchor after external seek adjustments.
+    /// Updates the decoder playback timestamp anchor to `anchor_ms` after external seek adjustments.
     #[inline]
     pub fn set_anchor_ms(&mut self, anchor_ms: u64) {
         self.anchor_ms = anchor_ms;
@@ -994,23 +1173,47 @@ impl SymphoniaEngine {
     }
 
     /// Initializes a Symphonia FLAC decoder backed by a memory-resident synthetic `SEEKTABLE`
-    /// header (`virtual_head`) followed by `inner` starting past `actual_first_frame`.
+    /// header (`virtual_head`) shifted by `virtual_delta` bytes, followed by `inner` starting past
+    /// the original header.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the patched FLAC source fails.
     pub fn new_patched_flac<S: MediaSource + 'static>(
         virtual_head: Vec<u8>,
         virtual_delta: u64,
         inner: S,
     ) -> Result<Self, SymphoniaError> {
+        crate::map_log!(
+            3,
+            "[DECODER] Opening patched FLAC source: head_len={}, delta={}",
+            virtual_head.len(),
+            virtual_delta
+        );
         let inner_len = inner.byte_len();
         let src = PatchedFlacSource::new(virtual_head, virtual_delta, Box::new(inner), inner_len);
         Self::new_with_options(src, Some("flac"), false)
     }
 
+    /// Opens a non-seekable [`SymphoniaEngine`] backed by [`HeadTailWindowSource`] combining
+    /// `virtual_head` with `inner` starting at `offset`, using `ext_hint` for Symphonia probing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the windowed source fails.
     fn new_windowed_with_head<S: MediaSource + 'static>(
         virtual_head: Vec<u8>,
         offset: u64,
         inner: S,
         ext_hint: &'static str,
     ) -> Result<Self, SymphoniaError> {
+        crate::map_log!(
+            3,
+            "[DECODER] Opening windowed {} source: offset={}, head_len={}",
+            ext_hint,
+            offset,
+            virtual_head.len()
+        );
         let src = HeadTailWindowSource::new(virtual_head, offset, Box::new(inner));
         let mut eng = Self::new_with_options(src, Some(ext_hint), false)?;
         eng.is_windowed = true;
@@ -1019,6 +1222,10 @@ impl SymphoniaEngine {
 
     /// Initializes a non-seekable Ogg decoder combining memory-resident Ogg identification/setup
     /// header pages (`header_pages`) directly with `inner` positioned at `page_offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the windowed Ogg stream fails.
     pub fn new_windowed_ogg<S: MediaSource + 'static>(
         header_pages: Vec<u8>,
         page_offset: u64,
@@ -1028,7 +1235,11 @@ impl SymphoniaEngine {
     }
 
     /// Initializes a non-seekable Matroska/WebM decoder combining an unknown-size `Segment` header
-    /// prefix (`patched_head`) directly with `inner` positioned at `cluster_offset`.
+    /// prefix (`patched_head`) directly with `inner` positioned at `cluster_offset`, using `ext_hint`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the windowed Matroska/WebM stream fails.
     pub fn new_windowed_mkv<S: MediaSource + 'static>(
         patched_head: Vec<u8>,
         cluster_offset: u64,
@@ -1038,7 +1249,11 @@ impl SymphoniaEngine {
         Self::new_windowed_with_head(patched_head, cluster_offset, inner, ext_hint)
     }
 
-    /// Initializes a non-seekable raw ADTS AAC decoder directly at verified frame offset `frame_offset`.
+    /// Initializes a non-seekable raw ADTS AAC decoder over `inner` directly at verified `frame_offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the windowed ADTS stream fails.
     pub fn new_windowed_adts<S: MediaSource + 'static>(
         frame_offset: u64,
         inner: S,
@@ -1047,7 +1262,11 @@ impl SymphoniaEngine {
     }
 
     /// Initializes a non-seekable FLAC decoder combining fixed metadata header blocks
-    /// (`header_bytes`) directly with `inner` positioned at verified frame offset `frame_offset`.
+    /// (`header_bytes`) directly with `inner` positioned at verified `frame_offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the windowed FLAC stream fails.
     pub fn new_windowed_flac<S: MediaSource + 'static>(
         header_bytes: Vec<u8>,
         frame_offset: u64,
@@ -1056,7 +1275,11 @@ impl SymphoniaEngine {
         Self::new_windowed_with_head(header_bytes, frame_offset, inner, "flac")
     }
 
-    /// Initializes a non-seekable MPEG/MP3 decoder directly at verified frame offset `frame_offset`.
+    /// Initializes a non-seekable MPEG/MP3 decoder over `inner` directly at verified `frame_offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if probing or opening the windowed MP3 stream fails.
     pub fn new_windowed_mp3<S: MediaSource + 'static>(
         frame_offset: u64,
         inner: S,
@@ -1068,14 +1291,20 @@ impl SymphoniaEngine {
 /// Non-seekable composite `MediaSource` sewing a fixed container header prefix directly to
 /// a stream offset so Symphonia starts demuxing mid-stream with zero bisection probes.
 struct HeadTailWindowSource {
+    /// Virtual container header bytes served before reading from `inner`.
     virtual_head: Vec<u8>,
+    /// Current logical byte cursor across `[0..virtual_head.len()]` and `inner`.
     pos: u64,
+    /// Underlying media source positioned at `inner_base` upon first tail read.
     inner: Box<dyn MediaSource>,
+    /// Starting byte offset within `inner` corresponding to the end of `virtual_head`.
     inner_base: u64,
+    /// `true` once `inner` has been seeked to `inner_base`.
     inner_synced: bool,
 }
 
 impl HeadTailWindowSource {
+    /// Creates a composite non-seekable source joining `virtual_head` to `inner` at `inner_base`.
     fn new(virtual_head: Vec<u8>, inner_base: u64, inner: Box<dyn MediaSource>) -> Self {
         Self {
             virtual_head,
@@ -1088,6 +1317,7 @@ impl HeadTailWindowSource {
 }
 
 impl std::io::Read for HeadTailWindowSource {
+    /// Reads into `buf` from `virtual_head` first, then from `inner` starting at `inner_base`.
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -1114,6 +1344,7 @@ impl std::io::Read for HeadTailWindowSource {
 }
 
 impl std::io::Seek for HeadTailWindowSource {
+    /// Supports `SeekFrom::Current(0)` position queries and rejects all other seeks to `pos`.
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         if matches!(pos, std::io::SeekFrom::Current(0)) {
             return Ok(self.pos);
@@ -1126,25 +1357,37 @@ impl std::io::Seek for HeadTailWindowSource {
 }
 
 impl MediaSource for HeadTailWindowSource {
+    /// Reports `false` because [`HeadTailWindowSource`] is strictly sequential.
     fn is_seekable(&self) -> bool {
         false
     }
 
+    /// Returns `None` so demuxers do not attempt end-relative probing.
     fn byte_len(&self) -> Option<u64> {
         None
     }
 }
 
+/// Seekable composite FLAC source overlaying a synthetic `SEEKTABLE` header (`virtual_head`) onto
+/// `inner` shifted by `delta` virtual bytes.
 struct PatchedFlacSource {
+    /// Replacement FLAC header containing the injected `SEEKTABLE` metadata block.
     virtual_head: Vec<u8>,
+    /// Virtual-to-physical byte offset delta (`virtual_head.len() - original_head_len`).
     delta: u64,
+    /// Current virtual stream byte cursor.
     pos: u64,
+    /// Underlying FLAC media source.
     inner: Box<dyn MediaSource>,
+    /// `true` when `inner`'s cursor matches `pos - delta`.
     inner_synced: bool,
+    /// Cached virtual total stream length (`inner_len + delta`) if known.
     total_virtual_len: Option<u64>,
 }
 
 impl PatchedFlacSource {
+    /// Creates a [`PatchedFlacSource`] wrapping `inner` (with optional `inner_len`), `virtual_head`,
+    /// and virtual byte shift `delta`.
     fn new(
         virtual_head: Vec<u8>,
         delta: u64,
@@ -1161,6 +1404,7 @@ impl PatchedFlacSource {
         }
     }
 
+    /// Computes the total virtual byte length of the patched FLAC stream if known.
     #[inline]
     fn effective_total_len(&self) -> Option<u64> {
         self.total_virtual_len
@@ -1169,6 +1413,8 @@ impl PatchedFlacSource {
 }
 
 impl std::io::Read for PatchedFlacSource {
+    /// Reads into `buf` from `virtual_head` when `pos < virtual_head.len()` or from `inner`
+    /// translated by `delta`.
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -1194,6 +1440,8 @@ impl std::io::Read for PatchedFlacSource {
 }
 
 impl std::io::Seek for PatchedFlacSource {
+    /// Seeks to `pos` in the virtual patched FLAC stream, translating positions past
+    /// `virtual_head` into `inner` coordinates via `delta`.
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         let next = match pos {
             std::io::SeekFrom::Start(p) => p,
@@ -1222,15 +1470,18 @@ impl std::io::Seek for PatchedFlacSource {
 }
 
 impl MediaSource for PatchedFlacSource {
+    /// Delegates seekability to `self.inner`.
     fn is_seekable(&self) -> bool {
         self.inner.is_seekable()
     }
 
+    /// Returns the total virtual byte length including `delta` if known.
     fn byte_len(&self) -> Option<u64> {
         self.effective_total_len()
     }
 }
 
+/// Parses a tag duration string `s` (`"HH:MM:SS.fff"`, `"MM:SS.fff"`, or `"SS.fff"`) into milliseconds.
 fn parse_duration_string(s: &str) -> Option<u64> {
     let parts: Vec<&str> = s.split(':').collect();
     let total_secs = match parts.as_slice() {

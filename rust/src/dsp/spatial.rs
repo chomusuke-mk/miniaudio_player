@@ -34,13 +34,13 @@ impl Vector3 {
         }
     }
 
-    /// Computes the dot product of this vector and another.
+    /// Computes the dot product of this vector and `other`.
     #[inline]
     pub fn dot(&self, other: &Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
-    /// Computes the cross product of this vector and another.
+    /// Computes the cross product of this vector and `other`.
     #[inline]
     pub fn cross(&self, other: &Self) -> Self {
         Self {
@@ -137,6 +137,7 @@ pub struct SpatialListener {
 }
 
 impl Default for SpatialListener {
+    /// Returns a stationary [`SpatialListener`] at the origin facing `-Z` with `+Y` up.
     fn default() -> Self {
         Self {
             position: Vector3::zero(),
@@ -175,6 +176,7 @@ pub struct SpatialEmitter {
 }
 
 impl Default for SpatialEmitter {
+    /// Returns a stationary omnidirectional [`SpatialEmitter`] at the origin with inverse-distance attenuation.
     fn default() -> Self {
         Self {
             position: Vector3::zero(),
@@ -210,7 +212,7 @@ pub struct SpatialEvaluation {
 pub struct SpatialProcessor;
 
 impl SpatialProcessor {
-    /// Evaluates exact instant 3D physical parameters without smoothing.
+    /// Evaluates exact instant 3D physical parameters for `listener`, `emitter`, and `speed_of_sound` without smoothing.
     pub fn evaluate(
         listener: &SpatialListener,
         emitter: &SpatialEmitter,

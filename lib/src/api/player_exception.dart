@@ -1,4 +1,4 @@
-/// Exception thrown by [MiniaudioPlayer] on native or runtime errors.
+/// Exception thrown by `MiniaudioPlayer` on native or runtime errors.
 class MiniaudioPlayerException implements Exception {
   /// The diagnostic error message describing the failure.
   final String message;
@@ -12,10 +12,17 @@ class MiniaudioPlayerException implements Exception {
   /// Creates a [MiniaudioPlayerException] with a [message] and optional [errorCode] or [details].
   const MiniaudioPlayerException(this.message, {this.errorCode, this.details});
 
+  /// Matches explicit `(code: N)` tags emitted by native Rust error formatting.
   static final RegExp _explicitCodeTagRegex = RegExp(r'\(code:\s*(-?\d+)\)');
-  static final RegExp _rustErrorCodeRegex = RegExp(r'(?:error|code:?)\s*(-?\d+)');
 
-  /// Constructs a deterministic [MiniaudioPlayerException] from a raw Rust/FFI exception.
+  /// Fallback pattern matching `error N` or `code: N` tokens in native errors.
+  static final RegExp _rustErrorCodeRegex =
+      RegExp(r'(?:error|code:?)\s*(-?\d+)');
+
+  /// Constructs a deterministic [MiniaudioPlayerException] from a raw Rust/FFI [error].
+  ///
+  /// Prepends [prefix] to the formatted message and falls back to [defaultErrorCode]
+  /// if no numeric status code can be extracted from [error].
   factory MiniaudioPlayerException.fromRustError(
     Object error, {
     String prefix = 'Operation failed',
@@ -33,6 +40,7 @@ class MiniaudioPlayerException implements Exception {
     );
   }
 
+  /// Returns a formatted diagnostic string including [errorCode] when present.
   @override
   String toString() {
     if (errorCode != null) {
@@ -40,32 +48,6 @@ class MiniaudioPlayerException implements Exception {
     }
     return 'MiniaudioPlayerException: $message';
   }
-}
-
-/// Exception thrown when attempting to play or manipulate an audio effect that is not loaded.
-class AudioEffectNotFoundException extends MiniaudioPlayerException {
-  /// The unique identifier of the missing audio effect.
-  final String effectId;
-
-  /// Creates an [AudioEffectNotFoundException] for the given [effectId].
-  const AudioEffectNotFoundException(this.effectId)
-      : super('Audio effect not found: $effectId',
-            errorCode: MapResult.errorFileNotFound);
-}
-
-/// Exception thrown when loading an audio effect exceeds the configured RAM budget.
-class RamBudgetExceededException extends MiniaudioPlayerException {
-  /// The size in bytes of the effect that exceeded the budget.
-  final int requestedBytes;
-
-  /// The maximum allowable RAM budget in bytes.
-  final int maxBytes;
-
-  /// Creates a [RamBudgetExceededException] indicating memory budget exhaustion.
-  const RamBudgetExceededException(this.requestedBytes, this.maxBytes)
-      : super(
-            'RAM budget exceeded: requested $requestedBytes bytes, max budget is $maxBytes bytes',
-            errorCode: MapResult.errorOutOfMemory);
 }
 
 /// Error and status codes matching `miniaudio_player_result_t`.
@@ -142,51 +124,4 @@ abstract final class MapResult {
         return 'Unknown error code ($code)';
     }
   }
-}
-
-/// Constants matching `miniaudio_player_playback_state_t`.
-abstract final class MapPlaybackState {
-  /// Stopped playback state (`0`).
-  static const int stopped = 0;
-
-  /// Actively playing state (`1`).
-  static const int playing = 1;
-
-  /// Paused playback state (`2`).
-  static const int paused = 2;
-
-  /// Returns a human-readable English description of the given [state].
-  static String describe(int state) {
-    switch (state) {
-      case stopped:
-        return 'Stopped';
-      case playing:
-        return 'Playing';
-      case paused:
-        return 'Paused';
-      default:
-        return 'Unknown state ($state)';
-    }
-  }
-}
-
-/// Constants matching `miniaudio_player_log_level_t`.
-abstract final class MapLogLevel {
-  /// Logging completely disabled (`0`).
-  static const int none = 0;
-
-  /// Critical errors only (`1`).
-  static const int error = 1;
-
-  /// Warnings and errors (`2`).
-  static const int warning = 2;
-
-  /// High-level informational events (`3`).
-  static const int info = 3;
-
-  /// Debug diagnostics (`4`).
-  static const int debug = 4;
-
-  /// Verbose telemetry diagnostics (`5`).
-  static const int verbose = 5;
 }

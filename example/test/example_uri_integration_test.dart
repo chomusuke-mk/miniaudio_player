@@ -1,12 +1,12 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import 'package:miniaudio_player_example/core/models/mock_data.dart';
+import 'package:miniaudio_player_example/features/queue/widgets/playlist_queue_card.dart';
 import 'package:miniaudio_player_example/main.dart';
-import 'package:miniaudio_player_example/models/mock_data.dart';
-import 'package:miniaudio_player_example/widgets/cards/playlist_queue_card.dart';
 
 class _MockCustomByteProvider implements CustomByteProvider {
   @override

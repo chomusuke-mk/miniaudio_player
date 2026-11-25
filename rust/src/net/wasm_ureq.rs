@@ -23,23 +23,33 @@ use super::wasm_ureq_protocol::{
 };
 use crate::sync::{lock_unpoisoned, MonotonicInstant};
 
+/// `BroadcastChannel` name shared between WASM threads and the pure-JS Network Worker.
 const NET_CHANNEL_NAME: &str = "__miniaudio_wasm_net_v1__";
 
+/// Guard ensuring only one thread spawns the singleton JS Network Worker.
 static WORKER_SPAWN_STARTED: AtomicBool = AtomicBool::new(false);
+/// Readiness word notified by JS via `Atomics.notify` (`0` = booting, `1` = ready, `-1` = failed).
 static WORKER_READY: AtomicI32 = AtomicI32::new(0);
+/// Monotonic generator for per-request stream identifiers.
 static NEXT_STREAM_ID: AtomicU32 = AtomicU32::new(1);
+/// Registry keeping active [`WasmStreamShared`] blocks pinned in linear memory until `CTRL_JS_EXITED == 1`.
 static ACTIVE_STREAMS: OnceLock<Mutex<HashMap<u32, Arc<WasmStreamShared>>>> = OnceLock::new();
 
 thread_local! {
+    /// Cached JS trampoline posting command payloads over `BroadcastChannel`.
     static POST_NET_CMD_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+    /// Cached JS trampoline invoking `Atomics.wait` on a shared control word.
     static ATOMICS_WAIT_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+    /// Cached JS trampoline invoking `Atomics.notify` on a shared control word.
     static ATOMICS_NOTIFY_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
 }
 
+/// Returns the global mutex-guarded map of in-flight [`WasmStreamShared`] instances.
 fn streams_registry() -> &'static Mutex<HashMap<u32, Arc<WasmStreamShared>>> {
     ACTIVE_STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Drops completed streams from [`ACTIVE_STREAMS`] once both Rust and JS have released them.
 fn reap_exited_streams() {
     if let Ok(mut map) = streams_registry().try_lock() {
         map.retain(|_, shared| {
@@ -49,6 +59,7 @@ fn reap_exited_streams() {
     }
 }
 
+/// Sends a command object `cmd_obj` to the pure-JS Network Worker via `BroadcastChannel`.
 fn post_net_command(cmd_obj: &Object) -> std::result::Result<(), JsValue> {
     let func = POST_NET_CMD_FN.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -71,6 +82,7 @@ fn post_net_command(cmd_obj: &Object) -> std::result::Result<(), JsValue> {
     Ok(())
 }
 
+/// Wakes any JS waiter blocked on control word `word_idx` at linear-memory offset `ctrl_ptr`.
 fn wasm_atomics_notify(ctrl_ptr: u32, word_idx: usize) {
     let func = ATOMICS_NOTIFY_FN.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -94,6 +106,7 @@ fn wasm_atomics_notify(ctrl_ptr: u32, word_idx: usize) {
     );
 }
 
+/// Blocks the current worker thread on `ctrl_ptr[word_idx]` while its value equals `expected`, up to `timeout_ms`.
 fn wasm_atomics_wait(ctrl_ptr: u32, word_idx: usize, expected: i32, timeout_ms: u64) {
     if !crate::sync::can_block_current_thread() {
         std::hint::spin_loop();
@@ -125,6 +138,7 @@ fn wasm_atomics_wait(ctrl_ptr: u32, word_idx: usize, expected: i32, timeout_ms: 
     let _ = func.apply(&JsValue::NULL, &args);
 }
 
+/// Inline JavaScript source executed inside the dedicated pure-JS Network Worker.
 const NETWORK_WORKER_JS: &str = r#"
 'use strict';
 var wasmMem = null;
@@ -640,16 +654,19 @@ pub fn ensure_network_worker() {
     ));
     args.push(&JsValue::from_str(NET_CHANNEL_NAME));
 
+    crate::map_log!(3, "[NET-WASM] Spawning pure-JS Network Worker");
     let spawned_ok = boot
         .apply(&JsValue::NULL, &args)
         .ok()
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if !spawned_ok {
+        crate::map_log!(1, "[NET-WASM] Failed to spawn pure-JS Network Worker");
         WORKER_READY.store(-1, Ordering::Release);
     }
 }
 
+/// Ensures the JS Network Worker is booted and waits up to 5 seconds for readiness.
 fn ensure_network_worker_ready() -> Result<(), Error> {
     ensure_network_worker();
     let ready_ptr = (&WORKER_READY) as *const AtomicI32 as usize as u32;
@@ -658,12 +675,14 @@ fn ensure_network_worker_ready() -> Result<(), Error> {
         match WORKER_READY.load(Ordering::Acquire) {
             1 => return Ok(()),
             -1 => {
+                crate::map_log!(1, "[NET-WASM] Network Worker unavailable");
                 return Err(Error::Transport(
                     "wasm network worker unavailable".to_string(),
-                ))
+                ));
             }
             _ => {
                 if deadline.elapsed() >= Duration::from_secs(5) {
+                    crate::map_log!(1, "[NET-WASM] Timed out booting Network Worker");
                     return Err(Error::Transport(
                         "timed out booting wasm network worker".to_string(),
                     ));
@@ -674,6 +693,7 @@ fn ensure_network_worker_ready() -> Result<(), Error> {
     }
 }
 
+/// Sends a lightweight stream control command `cmd` (`"abort"` or `"drain"`) for stream `id`.
 fn post_stream_cmd(cmd: &str, id: u32) {
     let obj = Object::new();
     let _ = Reflect::set(&obj, &JsValue::from_str("cmd"), &JsValue::from_str(cmd));
@@ -681,10 +701,17 @@ fn post_stream_cmd(cmd: &str, id: u32) {
     let _ = post_net_command(&obj);
 }
 
+/// Marks `shared` aborted, wakes any blocked Rust/JS waiters, and requests worker cancellation.
 fn abort_shared_stream(shared: &WasmStreamShared) {
     let was_aborted = shared.ctrl[CTRL_ABORTED].swap(1, Ordering::AcqRel);
     let state = shared.ctrl[CTRL_STATE].load(Ordering::Acquire);
     if was_aborted == 0 && state < STATE_EOF {
+        crate::map_log!(
+            4,
+            "[NET-WASM] Aborting stream id={} state={}",
+            shared.id,
+            state
+        );
         shared.ctrl[CTRL_WAKE_JS].fetch_add(1, Ordering::AcqRel);
         shared.ctrl[CTRL_WAKE_RUST].fetch_add(1, Ordering::AcqRel);
         wasm_atomics_notify(shared.ctrl_ptr(), CTRL_WAKE_JS);
@@ -697,17 +724,23 @@ fn abort_shared_stream(shared: &WasmStreamShared) {
 // Public `ureq`-Compatible Surface
 // =========================================================================
 
+/// Request typestate markers matching `ureq::typestate`.
 pub mod typestate {
     /// Request builder typestate matching `ureq::typestate::WithoutBody`.
     pub struct WithoutBody;
 }
 
+/// HTTP response and header types matching `ureq::http`.
 pub mod http {
     /// HTTP status code wrapper compatible with `ureq::http::StatusCode`.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct StatusCode(pub(super) u16);
+    pub struct StatusCode(
+        /// Numeric HTTP status code (e.g. `200`, `206`).
+        pub(super) u16,
+    );
 
     impl StatusCode {
+        /// Returns the raw numeric HTTP status code as a `u16`.
         #[inline]
         pub fn as_u16(self) -> u16 {
             self.0
@@ -728,9 +761,13 @@ pub mod http {
 
     /// HTTP header value wrapper compatible with `ureq::http::HeaderValue`.
     #[derive(Debug, Clone)]
-    pub struct HeaderValue(pub(super) String);
+    pub struct HeaderValue(
+        /// UTF-8 header value string.
+        pub(super) String,
+    );
 
     impl HeaderValue {
+        /// Returns the header value as a string slice.
         #[inline]
         pub fn to_str(&self) -> Result<&str, ToStrError> {
             Ok(&self.0)
@@ -739,9 +776,13 @@ pub mod http {
 
     /// Case-insensitive response header map.
     #[derive(Debug, Clone, Default)]
-    pub struct HeaderMap(pub(super) Vec<(String, HeaderValue)>);
+    pub struct HeaderMap(
+        /// Lowercased header `(name, value)` pairs decoded from wire format.
+        pub(super) Vec<(String, HeaderValue)>,
+    );
 
     impl HeaderMap {
+        /// Looks up the first header matching `name` ASCII case-insensitively.
         #[inline]
         pub fn get(&self, name: &str) -> Option<&HeaderValue> {
             self.0
@@ -753,22 +794,28 @@ pub mod http {
 
     /// HTTP response wrapper compatible with `ureq::http::Response<B>`.
     pub struct Response<B> {
+        /// HTTP response status code.
         pub(super) status: StatusCode,
+        /// Decoded response header map.
         pub(super) headers: HeaderMap,
+        /// Response body payload.
         pub(super) body: B,
     }
 
     impl<B> Response<B> {
+        /// Returns the HTTP response [`StatusCode`].
         #[inline]
         pub fn status(&self) -> StatusCode {
             self.status
         }
 
+        /// Returns a reference to the response [`HeaderMap`].
         #[inline]
         pub fn headers(&self) -> &HeaderMap {
             &self.headers
         }
 
+        /// Consumes the response wrapper and returns the inner body `B`.
         #[inline]
         pub fn into_body(self) -> B {
             self.body
@@ -779,8 +826,16 @@ pub mod http {
 /// Transport or HTTP status error matching `ureq::Error`.
 #[derive(Debug, Clone)]
 pub enum Error {
-    StatusCode(u16),
-    Transport(String),
+    /// Non-success HTTP response status code (`>= 400`).
+    StatusCode(
+        /// HTTP error status code.
+        u16,
+    ),
+    /// Network, CORS, timeout, or worker transport error message.
+    Transport(
+        /// Human-readable or canonical transport error description.
+        String,
+    ),
 }
 
 impl fmt::Display for Error {
@@ -797,42 +852,55 @@ impl std::error::Error for Error {}
 /// Agent configuration matching `ureq::Agent`.
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
+    /// Timeout waiting for connection establishment.
     connect_timeout: Duration,
+    /// Timeout waiting for HTTP response headers.
     recv_timeout: Duration,
+    /// Maximum wait duration per individual `Read::read` call.
     per_read_timeout: Duration,
 }
 
+/// Fluent builder for [`AgentConfig`] matching `ureq::config::ConfigBuilder`.
 #[derive(Clone, Debug)]
 pub struct AgentConfigBuilder {
+    /// Timeout waiting for connection establishment.
     connect_timeout: Duration,
+    /// Timeout waiting for HTTP response headers.
     recv_timeout: Duration,
+    /// Maximum wait duration per individual `Read::read` call.
     per_read_timeout: Duration,
 }
 
 impl AgentConfigBuilder {
+    /// No-op compatibility setter for `_ua` (browsers forbid custom `User-Agent` headers in `fetch`).
     pub fn user_agent(self, _ua: &str) -> Self {
         self
     }
 
+    /// Sets the connection `timeout` (defaults to 10 seconds when `None`).
     pub fn timeout_connect(mut self, timeout: Option<Duration>) -> Self {
         self.connect_timeout = timeout.unwrap_or_else(|| Duration::from_secs(10));
         self
     }
 
+    /// Sets the response-header receive `timeout` (defaults to 15 seconds when `None`).
     pub fn timeout_recv_response(mut self, timeout: Option<Duration>) -> Self {
         self.recv_timeout = timeout.unwrap_or_else(|| Duration::from_secs(15));
         self
     }
 
+    /// Sets the per-read blocking `timeout` (defaults to 15 seconds when `None`).
     pub fn timeout_per_read(mut self, timeout: Option<Duration>) -> Self {
         self.per_read_timeout = timeout.unwrap_or_else(|| Duration::from_secs(15));
         self
     }
 
+    /// No-op compatibility setter for `_max` idle connections (managed by the browser `fetch` stack).
     pub fn max_idle_connections(self, _max: usize) -> Self {
         self
     }
 
+    /// Finalizes and returns the constructed [`AgentConfig`].
     pub fn build(self) -> AgentConfig {
         AgentConfig {
             connect_timeout: self.connect_timeout,
@@ -851,10 +919,12 @@ impl From<AgentConfig> for Agent {
 /// Cross-thread cloneable `ureq::Agent` equivalent for `wasm32`.
 #[derive(Clone, Debug)]
 pub struct Agent {
+    /// Timeout configuration applied to requests created by this agent.
     cfg: AgentConfig,
 }
 
 impl Agent {
+    /// Returns a new [`AgentConfigBuilder`] with default timeouts.
     pub fn config_builder() -> AgentConfigBuilder {
         AgentConfigBuilder {
             connect_timeout: Duration::from_secs(5),
@@ -863,6 +933,7 @@ impl Agent {
         }
     }
 
+    /// Begins constructing an HTTP `GET` request for `url`.
     pub fn get(&self, url: &str) -> RequestBuilder<typestate::WithoutBody> {
         RequestBuilder {
             cfg: self.cfg.clone(),
@@ -875,24 +946,35 @@ impl Agent {
 
 /// Request builder matching `ureq::RequestBuilder<WithoutBody>`.
 pub struct RequestBuilder<S> {
+    /// Timeout configuration inherited from the originating [`Agent`].
     cfg: AgentConfig,
+    /// Target request URL.
     url: String,
+    /// Outgoing `(name, value)` request headers.
     headers: Vec<(String, String)>,
+    /// Zero-sized typestate marker `S`.
     _state: std::marker::PhantomData<S>,
 }
 
 impl<S> RequestBuilder<S> {
+    /// Appends a request header `(key, value)` to the outgoing fetch request.
     pub fn header<K: AsRef<str>, V: AsRef<str>>(mut self, key: K, value: V) -> Self {
         self.headers
             .push((key.as_ref().to_string(), value.as_ref().to_string()));
         self
     }
 
+    /// Dispatches the HTTP `GET` request to the JS Network Worker and blocks until headers arrive.
+    ///
+    /// # Errors
+    /// Returns [`Error::Transport`] if the worker cannot start, times out, or fails at transport/CORS level,
+    /// or [`Error::StatusCode`] if the server responds with HTTP status `>= 400`.
     pub fn call(self) -> Result<http::Response<Body>, Error> {
         reap_exited_streams();
         ensure_network_worker_ready()?;
 
         let id = NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed);
+        crate::map_log!(4, "[NET-WASM] HTTP GET id={} url={}", id, self.url);
         let shared = Arc::new(WasmStreamShared::new(id));
         {
             let mut reg = lock_unpoisoned(streams_registry());
@@ -921,12 +1003,19 @@ impl<S> RequestBuilder<S> {
         ];
         for (k, v) in fields {
             if Reflect::set(&cmd, &JsValue::from_str(k), &v).is_err() {
+                crate::map_log!(1, "[NET-WASM] Failed to build open command id={}", id);
                 abort_shared_stream(&shared);
                 return Err(Error::Transport("failed to build open command".to_string()));
             }
         }
 
         if post_net_command(&cmd).is_err() {
+            crate::map_log!(
+                1,
+                "[NET-WASM] Failed to post open command id={} url={}",
+                id,
+                self.url
+            );
             abort_shared_stream(&shared);
             return Err(Error::Transport(
                 "failed to post open command to wasm network worker".to_string(),
@@ -947,6 +1036,13 @@ impl<S> RequestBuilder<S> {
             }
             let elapsed = start.elapsed();
             if elapsed >= open_timeout {
+                crate::map_log!(
+                    1,
+                    "[NET-WASM] Connect/response timeout id={} url={} after {:?}",
+                    id,
+                    self.url,
+                    open_timeout
+                );
                 abort_shared_stream(&shared);
                 return Err(Error::Transport(format!(
                     "connect/response timeout after {:?}",
@@ -965,11 +1061,30 @@ impl<S> RequestBuilder<S> {
             drop(shared);
             reap_exited_streams();
             if status == STATUS_CORS_RANGE_BLOCKED {
+                crate::map_log!(
+                    2,
+                    "[NET-WASM] CORS range blocked id={} url={}",
+                    id,
+                    self.url
+                );
                 return Err(Error::Transport(ERR_CORS_RANGE_BLOCKED.to_string()));
             }
             if status == STATUS_CORS_ICY_BLOCKED {
+                crate::map_log!(
+                    2,
+                    "[NET-WASM] CORS ICY blocked id={} url={}",
+                    id,
+                    self.url
+                );
                 return Err(Error::Transport(ERR_CORS_ICY_BLOCKED.to_string()));
             }
+            crate::map_log!(
+                1,
+                "[NET-WASM] Fetch transport failure id={} url={} status={}",
+                id,
+                self.url,
+                status
+            );
             return Err(Error::Transport(format!(
                 "fetch failed for '{}' (code {})",
                 self.url, status
@@ -977,6 +1092,13 @@ impl<S> RequestBuilder<S> {
         }
 
         if status >= 400 {
+            crate::map_log!(
+                2,
+                "[NET-WASM] HTTP error status id={} url={} status={}",
+                id,
+                self.url,
+                status
+            );
             abort_shared_stream(&shared);
             drop(shared);
             reap_exited_streams();
@@ -1002,6 +1124,14 @@ impl<S> RequestBuilder<S> {
             .map(|(k, v)| (k, http::HeaderValue(v)))
             .collect();
 
+        crate::map_log!(
+            4,
+            "[NET-WASM] HTTP response ready id={} status={} hdr_len={}",
+            id,
+            status,
+            hdr_len
+        );
+
         Ok(http::Response {
             status: http::StatusCode(status as u16),
             headers: http::HeaderMap(header_pairs),
@@ -1015,11 +1145,14 @@ impl<S> RequestBuilder<S> {
 
 /// Streaming response body matching `ureq::Body`.
 pub struct Body {
+    /// Shared stream state transferred to [`WasmHttpReader`] or aborted on drop.
     shared: Option<Arc<WasmStreamShared>>,
+    /// Per-read timeout propagated to [`WasmHttpReader`].
     per_read_timeout: Duration,
 }
 
 impl Body {
+    /// Converts this response body into a blocking [`WasmHttpReader`].
     pub fn into_reader(mut self) -> WasmHttpReader {
         let shared = self
             .shared
@@ -1044,7 +1177,9 @@ impl Drop for Body {
 
 /// Progressive blocking `Read + Send` adapter draining a JS `ReadableStream` SPSC ring.
 pub struct WasmHttpReader {
+    /// Shared SPSC ring and atomic control block for the active fetch stream.
     shared: Arc<WasmStreamShared>,
+    /// Maximum wait duration before a stalled read returns `ErrorKind::TimedOut`.
     per_read_timeout: Duration,
 }
 
@@ -1097,12 +1232,15 @@ impl Read for WasmHttpReader {
                 if w2 != r {
                     continue;
                 }
+                crate::map_log!(4, "[NET-WASM] Stream EOF id={}", self.shared.id);
                 return Ok(0);
             }
             if state == STATE_ERROR {
+                crate::map_log!(1, "[NET-WASM] Stream read error id={}", self.shared.id);
                 return Err(IoError::other("wasm fetch stream error"));
             }
             if self.shared.ctrl[CTRL_ABORTED].load(Ordering::Acquire) != 0 {
+                crate::map_log!(3, "[NET-WASM] Stream read aborted id={}", self.shared.id);
                 return Err(IoError::new(
                     ErrorKind::ConnectionAborted,
                     "wasm fetch stream aborted",
@@ -1111,6 +1249,12 @@ impl Read for WasmHttpReader {
 
             let elapsed = start.elapsed();
             if elapsed >= self.per_read_timeout {
+                crate::map_log!(
+                    2,
+                    "[NET-WASM] Stream read timeout id={} after {:?}",
+                    self.shared.id,
+                    self.per_read_timeout
+                );
                 return Err(IoError::new(
                     ErrorKind::TimedOut,
                     "wasm fetch stream read timeout",

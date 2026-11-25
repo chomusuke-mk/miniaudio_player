@@ -34,10 +34,10 @@ pub const TAP_RING_CAPACITY_SAMPLES: usize = 32768;
 /// Secondary SPSC ring capacity for individual Pull readers during fan-out mode.
 pub const TAP_PULL_FANOUT_CAPACITY_SAMPLES: usize = 32768;
 
-/// Minimum and maximum allowed chunk frame duration (ms) for Push batching.
+/// Minimum allowed chunk frame duration in milliseconds for Push batching.
 pub const MIN_TAP_FRAME_DURATION_MS: u32 = 5;
+/// Maximum allowed chunk frame duration in milliseconds for Push batching.
 pub const MAX_TAP_FRAME_DURATION_MS: u32 = 200;
-pub const DEFAULT_TAP_FRAME_DURATION_MS: u32 = 20;
 
 /// Sample encoding format emitted by an audio bus tap.
 #[repr(i32)]
@@ -50,7 +50,11 @@ pub enum TapSampleFormat {
 }
 
 impl TapSampleFormat {
-    /// Converts raw integer wire code (`0`: Float32, `1`: Pcm16) into [`TapSampleFormat`].
+    /// Converts raw integer wire `value` (`0`: Float32, `1`: Pcm16) into [`TapSampleFormat`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `value` is not `0` or `1`.
     #[inline]
     pub fn from_i32(value: i32) -> Result<Self, String> {
         match value {
@@ -76,12 +80,19 @@ impl TapSampleFormat {
 /// Owned PCM batch emitted by a Push tap toward Dart/consumers.
 #[derive(Debug, Clone)]
 pub struct TapChunk {
+    /// Zero-based bus index (`0..TAP_BUS_COUNT`) that produced this chunk.
     pub source: i32,
+    /// Sample encoding format of `bytes`.
     pub format: TapSampleFormat,
+    /// Sample rate in Hertz.
     pub sample_rate: u32,
+    /// Number of interleaved audio channels.
     pub channels: usize,
+    /// Number of audio frames encoded in `bytes`.
     pub frame_count: u32,
+    /// Cumulative dropped frames observed by the tap since opening.
     pub dropped_frames: u64,
+    /// Little-endian encoded PCM payload bytes.
     pub bytes: Vec<u8>,
 }
 
@@ -91,7 +102,7 @@ pub trait TapChunkSink: Send + Sync {
     fn send_chunk(&self, chunk: TapChunk) -> bool;
 }
 
-/// Encodes interleaved `f32` samples directly into `dst` according to `format`, returning bytes written.
+/// Encodes interleaved `f32` samples from `src` directly into `dst` according to `format`, returning bytes written.
 ///
 /// Both `Float32` and `Pcm16` emit little-endian wire layout matching Dart typed views.
 #[inline]
@@ -129,8 +140,8 @@ pub fn encode_f32_into_bytes(src: &[f32], format: TapSampleFormat, dst: &mut [u8
     }
 }
 
-/// Reads up to `max_samples` (already frame-aligned) from an `rtrb::Consumer<f32>`, encoding
-/// straight from its ring slices into `dst_bytes`. Returns `(samples_read, bytes_written)`.
+/// Reads up to `max_samples` (frame-aligned to `channels`) from `cons`, encoding
+/// directly from its ring slices in `format` into `dst_bytes`, and returns `(samples_read, bytes_written)`.
 #[inline]
 fn pop_consumer_encoded(
     cons: &mut rtrb::Consumer<f32>,
@@ -160,7 +171,7 @@ fn pop_consumer_encoded(
     (wanted, b1 + b2)
 }
 
-/// Drains all currently available aligned frames from `cons` into `out` without reallocating.
+/// Drains all currently available frame-aligned samples (aligned to `channels`) from `cons` into `out` without reallocating when capacity suffices.
 #[inline]
 fn drain_consumer_to_vec(cons: &mut rtrb::Consumer<f32>, channels: usize, out: &mut Vec<f32>) {
     out.clear();
@@ -189,7 +200,7 @@ fn discard_consumer(cons: &mut rtrb::Consumer<f32>) {
     }
 }
 
-/// Pushes interleaved `src` samples into an `rtrb::Producer<f32>`, tracking dropped frames on overflow.
+/// Pushes interleaved `src` samples (aligned to `channels`) into `prod`, incrementing `dropped_frames` on ring overflow.
 #[inline]
 fn push_producer_aligned(
     prod: &mut rtrb::Producer<f32>,
@@ -223,19 +234,24 @@ fn push_producer_aligned(
 
 /// Real-time side slot for a single audio output bus.
 pub struct TapRtBusSlot {
+    /// SPSC producer written on the RT audio thread.
     producer: rtrb::Producer<f32>,
+    /// Cumulative frames dropped due to full SPSC ring capacity.
     dropped_frames: Arc<AtomicU64>,
 }
 
 /// Lock-free multi-bus tap matrix owned exclusively by `OutputManager` on the RT audio thread.
 pub struct TapRtMatrix {
+    /// Bitmask of buses currently having at least one active subscriber.
     active_bus_mask: Arc<AtomicU8>,
+    /// Fixed-size array of per-bus RT ring slots.
     slots: [TapRtBusSlot; TAP_BUS_COUNT],
+    /// Interleaved channel count of the output mixer.
     channels: usize,
 }
 
 impl TapRtMatrix {
-    /// Copies active output bus slices into their respective RT SPSC rings (`~0.27 ns` when idle).
+    /// Copies active output bus `slices` (up to `sample_count` samples) into their respective RT SPSC rings (`~0.27 ns` when idle).
     ///
     /// Expects `slices` ordered as `[All, MusicMix, ActiveTrack, StandbyTrack, VoiceOnly]`.
     #[inline]
@@ -260,31 +276,49 @@ impl TapRtMatrix {
     }
 }
 
+/// Registered Push tap subscriber accumulating samples until reaching its batch target.
 struct PushSubscriber {
+    /// Unique client identifier for unregistration.
     client_key: u64,
+    /// Wire encoding format requested by this subscriber.
     format: TapSampleFormat,
+    /// Target number of interleaved `f32` samples per emitted [`TapChunk`].
     target_samples: usize,
+    /// Accumulation buffer holding partial frames across dispatcher ticks.
     accum_f32: Vec<f32>,
+    /// Initial RT dropped-frame count captured when the subscriber registered.
     dropped_baseline: u64,
+    /// Downstream chunk sink delivering encoded batches.
     sink: Arc<dyn TapChunkSink>,
+    /// Tombstone flag set when the sink rejects further chunks.
     closed: bool,
 }
 
+/// Per-bus collection of active Push and Pull subscribers.
 #[derive(Default)]
 struct BusSubscribers {
+    /// Active Push broadcast subscribers on this bus.
     push_subs: Vec<PushSubscriber>,
+    /// Active Pull tap handles attached to this bus.
     pull_subs: Vec<Arc<PullTapHandle>>,
 }
 
+/// Shared coordination state between [`TapBusRegistry`] and the off-RT dispatcher worker.
 struct TapControlState {
+    /// Bitmask of active buses mirrored to [`TapRtMatrix`].
     active_bus_mask: Arc<AtomicU8>,
+    /// Whether any bus currently requires off-RT dispatcher fan-out.
     has_fanout_work: AtomicBool,
+    /// Mutex paired with `wake_cvar` to guard wakeup predicates.
     wake_lock: Mutex<bool>,
+    /// Condition variable waking the dispatcher thread on topology changes.
     wake_cvar: Condvar,
+    /// Shutdown signal stopping the dispatcher thread.
     shutdown: AtomicBool,
 }
 
 impl TapControlState {
+    /// Acquires `wake_lock` and notifies the dispatcher thread to re-evaluate work.
     #[inline]
     fn notify_wake(&self) {
         let mut wake = lock_unpoisoned(&self.wake_lock);
@@ -293,6 +327,7 @@ impl TapControlState {
         self.wake_cvar.notify_all();
     }
 
+    /// Best-effort non-blocking wakeup safe for contexts that must avoid blocking locks.
     #[inline]
     fn try_notify_wake(&self) {
         if let Ok(mut wake) = self.wake_lock.try_lock() {
@@ -302,33 +337,54 @@ impl TapControlState {
     }
 }
 
+/// Shared hub synchronizing the RT bus ring with Push/Pull subscribers for one output bus.
 struct BusHub {
+    /// Zero-based bus index (`0..TAP_BUS_COUNT`).
     bus_idx: usize,
+    /// Consumer end of the RT SPSC ring buffer for this bus.
     rt_consumer: Mutex<rtrb::Consumer<f32>>,
+    /// Cumulative dropped frames reported by the RT producer slot.
     rt_dropped_frames: Arc<AtomicU64>,
+    /// Whether the off-RT dispatcher thread owns draining `rt_consumer` for fan-out.
     fanout_active: AtomicBool,
+    /// Shared control and wakeup state across all buses.
     control: Arc<TapControlState>,
+    /// Protected subscriber list for this bus.
     state: Mutex<BusSubscribers>,
 }
 
 /// Handle for zero-allocation Pull reading on an audio output bus.
 pub struct PullTapHandle {
+    /// Globally unique tap identifier used by FFI lookups.
     pub tap_id: u32,
+    /// Zero-based bus index (`0..TAP_BUS_COUNT`) tapped by this handle.
     pub bus_idx: usize,
+    /// Target wire sample encoding emitted by [`PullTapHandle::poll_into_bytes`].
     pub format: TapSampleFormat,
+    /// Sample rate in Hertz.
     pub sample_rate: u32,
+    /// Number of interleaved channels.
     pub channels: usize,
+    /// Shared hub for the tapped bus.
     hub: Arc<BusHub>,
+    /// Secondary SPSC producer written by the dispatcher during fan-out mode.
     fanout_producer: Mutex<Option<rtrb::Producer<f32>>>,
+    /// Secondary SPSC consumer read by callers during fan-out mode.
     fanout_consumer: Mutex<Option<rtrb::Consumer<f32>>>,
+    /// RT dropped-frame baseline captured when this handle opened.
     rt_dropped_baseline: AtomicU64,
+    /// Frames dropped while pushing into this handle's fan-out ring.
     fanout_dropped_frames: AtomicU64,
+    /// Cached last reported dropped-frame count returned after closing.
     last_reported_dropped: AtomicU64,
+    /// Flag indicating this handle has been closed.
     closed: AtomicBool,
+    /// Reusable per-handle scratch buffer used by [`PullTapHandle::with_scratch_poll`].
     web_scratch_u8: Mutex<Vec<u8>>,
 }
 
 impl PullTapHandle {
+    /// Lazily allocates the secondary SPSC ring used when this bus enters fan-out mode.
     fn ensure_fanout_ring(&self) {
         let mut prod_guard = lock_unpoisoned(&self.fanout_producer);
         if prod_guard.is_some() {
@@ -343,6 +399,7 @@ impl PullTapHandle {
         *cons_guard = Some(cons);
     }
 
+    /// Pushes fanned-out `src` samples from the dispatcher thread into this handle's secondary ring.
     fn push_fanout_samples(&self, src: &[f32]) {
         if self.closed.load(Ordering::Acquire) {
             return;
@@ -435,7 +492,7 @@ impl PullTapHandle {
         (frames_read as u32, self.total_dropped_frames())
     }
 
-    /// Web helper using a per-handle reusable scratch byte buffer under `try_lock` to avoid per-poll allocs.
+    /// Polls up to `max_frames` (capped at `max_bytes`) into a per-handle reusable scratch buffer under `try_lock`, invoking `f` with `(frames_read, encoded_slice)`.
     pub fn with_scratch_poll<R>(
         &self,
         max_bytes: usize,
@@ -454,14 +511,17 @@ impl PullTapHandle {
     }
 }
 
+/// Global registry mapping active `tap_id` values to their [`PullTapHandle`] instances.
 static PULL_TAP_REGISTRY: OnceLock<RwLock<HashMap<u32, Arc<PullTapHandle>>>> = OnceLock::new();
+/// Monotonic counter generating unique non-zero Pull tap identifiers.
 static NEXT_PULL_TAP_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Returns the lazily initialized global Pull tap handle registry.
 fn global_pull_taps() -> &'static RwLock<HashMap<u32, Arc<PullTapHandle>>> {
     PULL_TAP_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Looks up an active global Pull tap handle without blocking if registry is contended (`try_read`).
+/// Looks up an active global Pull tap handle by `tap_id` without blocking if the registry is contended (`try_read`).
 pub fn lookup_pull_tap_nonblocking(tap_id: u32) -> Option<Arc<PullTapHandle>> {
     if tap_id == 0 {
         return None;
@@ -470,7 +530,7 @@ pub fn lookup_pull_tap_nonblocking(tap_id: u32) -> Option<Arc<PullTapHandle>> {
     guard.get(&tap_id).cloned()
 }
 
-/// Closes a global Pull tap handle cleanly by ID (safe/idempotent from Dart `Finalizer` or explicit close).
+/// Closes a global Pull tap handle cleanly by `tap_id` (safe and idempotent from Dart `Finalizer` or explicit close).
 ///
 /// Uses non-blocking locks when invoked on the Web main UI thread so `Atomics.wait` is never touched.
 pub fn close_global_pull_tap(tap_id: u32) {
@@ -495,6 +555,12 @@ pub fn close_global_pull_tap(tap_id: u32) {
     };
 
     if let Some(handle) = removed {
+        crate::map_log!(
+            3,
+            "[TAP] Closed Pull tap tap_id={} bus={}",
+            tap_id,
+            handle.bus_idx
+        );
         handle.mark_closed();
         handle.hub.reconcile_bus_after_pull_close(tap_id);
     }
@@ -502,11 +568,17 @@ pub fn close_global_pull_tap(tap_id: u32) {
 
 /// Global reference-counted tap hub managing all 5 audio output buses for a player instance.
 pub struct TapBusRegistry {
+    /// Shared control and wakeup state for the dispatcher worker.
     control: Arc<TapControlState>,
+    /// Per-bus subscriber hubs indexed by `0..TAP_BUS_COUNT`.
     hubs: [Arc<BusHub>; TAP_BUS_COUNT],
+    /// Output sample rate in Hertz.
     sample_rate: u32,
+    /// Interleaved output channel count.
     channels: usize,
+    /// List of global Pull tap IDs created by this registry for cleanup on shutdown.
     owned_pull_ids: Mutex<Vec<u32>>,
+    /// Join handle for the lazily spawned off-RT fan-out dispatcher thread.
     dispatcher_thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -516,7 +588,8 @@ impl Drop for TapBusRegistry {
     }
 }
 
-/// Creates a paired `(TapRtMatrix, Arc<TapBusRegistry>)` sharing lock-free RT SPSC rings per bus.
+/// Creates a paired `(TapRtMatrix, Arc<TapBusRegistry>)` sharing lock-free RT SPSC rings per bus
+/// for `sample_rate` and `channels`.
 pub fn create_tap_pair(sample_rate: u32, channels: usize) -> (TapRtMatrix, Arc<TapBusRegistry>) {
     let sr = sample_rate.max(8000);
     let ch = channels.max(1);
@@ -573,9 +646,11 @@ pub fn create_tap_pair(sample_rate: u32, channels: usize) -> (TapRtMatrix, Arc<T
     (matrix, registry)
 }
 
+/// Queued outbound Push delivery `(bus_idx, client_key, sink, chunk)` flushed outside hub locks.
 type PendingPushSend = (usize, u64, Arc<dyn TapChunkSink>, TapChunk);
 
 impl BusHub {
+    /// Reconciles active RT bitmask and fan-out mode for `subs`, returning `(has_any, need_fanout)`.
     fn reconcile_unlocked(&self, subs: &mut BusSubscribers) -> (bool, bool) {
         subs.push_subs.retain(|s| !s.closed);
         subs.pull_subs.retain(|p| !p.is_closed());
@@ -585,10 +660,13 @@ impl BusHub {
         let bit = 1u8 << self.bus_idx;
 
         if !has_any {
-            self.control.active_bus_mask.fetch_and(!bit, Ordering::AcqRel);
+            let prev_mask = self.control.active_bus_mask.fetch_and(!bit, Ordering::AcqRel);
             self.fanout_active.store(false, Ordering::Release);
             if let Ok(mut rt_cons) = self.rt_consumer.try_lock() {
                 discard_consumer(&mut rt_cons);
+            }
+            if (prev_mask & bit) != 0 {
+                crate::map_log!(4, "[TAP] Deactivated bus={}", self.bus_idx);
             }
             return (false, false);
         }
@@ -605,6 +683,7 @@ impl BusHub {
                 discard_consumer(&mut rt_cons);
             }
             self.control.active_bus_mask.fetch_or(bit, Ordering::AcqRel);
+            crate::map_log!(4, "[TAP] Activated bus={}", self.bus_idx);
         }
 
         let was_fanout = self.fanout_active.load(Ordering::Acquire);
@@ -613,13 +692,16 @@ impl BusHub {
                 pull.ensure_fanout_ring();
             }
             self.fanout_active.store(true, Ordering::Release);
+            crate::map_log!(4, "[TAP] Enabled fan-out on bus={}", self.bus_idx);
         } else if !need_fanout && was_fanout {
             self.fanout_active.store(false, Ordering::Release);
+            crate::map_log!(4, "[TAP] Disabled fan-out on bus={}", self.bus_idx);
         }
 
         (true, need_fanout)
     }
 
+    /// Removes closed Pull handle `tap_id` from this bus hub and wakes the dispatcher if needed.
     fn reconcile_bus_after_pull_close(&self, tap_id: u32) {
         let locked = if !can_block_current_thread() {
             self.state.try_lock().ok()
@@ -633,6 +715,7 @@ impl BusHub {
         self.control.try_notify_wake();
     }
 
+    /// Marks the Push subscriber matching `client_key` as closed and reconciles bus state.
     fn mark_push_closed(&self, client_key: u64) {
         let mut subs = lock_unpoisoned(&self.state);
         for sub in &mut subs.push_subs {
@@ -643,6 +726,7 @@ impl BusHub {
         let _ = self.reconcile_unlocked(&mut subs);
     }
 
+    /// Allocates and returns encoded wire bytes for `src` samples in `format`.
     fn encode_tap_chunk(src: &[f32], format: TapSampleFormat) -> Vec<u8> {
         let mut buf = vec![0u8; src.len() * format.bytes_per_sample()];
         let written = encode_f32_into_bytes(src, format, &mut buf);
@@ -650,6 +734,7 @@ impl BusHub {
         buf
     }
 
+    /// Drains RT samples into `scratch_f32`, fans out to Pull subscribers, and batches encoded Push chunks into `pending_sends` using `sample_rate`, `channels`, and `encoded_cache`.
     fn pump_fanout(
         &self,
         sample_rate: u32,
@@ -745,11 +830,13 @@ impl BusHub {
 }
 
 impl TapBusRegistry {
+    /// Returns the configured output sample rate in Hertz.
     #[inline]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Returns the configured interleaved channel count.
     #[inline]
     pub fn channels(&self) -> usize {
         self.channels
@@ -761,6 +848,11 @@ impl TapBusRegistry {
         self.control.active_bus_mask.load(Ordering::Acquire)
     }
 
+    /// Validates that `source` lies within `0..TAP_BUS_COUNT` and returns the bus index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `source` is out of range.
     fn validate_bus(source: i32) -> Result<usize, String> {
         if !(0..TAP_BUS_COUNT as i32).contains(&source) {
             return Err(format!(
@@ -772,7 +864,13 @@ impl TapBusRegistry {
         Ok(source as usize)
     }
 
-    /// Registers a Push broadcast subscriber for a bus and activates off-RT fan-out dispatching.
+    /// Registers a Push broadcast subscriber identified by `client_key` on bus `source`
+    /// with `format`, `frame_duration_ms`, and `sink`, activating off-RT fan-out dispatching.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the registry is shut down, `frame_duration_ms` is outside
+    /// `[MIN_TAP_FRAME_DURATION_MS, MAX_TAP_FRAME_DURATION_MS]`, or `source` is invalid.
     pub fn add_push_tap(
         &self,
         client_key: u64,
@@ -782,16 +880,25 @@ impl TapBusRegistry {
         sink: Arc<dyn TapChunkSink>,
     ) -> Result<(), String> {
         if self.control.shutdown.load(Ordering::Acquire) {
+            crate::map_log!(2, "[TAP] add_push_tap rejected: registry shut down");
             return Err("TapBusRegistry is shut down".to_string());
         }
         if !(MIN_TAP_FRAME_DURATION_MS..=MAX_TAP_FRAME_DURATION_MS).contains(&frame_duration_ms) {
+            crate::map_log!(
+                2,
+                "[TAP] add_push_tap invalid frame_duration_ms={}",
+                frame_duration_ms
+            );
             return Err(format!(
                 "frameDurationMs {} out of supported range {}..{}",
                 frame_duration_ms, MIN_TAP_FRAME_DURATION_MS, MAX_TAP_FRAME_DURATION_MS
             ));
         }
 
-        let bus_idx = Self::validate_bus(source)?;
+        let bus_idx = Self::validate_bus(source).map_err(|e| {
+            crate::map_log!(2, "[TAP] add_push_tap invalid bus: {}", e);
+            e
+        })?;
         let target_frames = ((self.sample_rate as u64 * frame_duration_ms as u64) / 1000).max(1);
         let target_samples = (target_frames as usize) * self.channels;
 
@@ -811,30 +918,54 @@ impl TapBusRegistry {
             });
         }
 
+        crate::map_log!(
+            3,
+            "[TAP] Added Push tap client_key={} bus={} format={:?} duration_ms={}",
+            client_key,
+            bus_idx,
+            format,
+            frame_duration_ms
+        );
         self.recompute_fanout_and_wake();
         Ok(())
     }
 
     /// Unregisters a Push subscriber by `client_key` and reconciles `active_bus_mask`.
     pub fn remove_push_tap(&self, client_key: u64) {
+        let mut removed = false;
         for hub in &self.hubs {
             let mut subs = lock_unpoisoned(&hub.state);
+            let before = subs.push_subs.len();
             subs.push_subs
                 .retain(|s| s.client_key != client_key && !s.closed);
+            if subs.push_subs.len() != before {
+                removed = true;
+            }
+        }
+        if removed {
+            crate::map_log!(3, "[TAP] Removed Push tap client_key={}", client_key);
         }
         self.recompute_fanout_and_wake();
     }
 
-    /// Opens a zero-allocation Pull tap handle for the given bus.
+    /// Opens a zero-allocation Pull tap handle for bus `source` with encoding `format`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the registry is shut down or `source` is out of range.
     pub fn create_pull_tap(
         &self,
         source: i32,
         format: TapSampleFormat,
     ) -> Result<Arc<PullTapHandle>, String> {
         if self.control.shutdown.load(Ordering::Acquire) {
+            crate::map_log!(2, "[TAP] create_pull_tap rejected: registry shut down");
             return Err("TapBusRegistry is shut down".to_string());
         }
-        let bus_idx = Self::validate_bus(source)?;
+        let bus_idx = Self::validate_bus(source).map_err(|e| {
+            crate::map_log!(2, "[TAP] create_pull_tap invalid bus: {}", e);
+            e
+        })?;
         let hub = self.hubs[bus_idx].clone();
 
         let mut tap_id = NEXT_PULL_TAP_ID.fetch_add(1, Ordering::Relaxed);
@@ -873,11 +1004,18 @@ impl TapBusRegistry {
             subs.pull_subs.push(handle.clone());
         }
 
+        crate::map_log!(
+            3,
+            "[TAP] Created Pull tap tap_id={} bus={} format={:?}",
+            tap_id,
+            bus_idx,
+            format
+        );
         self.recompute_fanout_and_wake();
         Ok(handle)
     }
 
-    /// Explicitly closes a Pull tap owned by this registry and updates `active_bus_mask`.
+    /// Explicitly closes a Pull tap `tap_id` owned by this registry and updates `active_bus_mask`.
     pub fn close_pull_tap(&self, tap_id: u32) {
         {
             let mut owned = lock_unpoisoned(&self.owned_pull_ids);
@@ -892,6 +1030,7 @@ impl TapBusRegistry {
         if self.control.shutdown.swap(true, Ordering::AcqRel) {
             return;
         }
+        crate::map_log!(3, "[TAP] Shutting down TapBusRegistry");
 
         let pull_ids = {
             let mut owned = lock_unpoisoned(&self.owned_pull_ids);
@@ -920,6 +1059,7 @@ impl TapBusRegistry {
         }
     }
 
+    /// Recomputes per-bus active/fan-out state across all hubs and wakes or starts the dispatcher thread.
     fn recompute_fanout_and_wake(&self) {
         if self.control.shutdown.load(Ordering::Acquire) {
             self.control.has_fanout_work.store(false, Ordering::Release);
@@ -944,6 +1084,7 @@ impl TapBusRegistry {
         self.control.notify_wake();
     }
 
+    /// Lazily spawns the off-RT tap fan-out dispatcher thread if not yet started.
     fn ensure_dispatcher_started(&self) {
         let mut guard = lock_unpoisoned(&self.dispatcher_thread);
         if guard.is_some() || self.control.shutdown.load(Ordering::Acquire) {
@@ -961,20 +1102,33 @@ impl TapBusRegistry {
             .name("map-tap-dispatcher".to_string())
             .spawn(move || run_tap_dispatcher(ctx));
 
-        if let Ok(handle) = spawn_res {
-            *guard = Some(handle);
+        match spawn_res {
+            Ok(handle) => {
+                crate::map_log!(4, "[TAP] Spawned map-tap-dispatcher thread");
+                *guard = Some(handle);
+            }
+            Err(e) => {
+                crate::map_log!(1, "[TAP] Failed to spawn map-tap-dispatcher thread: {}", e);
+            }
         }
     }
 }
 
+/// Execution context moved into the off-RT tap fan-out dispatcher thread.
 struct DispatcherCtx {
+    /// Shared control and wakeup state.
     control: Arc<TapControlState>,
+    /// Array of per-bus subscriber hubs.
     hubs: [Arc<BusHub>; TAP_BUS_COUNT],
+    /// Output sample rate in Hertz.
     sample_rate: u32,
+    /// Interleaved output channel count.
     channels: usize,
 }
 
+/// Background dispatcher loop servicing fan-out Pull rings and Push subscribers from `ctx`.
 fn run_tap_dispatcher(ctx: DispatcherCtx) {
+    crate::map_log!(4, "[TAP] Dispatcher loop started");
     let mut scratch_f32: Vec<f32> = Vec::with_capacity(TAP_RING_CAPACITY_SAMPLES);
     let mut encoded_cache: HashMap<(TapSampleFormat, usize, usize), Vec<u8>> = HashMap::new();
     let mut pending_sends: Vec<PendingPushSend> = Vec::with_capacity(16);
@@ -1024,6 +1178,12 @@ fn run_tap_dispatcher(ctx: DispatcherCtx) {
         }
         if !closed_keys.is_empty() {
             for (bus_idx, client_key) in closed_keys {
+                crate::map_log!(
+                    4,
+                    "[TAP] Push sink closed; removing client_key={} bus={}",
+                    client_key,
+                    bus_idx
+                );
                 ctx.hubs[bus_idx].mark_push_closed(client_key);
             }
             any_fanout = ctx
@@ -1045,6 +1205,7 @@ fn run_tap_dispatcher(ctx: DispatcherCtx) {
             );
         }
     }
+    crate::map_log!(4, "[TAP] Dispatcher loop exited");
 }
 
 #[cfg(test)]

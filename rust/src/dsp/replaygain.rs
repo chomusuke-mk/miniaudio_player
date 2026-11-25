@@ -4,14 +4,21 @@
 //! high-pass filtering + 50 ms RMS statistical 95th percentile calculation,
 //! matching the reference FFmpeg af_replaygain filter bit-for-bit.
 
+/// Precomputed ReplayGain 1.0 Yule-Walker and Butterworth IIR filter coefficients for a discrete sample rate.
 struct ReplayGainFreqInfo {
+    /// Reference sample rate in Hz.
     sample_rate: u32,
+    /// 10th-order Yule-Walker feedforward numerator coefficients.
     b_yule: [f64; 11],
+    /// 10th-order Yule-Walker feedback denominator coefficients (`a[0] = 1.0`).
     a_yule: [f64; 11],
+    /// 2nd-order Butterworth high-pass feedforward numerator coefficients.
     b_butter: [f64; 3],
+    /// 2nd-order Butterworth high-pass feedback denominator coefficients (`a[0] = 1.0`).
     a_butter: [f64; 3],
 }
 
+/// Lookup table of reference ReplayGain 1.0 filter coefficient sets from 8 kHz to 192 kHz.
 static FREQ_INFOS: [ReplayGainFreqInfo; 20] = [
     ReplayGainFreqInfo {
         sample_rate: 192000,
@@ -155,19 +162,29 @@ static FREQ_INFOS: [ReplayGainFreqInfo; 20] = [
     },
 ];
 
+/// Number of 0.01 dB resolution bins in the ReplayGain 1.0 RMS energy histogram (`0.00..=119.99 dB`).
 pub const HISTOGRAM_SLOTS: usize = 12000;
 
 /// High-performance ReplayGain 1.0 scanner with register-resident DF1 stereo IIR state
 /// and SSE2 `f64x2` vectorization on `x86_64`.
 pub struct ReplayGainScanner {
+    /// Histogram counting 50 ms RMS energy windows quantized into 0.01 dB bins.
     histogram: Box<[u32; HISTOGRAM_SLOTS]>,
+    /// Maximum absolute sample amplitude observed across the analyzed stream.
     peak: f32,
+    /// Number of frames per 50 ms RMS integration window.
     window_samples: usize,
+    /// Number of frames accumulated in the current 50 ms window.
     cur_window_samples: usize,
+    /// Running sum of squared filtered stereo energies in the current 50 ms window.
     cur_window_sum: f64,
+    /// Active 10th-order Yule-Walker feedback coefficients (`a_yule`).
     yule_coeff_a: [f64; 11],
+    /// Active 10th-order Yule-Walker feedforward coefficients (`b_yule`).
     yule_coeff_b: [f64; 11],
+    /// Active 2nd-order Butterworth feedback coefficients (`a_butter`).
     butter_coeff_a: [f64; 3],
+    /// Active 2nd-order Butterworth feedforward coefficients (`b_butter`).
     butter_coeff_b: [f64; 3],
     /// Past 10 stereo inputs `[x[n-1], ..., x[n-10]]` where each element is `[L, R]`.
     yule_x: [[f64; 2]; 10],
@@ -180,6 +197,7 @@ pub struct ReplayGainScanner {
 }
 
 impl ReplayGainScanner {
+    /// Magnitude threshold below which IIR delay-line registers are flushed to zero to prevent denormals.
     const DENORMAL_FLUSH_THRESHOLD: f64 = 1e-18;
 
     /// Creates a new `ReplayGainScanner` tuned for `sample_rate`.
@@ -188,6 +206,15 @@ impl ReplayGainScanner {
             .iter()
             .min_by_key(|info| (info.sample_rate as i64 - sample_rate as i64).abs())
             .unwrap_or(&FREQ_INFOS[9]);
+
+        if best.sample_rate != sample_rate {
+            crate::map_log!(
+                4,
+                "[REPLAYGAIN] Using nearest filter table rate {} Hz for input {} Hz",
+                best.sample_rate,
+                sample_rate
+            );
+        }
 
         let window_samples = ((sample_rate as f64 / 20.0).round() as usize).max(1);
         let histogram: Box<[u32; HISTOGRAM_SLOTS]> = vec![0u32; HISTOGRAM_SLOTS]
@@ -212,6 +239,7 @@ impl ReplayGainScanner {
         }
     }
 
+    /// Flushes near-zero IIR filter history registers to `0.0` to prevent subnormal slowdowns.
     #[inline]
     fn flush_denormals(&mut self) {
         for pair in &mut self.yule_x {
@@ -248,7 +276,7 @@ impl ReplayGainScanner {
         }
     }
 
-    /// Feeds an interleaved PCM float slice into the scanner at full speed.
+    /// Feeds an interleaved PCM float slice `pcm` with `channels` per frame into the scanner.
     pub fn push_slice(&mut self, pcm: &[f32], channels: usize) {
         if pcm.is_empty() || channels == 0 {
             return;
@@ -263,6 +291,7 @@ impl ReplayGainScanner {
                 // SAFETY: SSE2 is architecturally guaranteed on x86_64.
                 unsafe { self.push_stereo_slice_sse2(pcm) };
             } else {
+                // SAFETY: SSE2 is architecturally guaranteed on x86_64.
                 unsafe { self.push_multichannel_slice_sse2(pcm, channels) };
             }
         }
@@ -272,6 +301,7 @@ impl ReplayGainScanner {
         }
     }
 
+    /// Processes a mono `pcm` slice through the ReplayGain filter chain, duplicating channel energy to match stereo.
     fn push_mono_slice(&mut self, pcm: &[f32]) {
         let b = self.yule_coeff_b;
         let a = self.yule_coeff_a;
@@ -401,12 +431,21 @@ impl ReplayGainScanner {
         self.flush_denormals();
     }
 
+    /// Processes an interleaved stereo `pcm` slice using SSE2 `f64x2` vectorization.
+    ///
+    /// # Safety
+    /// Caller must ensure the CPU supports SSE2 (architecturally guaranteed on `x86_64`).
     #[cfg(target_arch = "x86_64")]
     #[inline]
     unsafe fn push_stereo_slice_sse2(&mut self, pcm: &[f32]) {
         self.push_multichannel_slice_sse2(pcm, 2);
     }
 
+    /// Processes an interleaved `pcm` slice with `channels >= 2` (extracting the first two channels)
+    /// using SSE2 `f64x2` vectorization.
+    ///
+    /// # Safety
+    /// Caller must ensure the CPU supports SSE2 (architecturally guaranteed on `x86_64`) and `channels >= 2`.
     #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     unsafe fn push_multichannel_slice_sse2(&mut self, pcm: &[f32], channels: usize) {
@@ -584,6 +623,7 @@ impl ReplayGainScanner {
         self.flush_denormals();
     }
 
+    /// Scalar fallback processing an interleaved `pcm` slice with `channels >= 2` (first two channels).
     #[cfg(not(target_arch = "x86_64"))]
     fn push_stereo_scalar_slice(&mut self, pcm: &[f32], channels: usize) {
         let b = self.yule_coeff_b;
@@ -666,13 +706,14 @@ impl ReplayGainScanner {
         self.flush_denormals();
     }
 
-    /// Feeds an un-clamped stereo frame `(left, right)` into the scanner.
+    /// Feeds an un-clamped stereo frame (`s_l`, `s_r`) into the scanner.
     #[inline]
     pub fn push_stereo_frame(&mut self, s_l: f32, s_r: f32) {
         let pair = [s_l, s_r];
         self.push_slice(&pair, 2);
     }
 
+    /// Quantizes the integrated energy (`window_sum` over `window_samples`) into the 0.01 dB histogram.
     #[inline]
     fn push_window_energy(&mut self, window_sum: f64, window_samples: usize) {
         if window_samples == 0 {
@@ -692,6 +733,11 @@ impl ReplayGainScanner {
 
         let total_windows: u32 = self.histogram.iter().sum();
         if total_windows == 0 {
+            crate::map_log!(
+                4,
+                "[REPLAYGAIN] Finalized empty stream (windows=0, peak={:.4})",
+                self.peak
+            );
             return (0.0, self.peak);
         }
 
@@ -706,6 +752,13 @@ impl ReplayGainScanner {
         }
 
         let gain = (64.54 - (chosen_level as f64) / 100.0).clamp(-24.0, 64.0) as f32;
+        crate::map_log!(
+            4,
+            "[REPLAYGAIN] Finalized: windows={} gain_db={:.2} peak={:.4}",
+            total_windows,
+            gain,
+            self.peak
+        );
         (gain, self.peak)
     }
 }

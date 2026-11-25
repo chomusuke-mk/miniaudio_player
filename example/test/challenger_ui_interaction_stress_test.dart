@@ -1,9 +1,9 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
+import 'package:miniaudio_player_example/features/dsp/widgets/equalizer_sub_card.dart';
 import 'package:miniaudio_player_example/main.dart';
-import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
-import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
+import 'package:miniaudio_player_example/shared/widgets/compact_slider_overlay.dart';
 
 Future<void> settleFrames(
   WidgetTester tester, {

@@ -6,39 +6,50 @@
 //! - Recording segment boundaries in HLS VOD (`#EXTINF` cumulative durations vs fed bytes).
 //! - Incorporating dynamic `(byte_offset, pos_ms)` waypoints during decode for VBR streams.
 
-/// Decoded byte/granule metadata for a complete verified `OggS` page inside a memory slice.
+/// Decoded byte/timestamp metadata for a complete verified `OggS` page inside a memory slice.
 #[derive(Debug, Clone, Copy)]
 pub struct OggPageMeta {
+    /// Absolute stream byte offset where this `OggS` page begins.
     pub offset: u64,
+    /// Total byte length of the `OggS` page (header + body).
     pub len: usize,
-    pub granule: i64,
+    /// Whether the page header flags mark this page as a packet continuation.
     pub is_continuation: bool,
+    /// Whether the page header flags mark this page as end-of-stream (`EOS`).
     pub is_eos: bool,
+    /// Estimated start timestamp of this page in milliseconds.
     pub start_ms: i64,
+    /// End timestamp in milliseconds derived from the page's granule position.
     pub end_ms: i64,
 }
 
 /// Maps stream byte offsets inside `[audio_start, audio_end]` to track timestamps in milliseconds.
 #[derive(Debug, Clone)]
 pub struct ByteTimeMap {
+    /// Byte offset where audio payload (`t = start_ms`) begins.
     audio_start: u64,
+    /// Byte offset where audio payload ends.
     audio_end: u64,
+    /// Starting timestamp in milliseconds corresponding to `audio_start`.
     start_ms: i64,
+    /// Total track or segment duration in milliseconds.
     duration_ms: i64,
     /// Strictly non-decreasing byte offsets and non-decreasing timestamps `(byte_offset, ms)`.
     anchors: Vec<(u64, i64)>,
 }
 
 impl Default for ByteTimeMap {
+    /// Returns an empty [`ByteTimeMap`] spanning `[0, 0]` with `duration_ms = 0`.
     fn default() -> Self {
         Self::new(0, 0, 0)
     }
 }
 
 impl ByteTimeMap {
+    /// Maximum number of `(byte_offset, time_ms)` anchors retained for binary search.
     const MAX_ANCHORS: usize = 512;
 
-    /// Initializes a map bounded by `[audio_start, audio_end]` and total track `duration_ms`.
+    /// Initializes a map bounded by `audio_start`..=`audio_end` and total track `duration_ms`.
     pub fn new(audio_start: u64, audio_end: u64, duration_ms: i64) -> Self {
         Self {
             audio_start,
@@ -49,15 +60,22 @@ impl ByteTimeMap {
         }
     }
 
-    /// Updates stream bounds and duration while keeping any valid existing container/segment anchors.
+    /// Updates stream bounds (`audio_start`, `audio_end`) and `duration_ms` while keeping any valid existing container/segment anchors.
     pub fn set_bounds(&mut self, audio_start: u64, audio_end: u64, duration_ms: i64) {
         self.audio_start = self.audio_start.max(audio_start);
         self.audio_end = audio_end.max(self.audio_start);
         self.duration_ms = duration_ms.max(0);
     }
 
-    /// Resets the map for a new contiguous HLS VOD segment window starting at `(audio_start, start_ms)`.
+    /// Resets the map for a new contiguous HLS VOD segment window starting at `audio_start` and `start_ms` with length `duration_ms`.
     pub fn reset_window(&mut self, audio_start: u64, start_ms: i64, duration_ms: i64) {
+        crate::map_log!(
+            4,
+            "[BYTE_TIME_MAP] reset_window audio_start={} start_ms={} duration_ms={}",
+            audio_start,
+            start_ms,
+            duration_ms
+        );
         self.audio_start = audio_start;
         self.audio_end = audio_start;
         self.start_ms = start_ms.max(0);
@@ -66,17 +84,24 @@ impl ByteTimeMap {
         self.anchors.push((audio_start, self.start_ms));
     }
 
-    /// Refines the logical start byte of `t = 0 ms` (e.g. first audio Ogg page or first MKV Cluster
+    /// Refines the logical start byte `first_audio_byte` of `t = 0 ms` (e.g. first audio Ogg page or first MKV Cluster
     /// past embedded cover art) without altering demuxer container header boundaries.
     pub fn refine_audio_start(&mut self, first_audio_byte: u64) {
         if first_audio_byte > self.audio_start
             && (self.audio_end <= self.audio_start || first_audio_byte < self.audio_end)
         {
+            crate::map_log!(
+                4,
+                "[BYTE_TIME_MAP] refine_audio_start {} -> {}",
+                self.audio_start,
+                first_audio_byte
+            );
             self.audio_start = first_audio_byte;
             self.anchors.retain(|&(b, _)| b >= first_audio_byte);
         }
     }
 
+    /// Uniformly downsamples `pts` to stay within [`Self::MAX_ANCHORS`] while preserving the first and last endpoints.
     fn downsample_anchors(pts: &mut Vec<(u64, i64)>) {
         if pts.len() <= Self::MAX_ANCHORS {
             return;
@@ -91,7 +116,7 @@ impl ByteTimeMap {
         *pts = compacted;
     }
 
-    /// Replaces anchors wholesale (sorted and compacted for fast binary search).
+    /// Replaces anchors wholesale from `pts` (sorted, deduplicated, monotonic, and compacted for fast binary search).
     pub fn set_anchors(&mut self, mut pts: Vec<(u64, i64)>) {
         pts.sort_by_key(|&(b, _)| b);
         pts.dedup_by(|a, b| a.0 == b.0);
@@ -104,10 +129,15 @@ impl ByteTimeMap {
             }
         }
         Self::downsample_anchors(&mut pts);
+        crate::map_log!(
+            5,
+            "[BYTE_TIME_MAP] set_anchors count={}",
+            pts.len()
+        );
         self.anchors = pts;
     }
 
-    /// Merges new container or probe anchors into existing anchors while preserving strict monotonicity.
+    /// Merges new container or probe anchors `pts` into existing anchors while preserving strict monotonicity.
     pub fn merge_anchors(&mut self, pts: Vec<(u64, i64)>) {
         if pts.is_empty() {
             return;
@@ -121,43 +151,7 @@ impl ByteTimeMap {
         self.set_anchors(merged);
     }
 
-    /// Records a monotonic `(byte_offset, time_ms)` waypoint cleanly when far enough from neighbors.
-    pub fn record_anchor(&mut self, byte_offset: u64, time_ms: i64) {
-        if time_ms < 0 {
-            return;
-        }
-        if self.duration_ms > 0 && time_ms > self.duration_ms {
-            return;
-        }
-        let pos = self.anchors.partition_point(|&(b, _)| b < byte_offset);
-        if let Some(&(existing_b, _)) = self.anchors.get(pos) {
-            if existing_b == byte_offset {
-                let prev_ok = pos == 0 || self.anchors[pos - 1].1 <= time_ms;
-                let next_ok = pos + 1 >= self.anchors.len() || time_ms <= self.anchors[pos + 1].1;
-                if prev_ok && next_ok {
-                    self.anchors[pos].1 = time_ms;
-                }
-                return;
-            }
-        }
-        let prev_ok = pos == 0
-            || (byte_offset - self.anchors[pos - 1].0 >= 16_384
-                && self.anchors[pos - 1].1 <= time_ms);
-        let next_ok = pos >= self.anchors.len()
-            || (self.anchors[pos].0 - byte_offset >= 16_384 && time_ms <= self.anchors[pos].1);
-        if !prev_ok || !next_ok {
-            return;
-        }
-        if self.anchors.len() >= Self::MAX_ANCHORS {
-            Self::downsample_anchors(&mut self.anchors);
-            let new_pos = self.anchors.partition_point(|&(b, _)| b < byte_offset);
-            self.anchors.insert(new_pos, (byte_offset, time_ms));
-        } else {
-            self.anchors.insert(pos, (byte_offset, time_ms));
-        }
-    }
-
-    /// Inserts an authoritative seek/frame observation `(byte_offset, time_ms)`, evicting any
+    /// Inserts an authoritative seek/frame observation (`byte_offset`, `time_ms`), evicting any
     /// conflicting or stale nearby coarse anchors so seek boundaries never drift past actual targets.
     pub fn record_verified_anchor(&mut self, byte_offset: u64, time_ms: i64) {
         if time_ms < 0 {
@@ -186,9 +180,16 @@ impl ByteTimeMap {
         let pos = self.anchors.partition_point(|&(b, _)| b < byte_offset);
         self.anchors.insert(pos, (byte_offset, clamped_ms));
         Self::downsample_anchors(&mut self.anchors);
+        crate::map_log!(
+            5,
+            "[BYTE_TIME_MAP] record_verified_anchor byte_offset={} time_ms={} total_anchors={}",
+            byte_offset,
+            clamped_ms,
+            self.anchors.len()
+        );
     }
 
-    /// Records a monotonic HLS VOD segment boundary (`[seg_start_byte, seg_end_byte]` -> `[start_ms, end_ms]`)
+    /// Records a monotonic HLS VOD segment boundary (`byte_offset`, `time_ms`)
     /// without minimum byte-distance throttling so every segment is exact.
     pub fn push_segment_anchor(&mut self, byte_offset: u64, time_ms: i64) {
         let clamped_ms = time_ms.max(0);
@@ -216,7 +217,7 @@ impl ByteTimeMap {
         }
     }
 
-    /// Maps an arbitrary stream byte position to milliseconds.
+    /// Maps an arbitrary stream `byte_offset` to milliseconds.
     /// When `is_range_start` is true and the byte lies inside `[audio_start, audio_end]`,
     /// rounds conservatively UP so backward seeks at `start_ms` do not miss evicted bytes;
     /// when false (range end), rounds conservatively DOWN so seeks near `end_ms` stay buffered.
@@ -285,6 +286,7 @@ impl ByteTimeMap {
         self.start_ms
     }
 
+    /// Linearly interpolates `byte_offset` between (`b0`, `t0`) and (`b1`, `t1`), rounding up when `ceil_round` is true.
     #[inline]
     fn interp(b0: u64, t0: i64, b1: u64, t1: i64, byte_offset: u64, ceil_round: bool) -> i64 {
         if b1 <= b0 || t1 <= t0 {
@@ -312,12 +314,6 @@ impl ByteTimeMap {
     #[inline]
     pub fn anchors(&self) -> &[(u64, i64)] {
         &self.anchors
-    }
-
-    /// Returns the logical start byte offset where `t = 0 ms` begins.
-    #[inline]
-    pub fn audio_start(&self) -> u64 {
-        self.audio_start
     }
 
     /// Estimates a byte offset corresponding to `time_ms` via inverse piecewise interpolation.
@@ -374,6 +370,12 @@ impl ByteTimeMap {
             let (sz, typ, body) = Self::read_box(moov, cursor)?;
             if typ == b"trak" {
                 if let Some(parsed) = Self::parse_mp4_audio_trak(body) {
+                    crate::map_log!(
+                        4,
+                        "[BYTE_TIME_MAP] extract_mp4_anchors total_ms={} count={}",
+                        parsed.0,
+                        parsed.1.len()
+                    );
                     return Some(parsed);
                 }
             }
@@ -382,7 +384,8 @@ impl ByteTimeMap {
         None
     }
 
-    fn find_top_box<'a>(mut data: &'a [u8], target: &[u8; 4]) -> Option<&'a [u8]> {
+    /// Walks top-level ISO BMFF boxes in `data` and returns the body of the first box matching `target`.
+    fn find_top_box<'a>(data: &'a [u8], target: &[u8; 4]) -> Option<&'a [u8]> {
         let mut pos = 0usize;
         while pos + 8 <= data.len() {
             let sz32 = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
@@ -404,11 +407,10 @@ impl ByteTimeMap {
             }
             pos += box_len;
         }
-        // Fallback scan if caller passed a sub-slice starting near moov.
-        let _ = &mut data;
         None
     }
 
+    /// Parses one ISO BMFF box header at byte offset `off` inside `buf`, returning `(box_len, fourcc, body)`.
     #[inline]
     fn read_box(buf: &[u8], off: usize) -> Option<(usize, &[u8], &[u8])> {
         if off + 8 > buf.len() {
@@ -430,6 +432,7 @@ impl ByteTimeMap {
         Some((box_len, typ, &buf[off + hdr_len..off + box_len]))
     }
 
+    /// Scans sequential child boxes inside `parent` and returns the body of the first box matching `target`.
     fn find_child_box<'a>(parent: &'a [u8], target: &[u8; 4]) -> Option<&'a [u8]> {
         let mut pos = 0usize;
         while let Some((sz, typ, body)) = Self::read_box(parent, pos) {
@@ -441,6 +444,7 @@ impl ByteTimeMap {
         None
     }
 
+    /// Parses an MP4 `trak` box body when its handler is `soun` (`hdlr`), returning `(total_ms, anchors)`.
     fn parse_mp4_audio_trak(trak: &[u8]) -> Option<(i64, Vec<(u64, i64)>)> {
         let mdia = Self::find_child_box(trak, b"mdia")?;
         let hdlr = Self::find_child_box(mdia, b"hdlr")?;
@@ -613,7 +617,7 @@ impl ByteTimeMap {
         }
     }
 
-    /// Parses FLAC `STREAMINFO` + optional `SEEKTABLE` metadata blocks from `head` into `(duration_ms, anchors)`.
+    /// Parses FLAC `STREAMINFO` + optional `SEEKTABLE` metadata blocks from `head` starting at `first_frame_offset` into `(duration_ms, anchors)`.
     pub fn extract_flac_anchors(head: &[u8], first_frame_offset: u64) -> Option<(i64, Vec<(u64, i64)>)> {
         if head.len() < 42 || &head[0..4] != b"fLaC" {
             return None;
@@ -666,11 +670,17 @@ impl ByteTimeMap {
             return None;
         }
         let dur_ms = ((total_samples as u128 * 1000) / sample_rate as u128) as i64;
+        crate::map_log!(
+            4,
+            "[BYTE_TIME_MAP] extract_flac_anchors dur_ms={} count={}",
+            dur_ms,
+            anchors.len()
+        );
         Some((dur_ms, anchors))
     }
 
-    /// Scans an MP3 header buffer for a Xing / Info VBR header with a 100-entry TOC and
-    /// maps TOC percentages onto `(byte_offset, time_ms)` checkpoints across the audio stream.
+    /// Scans an MP3 header buffer `head` for a Xing / Info VBR header with a 100-entry TOC and
+    /// maps TOC percentages across `audio_start`..=`audio_end` and `dur_ms` onto `(byte_offset, time_ms)` checkpoints.
     pub fn extract_mp3_xing_anchors(
         head: &[u8],
         audio_start: u64,
@@ -724,12 +734,19 @@ impl ByteTimeMap {
             anchors.push((off.min(audio_end), ms));
         }
         anchors.push((audio_end, dur_ms));
+        crate::map_log!(
+            4,
+            "[BYTE_TIME_MAP] extract_mp3_xing_anchors dur_ms={} count={}",
+            dur_ms,
+            anchors.len()
+        );
         Some(anchors)
     }
 
     /// Scans `slice` for a verified 2-frame ADTS AAC header pair and returns the byte offset
     /// within `slice` of the first frame header.
     pub fn find_verified_adts_sync(slice: &[u8]) -> Option<usize> {
+        /// Parses an ADTS frame header from `b`, returning `(frame_len, id, sr_idx, ch_cfg)`.
         #[inline]
         fn parse_adts_hdr(b: &[u8]) -> Option<(usize, u8, u8, u8)> {
             if b.len() < 7 || b[0] != 0xFF || (b[1] & 0xF6) != 0xF0 {
@@ -744,7 +761,7 @@ impl ByteTimeMap {
             let frame_len = (((b[3] & 0x03) as usize) << 11)
                 | ((b[4] as usize) << 3)
                 | ((b[5] >> 5) as usize);
-            if frame_len < 7 || frame_len > 8192 {
+            if !(7..=8192).contains(&frame_len) {
                 return None;
             }
             Some((frame_len, id, sr_idx, ch_cfg))
@@ -770,6 +787,7 @@ impl ByteTimeMap {
     /// Scans `slice` for a verified 2-frame MPEG audio header pair and returns the byte offset
     /// within `slice` of the first frame header.
     pub fn find_verified_mpeg_sync(slice: &[u8]) -> Option<usize> {
+        /// Parses an MPEG audio frame header from `b`, returning `(frame_len, version, layer, sr_idx)`.
         #[inline]
         fn parse_mpeg_hdr(b: &[u8]) -> Option<(usize, u8, u8, u8)> {
             if b.len() < 4 || b[0] != 0xFF || (b[1] & 0xE0) != 0xE0 {
@@ -800,10 +818,15 @@ impl ByteTimeMap {
                 _ => return None,
             };
 
+            /// MPEG-1 Layer I bitrates (kbps).
             const V1_L1: [usize; 15] = [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448];
+            /// MPEG-1 Layer II bitrates (kbps).
             const V1_L2: [usize; 15] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384];
+            /// MPEG-1 Layer III bitrates (kbps).
             const V1_L3: [usize; 15] = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+            /// MPEG-2/2.5 Layer I bitrates (kbps).
             const V2_L1: [usize; 15] = [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256];
+            /// MPEG-2/2.5 Layer II/III bitrates (kbps).
             const V2_L23: [usize; 15] = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
 
             let br_kbps = match (version == 3, layer) {
@@ -846,7 +869,7 @@ impl ByteTimeMap {
     }
 
     /// Scans `slice` (rooted at stream byte `slice_offset`) and returns complete verified `OggS`
-    /// page metadata matching `serial` with non-negative granule positions.
+    /// page metadata matching `serial` using `sample_rate` and `pre_skip` for positive granule positions.
     pub fn scan_ogg_pages_in_slice(
         slice: &[u8],
         slice_offset: u64,
@@ -887,7 +910,6 @@ impl ByteTimeMap {
                 out.push(OggPageMeta {
                     offset: slice_offset.saturating_add(i as u64),
                     len: page_len,
-                    granule,
                     is_continuation,
                     is_eos,
                     start_ms,
@@ -901,6 +923,7 @@ impl ByteTimeMap {
         }
         out
     }
+
     /// Parses Ogg primary stream metadata `(serial, sample_rate, pre_skip)` from `head`
     /// supporting Opus (`OpusHead`), Vorbis (`\x01vorbis`), and Ogg-FLAC (`\x7fFLAC`).
     pub fn parse_ogg_stream_info(head: &[u8]) -> Option<(u32, u32, u64)> {
@@ -946,6 +969,7 @@ impl ByteTimeMap {
         None
     }
 
+    /// Parses one `OggS` page header at index `i` inside `slice`, returning `(serial, granule, page_len)`.
     fn parse_ogg_page_header(slice: &[u8], i: usize) -> Option<(u32, i64, usize)> {
         if i + 27 > slice.len() {
             return None;
@@ -965,7 +989,7 @@ impl ByteTimeMap {
         Some((pg_serial, granule, page_len))
     }
 
-    /// Scans an initial Ogg byte slice starting at stream offset `slice_offset` for the byte
+    /// Scans an initial Ogg byte `slice` starting at stream offset `slice_offset` for the byte
     /// offset of the first audio page belonging to `serial` whose granule exceeds `pre_skip`
     /// (skipping VorbisComment / OpusTags / FLAC `METADATA_BLOCK_PICTURE` cover-art pages).
     pub fn parse_ogg_first_audio_page(
@@ -992,7 +1016,8 @@ impl ByteTimeMap {
         None
     }
 
-    /// Extracts exact `OggS` page-boundary `(byte_offset, time_ms)` anchors within `slice`.
+    /// Extracts exact `OggS` page-boundary `(byte_offset, time_ms)` anchors within `slice`
+    /// (rooted at `slice_offset`) for `serial`, `sample_rate`, and `pre_skip`.
     ///
     /// Note that an Ogg page's `granule_position` records the PCM sample count at the **END** of
     /// that page (`page_start + page_len`), NOT its start byte. Pairing `page_end -> granule_ms`
@@ -1010,21 +1035,7 @@ impl ByteTimeMap {
             .collect()
     }
 
-    /// Scans `slice` (rooted at stream byte `slice_offset`) for a valid complete `OggS` page
-    /// matching `serial` with a positive granule position and returns its exact `(page_end_byte, end_ms)`.
-    pub fn extract_ogg_anchor_in_slice(
-        slice: &[u8],
-        slice_offset: u64,
-        serial: u32,
-        sample_rate: u32,
-        pre_skip: u64,
-    ) -> Option<(u64, i64)> {
-        Self::extract_ogg_anchors_in_slice(slice, slice_offset, serial, sample_rate, pre_skip)
-            .into_iter()
-            .next()
-    }
-
-    /// Parses native FLAC `STREAMINFO` parameters `(sample_rate, min_blocksize, max_blocksize)`.
+    /// Parses native FLAC `STREAMINFO` parameters `(sample_rate, min_blocksize, max_blocksize)` from `head`.
     pub fn parse_flac_stream_info(head: &[u8]) -> Option<(u32, u16, u16)> {
         let mut p = head.windows(4).position(|w| w == b"fLaC")?;
         p += 4;
@@ -1052,7 +1063,7 @@ impl ByteTimeMap {
         }
     }
 
-    /// Walks native FLAC metadata blocks starting at `fLaC` and returns the byte offset where
+    /// Walks native FLAC metadata blocks starting at `fLaC` inside `head` and returns the byte offset where
     /// the first audio frame starts (immediately past the last metadata block header).
     pub fn parse_flac_first_frame_offset(head: &[u8]) -> Option<u64> {
         let mut p = head.windows(4).position(|w| w == b"fLaC")?;
@@ -1071,6 +1082,7 @@ impl ByteTimeMap {
         None
     }
 
+    /// Checks whether a FLAC frame header `sr_code` matches `expected_sr` (or defers when coded externally).
     #[inline]
     fn flac_header_sr_matches(sr_code: u8, expected_sr: u32) -> bool {
         let table_sr = match sr_code {
@@ -1090,8 +1102,8 @@ impl ByteTimeMap {
         table_sr == expected_sr
     }
 
-    /// Scans `slice` (rooted at `slice_offset`) and returns validated FLAC frame anchors as
-    /// `(file_byte_offset, sample_number, time_ms)`.
+    /// Scans `slice` (rooted at `slice_offset`) using `sample_rate`, block size bounds `min_bs`..=`max_bs`, and `max_dur_ms`,
+    /// returning CRC-8 verified FLAC frame anchors as `(file_byte_offset, sample_number, time_ms)`.
     pub fn scan_flac_frames_in_slice(
         slice: &[u8],
         slice_offset: u64,
@@ -1176,51 +1188,8 @@ impl ByteTimeMap {
         out
     }
 
-    /// Scans `slice` (rooted at stream byte `slice_offset`) for the first CRC-8 verified FLAC frame header
-    /// and returns `(byte_offset, sample_number, time_ms)`.
-    pub fn extract_flac_sample_anchor_in_slice(
-        slice: &[u8],
-        slice_offset: u64,
-        sample_rate: u32,
-        min_bs: u16,
-        max_bs: u16,
-        max_dur_ms: i64,
-    ) -> Option<(u64, u64, i64)> {
-        Self::scan_flac_frames_in_slice(
-            slice,
-            slice_offset,
-            sample_rate,
-            min_bs,
-            max_bs,
-            max_dur_ms,
-        )
-        .into_iter()
-        .next()
-    }
-
-    /// Scans `slice` (rooted at stream byte `slice_offset`) for a CRC-8 verified FLAC frame header
-    /// and returns `(byte_offset, time_ms)`.
-    pub fn extract_flac_anchor_in_slice(
-        slice: &[u8],
-        slice_offset: u64,
-        sample_rate: u32,
-        min_bs: u16,
-        max_bs: u16,
-        max_dur_ms: i64,
-    ) -> Option<(u64, i64)> {
-        Self::extract_flac_sample_anchor_in_slice(
-            slice,
-            slice_offset,
-            sample_rate,
-            min_bs,
-            max_bs,
-            max_dur_ms,
-        )
-        .map(|(off, _smp, ms)| (off, ms))
-    }
-
-    /// Builds a virtual FLAC container header (`fLaC | STREAMINFO | SEEKTABLE | PADDING`)
-    /// embedding `seek_points: &[(abs_byte_offset, sample_number)]` relative to `actual_first_frame`.
+    /// Builds a virtual FLAC container header (`fLaC | STREAMINFO | SEEKTABLE | PADDING`) from `orig_head`
+    /// embedding `seek_points` (`(abs_byte_offset, sample_number)`) relative to `actual_first_frame`.
     ///
     /// Returns `(virtual_head_bytes, virtual_offset_delta)` where `virtual_offset_delta` is `0`
     /// whenever `actual_first_frame` has enough room for the synthetic `SEEKTABLE` + `PADDING`
@@ -1291,6 +1260,7 @@ impl ByteTimeMap {
         out.push(((seektable_len >> 16) & 0xFF) as u8);
         out.push(((seektable_len >> 8) & 0xFF) as u8);
         out.push((seektable_len & 0xFF) as u8);
+        let point_count = clean_pts.len();
         for (smp, rel_off) in clean_pts {
             out.extend_from_slice(&smp.to_be_bytes());
             out.extend_from_slice(&rel_off.to_be_bytes());
@@ -1305,9 +1275,17 @@ impl ByteTimeMap {
             out.resize(virtual_len, 0);
         }
 
+        crate::map_log!(
+            4,
+            "[BYTE_TIME_MAP] build_synthetic_flac_head points={} virtual_len={} delta={}",
+            point_count,
+            virtual_len,
+            delta
+        );
         Some((out, delta))
     }
 
+    /// Decodes an EBML variable-length integer at `pos` inside `data`, masking the leading length bit when `mask_leading` is true.
     fn ebml_vint(data: &[u8], pos: usize, mask_leading: bool) -> Option<(u64, usize, bool)> {
         let first = *data.get(pos)?;
         if first == 0 {
@@ -1337,6 +1315,7 @@ impl ByteTimeMap {
         Some((val, width, all_ones))
     }
 
+    /// Reads an unsigned big-endian integer from 1..=8 `bytes`.
     fn ebml_be_uint(bytes: &[u8]) -> Option<u64> {
         if bytes.is_empty() || bytes.len() > 8 {
             return None;
@@ -1348,7 +1327,7 @@ impl ByteTimeMap {
         Some(v)
     }
 
-    /// Parses Matroska/WebM `(segment_data_start, timecode_scale_ns, first_cluster_offset)`.
+    /// Parses Matroska/WebM `(segment_data_start, timecode_scale_ns, first_cluster_offset)` from `head`.
     pub fn parse_mkv_stream_info(head: &[u8]) -> Option<(u64, u64, Option<u64>)> {
         let seg_pos = head.windows(4).position(|w| w == [0x18, 0x53, 0x80, 0x67])?;
         let (_, sz_len, _) = Self::ebml_vint(head, seg_pos + 4, true)?;
@@ -1411,6 +1390,7 @@ impl ByteTimeMap {
         Some((seg_data_start as u64, scale_ns, first_cluster))
     }
 
+    /// Parses Matroska/WebM `CuePoint` entries inside `cues_body` relative to `seg_data_start` using `scale_ns`.
     fn parse_mkv_cues_slice(cues_body: &[u8], seg_data_start: u64, scale_ns: u64) -> Option<Vec<(u64, i64)>> {
         let mut anchors = Vec::new();
         let mut pos = 0usize;
@@ -1506,6 +1486,11 @@ impl ByteTimeMap {
                 if let Some(pts) =
                     Self::parse_mkv_cues_slice(&source[body_start..body_end], seg_data_start, scale_ns)
                 {
+                    crate::map_log!(
+                        4,
+                        "[BYTE_TIME_MAP] extract_mkv_anchors count={}",
+                        pts.len()
+                    );
                     return Some(pts);
                 }
             }
@@ -1514,7 +1499,8 @@ impl ByteTimeMap {
     }
 
     /// Scans a Matroska/WebM byte `slice` rooted at `slice_offset` for a validated `Cluster`
-    /// element (`0x1F 0x43 0xB6 0x75`) + `Timestamp` (`0xE7`) and returns `(cluster_byte, time_ms)`.
+    /// element (`0x1F 0x43 0xB6 0x75`) + `Timestamp` (`0xE7`) scaled by `timecode_scale_ns` within `max_dur_ms`
+    /// and returns `(cluster_byte, time_ms)`.
     pub fn extract_mkv_cluster_anchor_in_slice(
         slice: &[u8],
         slice_offset: u64,
@@ -1594,7 +1580,7 @@ impl ByteTimeMap {
         None
     }
 
-    /// Scans a WavPack header slice for the byte offset of the first audio block (`block_samples > 0`).
+    /// Scans a WavPack header `head` slice for the byte offset of the first audio block (`block_samples > 0`).
     pub fn parse_wavpack_first_block_offset(head: &[u8]) -> Option<u64> {
         for (i, w) in head.windows(4).enumerate() {
             if w != b"wvpk" || i + wavicle::block::HEADER_LEN > head.len() {
@@ -1614,7 +1600,7 @@ impl ByteTimeMap {
         None
     }
 
-    /// Copies `head[..first_cluster_offset]` and rewrites the EBML `Segment` size VINT in-place
+    /// Copies `head` up to `first_cluster_offset` and rewrites the EBML `Segment` size VINT in-place
     /// to unknown-size all-1s (`0x01 FF..FF` / `0x1F FF..FF`) so a non-seekable `MkvReader` can
     /// jump directly to any arbitrary later `Cluster` without premature `Segment` truncation.
     pub fn build_streaming_mkv_head(head: &[u8], first_cluster_offset: u64) -> Option<Vec<u8>> {
@@ -1636,11 +1622,16 @@ impl ByteTimeMap {
         for b in &mut out[seg_pos + 5..seg_pos + 4 + sz_len] {
             *b = 0xFF;
         }
+        crate::map_log!(
+            4,
+            "[BYTE_TIME_MAP] build_streaming_mkv_head prefix_len={}",
+            prefix_len
+        );
         Some(out)
     }
 
-    /// Scans `slice` (rooted at `slice_offset`) and returns all valid Matroska/WebM
-    /// `(cluster_byte_offset, timestamp_ms)` pairs found inside `slice`.
+    /// Scans `slice` (rooted at `slice_offset`) with `timecode_scale_ns` and `max_dur_ms`,
+    /// returning all valid Matroska/WebM `(cluster_byte_offset, timestamp_ms)` pairs found inside `slice`.
     pub fn scan_mkv_clusters_in_slice(
         slice: &[u8],
         slice_offset: u64,
@@ -1671,9 +1662,9 @@ impl ByteTimeMap {
         out
     }
 
-    /// Scans `slice` (rooted at `slice_offset`) and returns all complete verified WavPack blocks
-    /// as `(block_byte_offset, block_len, block_index_samples, block_samples)` whose full bytes
-    /// reside inside `slice`.
+    /// Scans `slice` (rooted at `slice_offset`) with `sample_rate` and `max_dur_ms` and returns all
+    /// complete verified WavPack blocks as `(block_byte_offset, block_len, block_index_samples, block_samples)`
+    /// whose full bytes reside inside `slice`.
     pub fn extract_wavpack_blocks_in_slice(
         slice: &[u8],
         slice_offset: u64,
@@ -1728,8 +1719,8 @@ impl ByteTimeMap {
         out
     }
 
-    /// Scans a WavPack `slice` (rooted at `slice_offset`) for a validated `wvpk` block header
-    /// and returns `(block_byte_offset, time_ms)`.
+    /// Scans a WavPack `slice` (rooted at `slice_offset`) with `sample_rate` and `max_dur_ms`
+    /// for a validated `wvpk` block header and returns `(block_byte_offset, time_ms)`.
     pub fn extract_wavpack_anchor_in_slice(
         slice: &[u8],
         slice_offset: u64,
@@ -1767,6 +1758,7 @@ impl ByteTimeMap {
         None
     }
 
+    /// Decodes a FLAC UTF-8-like variable-length frame/sample number from `bytes`, returning `(value, byte_len)`.
     fn decode_flac_utf8(bytes: &[u8]) -> Option<(u64, usize)> {
         let b0 = *bytes.first()?;
         if b0 < 0x80 {
@@ -1787,6 +1779,7 @@ impl ByteTimeMap {
         Some((val, ones))
     }
 
+    /// Computes the FLAC frame header CRC-8 (`x^8 + x^2 + x + 1`, polynomial `0x07`) over `bytes`.
     #[inline]
     fn crc8(bytes: &[u8]) -> u8 {
         let mut crc = 0u8;

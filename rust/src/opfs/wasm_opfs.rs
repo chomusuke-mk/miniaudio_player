@@ -26,31 +26,46 @@ use super::protocol::{
     STATE_PENDING,
 };
 
+/// `BroadcastChannel` name shared between WASM threads and `miniaudio-opfs-worker`.
 const OPFS_CHANNEL_NAME: &str = "__miniaudio_wasm_opfs_v1__";
+/// Maximum number of concurrent shared-memory OPFS RPC slots in the pool.
 const MAX_OPFS_SLOTS: usize = 4;
 
+/// Guard ensuring only one thread spawns the singleton JS OPFS Worker.
 static WORKER_SPAWN_STARTED: AtomicBool = AtomicBool::new(false);
+/// Readiness word notified by JS via `Atomics.notify` (`0` = booting, `1` = ready, `-1` = failed).
 static WORKER_READY: AtomicI32 = AtomicI32::new(0);
+/// Monotonic RPC sequence counter embedded in `CTRL_SEQ`.
 static NEXT_OPFS_SEQ: AtomicU32 = AtomicU32::new(1);
 
 thread_local! {
+    /// Cached JS trampoline posting RPC payloads over `BroadcastChannel`.
     static POST_OPFS_CMD_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
+    /// Cached JS trampoline invoking `Atomics.wait` on an OPFS control word.
     static ATOMICS_WAIT_FN: RefCell<Option<Function>> = const { RefCell::new(None) };
 }
 
+/// Internal state of the reusable [`OpfsSlotPool`].
 #[derive(Default)]
 struct SlotPoolState {
+    /// Available idle RPC slots ready for immediate lease.
     idle: Vec<Box<OpfsSlotShared>>,
+    /// Total number of slots allocated so far (bounded by `MAX_OPFS_SLOTS`).
     created: usize,
 }
 
+/// Bounded pool of pinned [`OpfsSlotShared`] RPC slots shared across WASM worker threads.
 struct OpfsSlotPool {
+    /// Mutex-protected pool inventory.
     state: Mutex<SlotPoolState>,
+    /// Condition variable signaled when an [`OpfsSlotLease`] returns its slot to `idle`.
     cvar: Condvar,
 }
 
+/// Global singleton [`OpfsSlotPool`] instance.
 static OPFS_SLOT_POOL: OnceLock<OpfsSlotPool> = OnceLock::new();
 
+/// Returns the global [`OpfsSlotPool`] singleton, initializing it on first access.
 fn slot_pool() -> &'static OpfsSlotPool {
     OPFS_SLOT_POOL.get_or_init(|| OpfsSlotPool {
         state: Mutex::new(SlotPoolState::default()),
@@ -58,11 +73,14 @@ fn slot_pool() -> &'static OpfsSlotPool {
     })
 }
 
+/// RAII lease granting exclusive ownership of an [`OpfsSlotShared`] slot for one RPC call.
 struct OpfsSlotLease {
+    /// Leased slot returned to the pool on drop.
     slot: Option<Box<OpfsSlotShared>>,
 }
 
 impl OpfsSlotLease {
+    /// Acquires an [`OpfsSlotShared`] slot from [`OPFS_SLOT_POOL`], blocking if all `MAX_OPFS_SLOTS` are busy.
     fn acquire() -> Self {
         let pool = slot_pool();
         let mut guard = lock_unpoisoned(&pool.state);
@@ -83,6 +101,7 @@ impl OpfsSlotLease {
         }
     }
 
+    /// Returns a shared reference to the leased [`OpfsSlotShared`].
     #[inline]
     fn inner(&self) -> &OpfsSlotShared {
         self.slot.as_deref().expect("OpfsSlotLease missing slot")
@@ -101,6 +120,7 @@ impl Drop for OpfsSlotLease {
     }
 }
 
+/// Sends an OPFS command object `cmd_obj` to `miniaudio-opfs-worker` over `BroadcastChannel`.
 fn post_opfs_command(cmd_obj: &Object) -> std::result::Result<(), JsValue> {
     let func = POST_OPFS_CMD_FN.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -123,6 +143,7 @@ fn post_opfs_command(cmd_obj: &Object) -> std::result::Result<(), JsValue> {
     Ok(())
 }
 
+/// Blocks the current worker thread on `ctrl_ptr[word_idx]` while its value equals `expected`, up to `timeout_ms`.
 fn wasm_atomics_wait(ctrl_ptr: u32, word_idx: usize, expected: i32, timeout_ms: u64) {
     if !crate::sync::can_block_current_thread() {
         std::hint::spin_loop();
@@ -154,6 +175,7 @@ fn wasm_atomics_wait(ctrl_ptr: u32, word_idx: usize, expected: i32, timeout_ms: 
     let _ = func.apply(&JsValue::NULL, &args);
 }
 
+/// Inline JavaScript source executed inside the dedicated pure-JS OPFS Worker.
 const OPFS_WORKER_JS: &str = r#"
 'use strict';
 var wasmMem = null;
@@ -461,6 +483,7 @@ onmessage = function(ev) {
 };
 "#;
 
+/// Fires an asynchronous best-effort close notification for `vfd` when `Drop` runs on a non-blocking thread.
 fn post_opfs_close_async(vfd: u32) {
     if vfd == 0 {
         return;
@@ -508,18 +531,25 @@ pub fn ensure_opfs_worker() {
     ));
     args.push(&JsValue::from_str(OPFS_CHANNEL_NAME));
 
+    crate::map_log!(3, "[OPFS] Spawning pure-JS OPFS Worker");
     let spawned_ok = boot
         .apply(&JsValue::NULL, &args)
         .ok()
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if !spawned_ok {
+        crate::map_log!(1, "[OPFS] Failed to spawn pure-JS OPFS Worker");
         WORKER_READY.store(-1, Ordering::Release);
     }
 }
 
+/// Ensures the calling thread can block and waits up to 5 seconds for `miniaudio-opfs-worker` readiness.
 fn ensure_opfs_worker_ready() -> std::result::Result<(), (i32, String)> {
     if !crate::sync::can_block_current_thread() {
+        crate::map_log!(
+            1,
+            "[OPFS] Synchronous OPFS op rejected on browser main thread"
+        );
         return Err((
             MAP_ERROR_UNSUPPORTED,
             "Synchronous OPFS operations cannot run on the browser main thread because Atomics.wait is prohibited (code: -10)".to_string(),
@@ -532,6 +562,7 @@ fn ensure_opfs_worker_ready() -> std::result::Result<(), (i32, String)> {
         match WORKER_READY.load(Ordering::Acquire) {
             1 => return Ok(()),
             -1 => {
+                crate::map_log!(1, "[OPFS] OPFS worker unavailable");
                 return Err((
                     MAP_ERROR_UNSUPPORTED,
                     "WASM OPFS worker unavailable in this browser context (code: -10)".to_string(),
@@ -539,6 +570,7 @@ fn ensure_opfs_worker_ready() -> std::result::Result<(), (i32, String)> {
             }
             _ => {
                 if deadline.elapsed() >= Duration::from_secs(5) {
+                    crate::map_log!(1, "[OPFS] Timed out booting OPFS worker");
                     return Err((
                         MAP_ERROR_UNSUPPORTED,
                         "Timed out booting WASM OPFS worker (code: -10)".to_string(),
@@ -550,6 +582,7 @@ fn ensure_opfs_worker_ready() -> std::result::Result<(), (i32, String)> {
     }
 }
 
+/// Converts a `MAP_ERROR_*` `code` and error `msg` into a `std::io::Error` with an appropriate `ErrorKind`.
 fn opfs_error_to_io(code: i32, msg: String) -> IoError {
     let kind = match code {
         MAP_ERROR_FILE_NOT_FOUND => ErrorKind::NotFound,
@@ -566,11 +599,16 @@ fn opfs_error_to_io(code: i32, msg: String) -> IoError {
     IoError::new(kind, formatted)
 }
 
+/// Successful RPC reply payload returned by [`run_opfs_rpc`].
 struct OpfsRpcReply {
+    /// Virtual file descriptor returned or operated on by the JS OPFS worker.
     vfd: u32,
+    /// 64-bit unsigned result (file size, byte count, or truncated length).
     res_u64: u64,
 }
 
+/// Executes a synchronous shared-memory OPFS RPC (`op`, `vfd`, `arg0_u64`, `arg1_len`, `payload`)
+/// and invokes `on_done_copy` with `(slot, res_u64 as usize)` before releasing the slot lease.
 fn run_opfs_rpc<F>(
     op: i32,
     vfd: u32,
@@ -584,6 +622,12 @@ where
 {
     ensure_opfs_worker_ready()?;
     if payload.len() > OPFS_XFER_CAP {
+        crate::map_log!(
+            1,
+            "[OPFS] RPC payload ({} bytes) exceeds {} byte cap",
+            payload.len(),
+            OPFS_XFER_CAP
+        );
         return Err((
             MAP_ERROR_INVALID_ARGS,
             format!(
@@ -638,6 +682,13 @@ where
         &JsValue::from_f64(slot.err_ptr() as f64),
     );
     if let Err(e) = post_opfs_command(&cmd) {
+        crate::map_log!(
+            1,
+            "[OPFS] Failed to post OPFS command op={} vfd={}: {:?}",
+            op,
+            vfd,
+            e
+        );
         return Err((
             MAP_ERROR_GENERIC,
             format!("Failed to post OPFS command: {:?} (code: -1)", e),
@@ -670,6 +721,14 @@ where
             } else {
                 format!("OPFS operation failed (code: {})", code)
             };
+            crate::map_log!(
+                1,
+                "[OPFS] RPC op={} vfd={} failed (code={}): {}",
+                op,
+                vfd,
+                code,
+                msg
+            );
             return Err((code, format!("{} (code: {})", msg, code)));
         }
         wasm_atomics_wait(slot.ctrl_ptr(), CTRL_WAKE_RUST, 0, 50);
@@ -678,15 +737,29 @@ where
 
 /// Low-level random-access reader over a Virtual FD in `miniaudio-opfs-worker`.
 pub struct OpfsRawReader {
+    /// Virtual file descriptor assigned by `miniaudio-opfs-worker`.
     vfd: u32,
+    /// Total file size in bytes captured on open.
     size: u64,
+    /// Current read cursor offset in bytes.
     pos: u64,
 }
 
 impl OpfsRawReader {
+    /// Opens an existing OPFS file at `canonical_path` for random-access reading.
+    ///
+    /// # Errors
+    /// Returns `(MAP_ERROR_*, message)` if the worker is unavailable or the file cannot be opened.
     pub fn open(canonical_path: &str) -> std::result::Result<Self, (i32, String)> {
         let bytes = canonical_path.as_bytes();
         let reply = run_opfs_rpc(OP_OPEN_READ, 0, 0, bytes.len(), bytes, |_, _| {})?;
+        crate::map_log!(
+            4,
+            "[OPFS] Opened read handle path='{}' vfd={} size={}",
+            canonical_path,
+            reply.vfd,
+            reply.res_u64
+        );
         Ok(Self {
             vfd: reply.vfd,
             size: reply.res_u64,
@@ -694,6 +767,7 @@ impl OpfsRawReader {
         })
     }
 
+    /// Returns the total byte length of the opened OPFS file.
     #[inline]
     pub fn byte_len(&self) -> u64 {
         self.size
@@ -764,8 +838,11 @@ impl Seek for OpfsRawReader {
 
 /// Seekable $O(1)$-RAM OPFS media source backed by a 128 KiB `BufReader`.
 pub struct OpfsByteSource {
+    /// Buffered wrapper around [`OpfsRawReader`].
     reader: BufReader<OpfsRawReader>,
+    /// Cached total length of the file in bytes.
     size: u64,
+    /// Current logical read position in bytes.
     pos: u64,
 }
 
@@ -773,6 +850,10 @@ impl OpfsByteSource {
     /// Read buffer capacity in bytes (128 KiB, matching `FileByteSource`).
     pub const BUFFER_CAPACITY: usize = 128 * 1024;
 
+    /// Opens an OPFS file at `canonical_path` wrapped in a 128 KiB [`BufReader`].
+    ///
+    /// # Errors
+    /// Returns `(MAP_ERROR_*, message)` if opening the underlying [`OpfsRawReader`] fails.
     pub fn open(canonical_path: &str) -> std::result::Result<Self, (i32, String)> {
         let raw = OpfsRawReader::open(canonical_path)?;
         let size = raw.byte_len();
@@ -841,17 +922,31 @@ impl MediaSource for OpfsByteSource {
 
 /// Random-access OPFS writer used by `LiveRecorder` and `AudioStreamWriter` across 11 formats.
 pub struct OpfsFileWriter {
+    /// Virtual file descriptor assigned by `miniaudio-opfs-worker`.
     vfd: u32,
+    /// Current write cursor offset in bytes.
     pos: u64,
+    /// Highest byte offset written or truncated so far.
     length: u64,
+    /// Whether this writer has already been closed.
     closed: bool,
 }
 
 impl OpfsFileWriter {
+    /// Opens or creates/truncates an OPFS file at `canonical_path` for random-access writing.
+    ///
+    /// # Errors
+    /// Returns a formatted I/O error string if the worker is unavailable or opening the handle fails.
     pub fn open(canonical_path: &str) -> std::result::Result<Self, String> {
         let bytes = canonical_path.as_bytes();
         let reply = run_opfs_rpc(OP_OPEN_WRITE, 0, 0, bytes.len(), bytes, |_, _| {})
             .map_err(|(code, msg)| opfs_error_to_io(code, msg).to_string())?;
+        crate::map_log!(
+            3,
+            "[OPFS] Opened write handle path='{}' vfd={}",
+            canonical_path,
+            reply.vfd
+        );
         Ok(Self {
             vfd: reply.vfd,
             pos: 0,
@@ -860,7 +955,12 @@ impl OpfsFileWriter {
         })
     }
 
+    /// Truncates or extends the open OPFS file to `len` bytes.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if the `OP_TRUNCATE` RPC fails.
     pub fn truncate(&mut self, len: u64) -> IoResult<()> {
+        crate::map_log!(4, "[OPFS] Truncate vfd={} len={}", self.vfd, len);
         run_opfs_rpc(OP_TRUNCATE, self.vfd, len, 0, &[], |_, _| {})
             .map_err(|(code, msg)| opfs_error_to_io(code, msg))?;
         self.length = len;
@@ -871,6 +971,9 @@ impl OpfsFileWriter {
     }
 
     /// Flushes and closes the underlying OPFS write handle cleanly, propagating any error.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if the `OP_CLOSE` RPC fails.
     pub fn finish_and_close(mut self) -> IoResult<()> {
         if self.closed || self.vfd == 0 {
             return Ok(());
@@ -878,6 +981,12 @@ impl OpfsFileWriter {
         self.closed = true;
         let vfd = self.vfd;
         self.vfd = 0;
+        crate::map_log!(
+            3,
+            "[OPFS] Closing write handle vfd={} length={}",
+            vfd,
+            self.length
+        );
         run_opfs_rpc(OP_CLOSE, vfd, 0, 0, &[], |_, _| {})
             .map(|_| ())
             .map_err(|(code, msg)| opfs_error_to_io(code, msg))
@@ -944,7 +1053,10 @@ impl Seek for OpfsFileWriter {
     }
 }
 
-/// Reads an OPFS file (up to `max_bytes`) completely for small manifests like `.m3u8` playlists.
+/// Reads an OPFS file at `canonical_path` (up to `max_bytes`) completely for small manifests like `.m3u8` playlists.
+///
+/// # Errors
+/// Returns `(MAP_ERROR_*, message)` if opening or reading the OPFS file fails.
 pub fn opfs_read_all_bytes(
     canonical_path: &str,
     max_bytes: usize,
@@ -957,23 +1069,51 @@ pub fn opfs_read_all_bytes(
         match reader.read(&mut out[read_total..]) {
             Ok(0) => break,
             Ok(n) => read_total += n,
-            Err(e) => return Err((MAP_ERROR_GENERIC, e.to_string())),
+            Err(e) => {
+                crate::map_log!(1, "[OPFS] Read error on '{}': {}", canonical_path, e);
+                return Err((MAP_ERROR_GENERIC, e.to_string()));
+            }
         }
     }
     out.truncate(read_total);
+    crate::map_log!(
+        4,
+        "[OPFS] Read {} bytes from '{}'",
+        read_total,
+        canonical_path
+    );
     Ok(out)
 }
 
-/// Reads an entire OPFS segment or bounded `EXT-X-BYTERANGE` slice `(length, offset)`.
+/// Reads an entire OPFS segment at `canonical_path` or bounded `EXT-X-BYTERANGE` slice `byte_range` (`(length, offset)`).
 pub fn opfs_read_range(
     canonical_path: &str,
     byte_range: Option<(u64, u64)>,
 ) -> Option<Vec<u8>> {
-    let mut reader = OpfsRawReader::open(canonical_path).ok()?;
+    let mut reader = match OpfsRawReader::open(canonical_path) {
+        Ok(r) => r,
+        Err((code, msg)) => {
+            crate::map_log!(
+                2,
+                "[OPFS] opfs_read_range open failed for '{}' (code={}): {}",
+                canonical_path,
+                code,
+                msg
+            );
+            return None;
+        }
+    };
     let size = reader.byte_len();
     let (start, target_len) = match byte_range {
         Some((length, offset)) => {
             if offset >= size {
+                crate::map_log!(
+                    2,
+                    "[OPFS] opfs_read_range offset {} >= size {} for '{}'",
+                    offset,
+                    size,
+                    canonical_path
+                );
                 return None;
             }
             let avail = size - offset;
@@ -981,8 +1121,17 @@ pub fn opfs_read_range(
         }
         None => (0, size.min(64 * 1024 * 1024) as usize),
     };
-    if start > 0 && reader.seek(SeekFrom::Start(start)).is_err() {
-        return None;
+    if start > 0 {
+        if let Err(e) = reader.seek(SeekFrom::Start(start)) {
+            crate::map_log!(
+                2,
+                "[OPFS] opfs_read_range seek failed for '{}' offset={}: {}",
+                canonical_path,
+                start,
+                e
+            );
+            return None;
+        }
     }
     let mut out = vec![0u8; target_len];
     let mut got = 0usize;
@@ -990,7 +1139,15 @@ pub fn opfs_read_range(
         match reader.read(&mut out[got..]) {
             Ok(0) => break,
             Ok(n) => got += n,
-            Err(_) => return None,
+            Err(e) => {
+                crate::map_log!(
+                    1,
+                    "[OPFS] opfs_read_range read error on '{}': {}",
+                    canonical_path,
+                    e
+                );
+                return None;
+            }
         }
     }
     out.truncate(got);

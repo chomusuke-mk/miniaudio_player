@@ -32,7 +32,7 @@ class VisualizerData {
   /// Right channel energy level scaled between `0.0` and `1.0`.
   final double right;
 
-  /// Creates a [VisualizerData] snapshot with frequency bands and amplitude levels.
+  /// Creates a [VisualizerData] snapshot from [bands], [rms], [peak], [left], and [right] levels.
   const VisualizerData({
     required this.bands,
     required this.rms,
@@ -41,7 +41,7 @@ class VisualizerData {
     required this.right,
   });
 
-  /// Creates a silent / empty visualizer data instance with all bands and levels at `0.0`.
+  /// Creates a silent visualizer data instance with all [bands] and amplitude levels at `0.0`.
   factory VisualizerData.empty() => VisualizerData(
         bands: List<double>.filled(10, 0.0, growable: false),
         rms: 0.0,
@@ -80,6 +80,7 @@ class VisualizerData {
   /// 16 kHz band (Air / high-shelf) normalized intensity between `0.0` and `1.0`.
   double get hz16k => bands.length > 9 ? bands[9] : 0.0;
 
+  /// Compares this [VisualizerData] snapshot with [other] for value equality.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -91,6 +92,7 @@ class VisualizerData {
           right == other.right &&
           _listEquals(bands, other.bands);
 
+  /// Returns a hash code combining all [bands] and amplitude levels.
   @override
   int get hashCode => Object.hash(
         Object.hashAll(bands),
@@ -100,12 +102,14 @@ class VisualizerData {
         right,
       );
 
+  /// Returns a formatted string representation of this [VisualizerData] snapshot.
   @override
   String toString() =>
       'VisualizerData(rms: ${rms.toStringAsFixed(2)}, peak: ${peak.toStringAsFixed(2)}, '
       'left: ${left.toStringAsFixed(2)}, right: ${right.toStringAsFixed(2)}, '
       'bands: [${bands.map((b) => b.toStringAsFixed(2)).join(', ')}])';
 
+  /// Returns `true` if band lists [a] and [b] have equal lengths and element values.
   static bool _listEquals(List<double> a, List<double> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;

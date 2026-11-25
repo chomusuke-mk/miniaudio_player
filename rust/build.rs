@@ -1,6 +1,7 @@
 //! Build script for `miniaudio_player_rust`.
 //! Compiles native C bridge (`miniaudio_device_bridge.c`) and links platform-specific audio libraries.
 
+/// Configures Cargo rerun triggers, compiles the C bridge, and links platform audio libraries.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=c_src/miniaudio_device_bridge.c");

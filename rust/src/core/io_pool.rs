@@ -19,6 +19,7 @@ use crate::sync::{lock_unpoisoned, CancelToken, ReaperHandle};
 /// Generic thread-safe completion waiter shared between async I/O workers and FFI callers.
 #[derive(Clone)]
 pub struct AsyncWaiter<T: Clone> {
+    /// Mutex-protected completion slot paired with a condvar for blocking waiters.
     inner: Arc<(Mutex<Option<T>>, Condvar)>,
 }
 
@@ -29,13 +30,14 @@ impl<T: Clone> Default for AsyncWaiter<T> {
 }
 
 impl<T: Clone> AsyncWaiter<T> {
+    /// Creates an unresolved [`AsyncWaiter`].
     pub fn new() -> Self {
         Self {
             inner: Arc::new((Mutex::new(None), Condvar::new())),
         }
     }
 
-    /// Resolves the waiter once if not already completed and wakes all waiting callers.
+    /// Resolves the waiter once with `result` if not already completed and wakes all waiting callers.
     pub fn resolve(&self, result: T) {
         let (lock, cv) = &*self.inner;
         let mut guard = lock_unpoisoned(lock);
@@ -74,16 +76,26 @@ pub type OpenWaiter = AsyncWaiter<Result<Option<TrackTransitionSnapshot>, String
 /// Kind of active track open operation dispatched through [`IoWorkerPool`].
 #[derive(Clone)]
 pub enum ActiveOpenKind {
+    /// User-initiated playback or track-skip open.
     Manual {
+        /// Optional explicit crossfade duration in milliseconds (`None` uses default behavior).
         manual_crossfade_ms: Option<u64>,
+        /// Whether playback must start immediately once the track opens.
         force_play: bool,
     },
+    /// Automatic track-end or auto-crossfade transition scheduled by the engine clock.
     AutoAdvance {
+        /// Whether an overlapping auto-crossfade should be started if still eligible.
         should_auto_xfade: bool,
+        /// Configured auto-crossfade duration in milliseconds.
         auto_ms: u64,
+        /// Expected active deck slot ID at the time the hint was emitted.
         expected_deck_id: usize,
+        /// Expected active deck `open_generation` when the hint was emitted.
         expected_open_gen: u64,
+        /// Expected active deck `seek_epoch` when the hint was emitted.
         expected_seek_epoch: u64,
+        /// Coordinator auto-advance epoch guarding against stale completions after seek/loop edits.
         auto_epoch: u64,
     },
 }
@@ -99,76 +111,124 @@ impl ActiveOpenKind {
 /// Asynchronous job opening and pre-decoding the target foreground track on a fresh deck.
 #[derive(Clone)]
 pub struct ActiveOpenJob {
+    /// Monotonic transport epoch used to discard superseded completions.
     pub epoch: u64,
+    /// Queue item descriptor to open.
     pub item: AudioSourceCore,
+    /// Optional custom PCM/demuxed source factory for `custom://` items.
     pub custom_factory: Option<CustomSourceFactory>,
+    /// Optional Dart URL resolution registry for dynamic sources.
     pub dart_resolver: Option<Arc<DartResolveRegistry>>,
+    /// DSP and playback configuration template captured from the active player state.
     pub template: DeckDspTemplate,
+    /// Optional initial seek target in milliseconds after opening.
     pub seek_ms: Option<i64>,
+    /// Whether this open is manual or an automatic track transition.
     pub kind: ActiveOpenKind,
+    /// Whether the queue membership changed as part of the originating command.
     pub queue_changed: bool,
+    /// Whether parsed metadata should be included in the emitted snapshot.
     pub include_meta: bool,
+    /// Whether ReplayGain telemetry should be recalculated/included on completion.
     pub include_replay_gain: bool,
+    /// Cooperative cancellation token for aborting in-flight I/O.
     pub cancel: CancelToken,
+    /// Optional synchronous waiter resolved when the open commits, fails, or is superseded.
     pub waiter: Option<OpenWaiter>,
 }
 
 /// Asynchronous job opening the upcoming track on a background standby deck.
 #[derive(Clone)]
 pub struct PrewarmJob {
+    /// Monotonic prewarm epoch used to discard stale standby decks.
     pub epoch: u64,
+    /// Upcoming queue item descriptor to prewarm.
     pub item: AudioSourceCore,
+    /// Optional custom source factory for `custom://` items.
     pub custom_factory: Option<CustomSourceFactory>,
+    /// Optional Dart URL resolution registry for dynamic sources.
     pub dart_resolver: Option<Arc<DartResolveRegistry>>,
+    /// DSP and playback configuration template captured for the standby deck.
     pub template: DeckDspTemplate,
+    /// Cooperative cancellation token for aborting the prewarm open.
     pub cancel: CancelToken,
 }
 
 /// Open result produced by an [`IoWorkerPool`] worker thread.
 pub enum IoOpenOutcome {
+    /// Track opened successfully onto a newly allocated [`StreamingDeck`].
     Opened(Box<StreamingDeck>),
+    /// Open was cancelled or superseded before completion.
     Aborted,
+    /// Open failed with an engine error code and optional diagnostic message.
     Failed(i32, Option<String>),
 }
 
 /// Completed job delivered to [`ControlCoordinator`] handlers.
 pub enum IoCompletion {
+    /// Completion of a foreground [`ActiveOpenJob`].
     Active {
+        /// Original active open job metadata.
         job: ActiveOpenJob,
+        /// Outcome of opening the target track.
         outcome: IoOpenOutcome,
     },
+    /// Completion of a background [`PrewarmJob`].
     Prewarm {
+        /// Original prewarm job metadata.
         job: PrewarmJob,
+        /// Outcome of prewarming the upcoming track.
         outcome: IoOpenOutcome,
     },
 }
 
+/// Callback invoked by worker threads upon completing an active or prewarm open job.
 pub type CompletionCallback = Arc<dyn Fn(IoCompletion) + Send + Sync>;
 
+/// Queued standby prewarm entry paired with its unique pool-assigned identifier.
 struct QueuedPrewarm {
+    /// Unique monotonically assigned prewarm identifier for promotion lookup.
     uid: u64,
+    /// Standby prewarm job payload.
     job: PrewarmJob,
 }
 
+/// Tracked in-flight active open tuple: `(epoch, is_auto_advance, cancel_token, waiter)`.
 type InflightActiveEntry = (u64, bool, CancelToken, Option<OpenWaiter>);
+/// Tracked in-flight prewarm tuple: `(uid, item_id, item_source, cancel_token)`.
 type InflightPrewarmEntry = (u64, i64, String, CancelToken);
 
+/// Synchronized mailbox holding queued, in-flight, and promoted I/O jobs across lanes.
 struct PoolMailbox {
+    /// Whether pool shutdown has been initiated.
     shutdown: bool,
+    /// Next unique identifier assigned to queued prewarm jobs.
     next_prewarm_uid: u64,
+    /// Latest queued active job for the local fast lane.
     local_active: Option<ActiveOpenJob>,
+    /// Latest queued active job for the network lane.
     net_active: Option<ActiveOpenJob>,
+    /// Latest queued prewarm job for the local fast lane.
     local_prewarm: Option<QueuedPrewarm>,
+    /// Latest queued prewarm job for the network lane.
     net_prewarm: Option<QueuedPrewarm>,
+    /// Currently executing active jobs on the local lane.
     inflight_local_active: Vec<InflightActiveEntry>,
+    /// Currently executing active jobs on the network lane.
     inflight_net_active: Vec<InflightActiveEntry>,
+    /// Currently executing prewarm jobs on the local lane.
     inflight_local_prewarm: Vec<InflightPrewarmEntry>,
+    /// Currently executing prewarm jobs on the network lane.
     inflight_net_prewarm: Vec<InflightPrewarmEntry>,
+    /// In-flight prewarm UIDs promoted to foreground active jobs while still opening.
     promoted_prewarms: HashMap<u64, (ActiveOpenJob, CancelToken)>,
+    /// Coalescing quiet-window deadline for rapid network track skips.
     net_coalesce_until: Option<Instant>,
+    /// Maximum burst deadline capping consecutive network coalescing extensions.
     net_burst_cap: Option<Instant>,
 }
 
+/// Collects cancellation tokens and waiters from `entries`, optionally filtering to `auto_only`.
 #[inline]
 fn collect_inflight_active(
     entries: &[InflightActiveEntry],
@@ -187,6 +247,8 @@ fn collect_inflight_active(
     }
 }
 
+/// Removes a queued active job from `slot` when `!auto_only` or when it is an auto-advance job,
+/// appending its cancellation token to `tokens` and waiter to `waiters`.
 #[inline]
 fn take_active_matching(
     slot: &mut Option<ActiveOpenJob>,
@@ -207,14 +269,25 @@ fn take_active_matching(
     }
 }
 
+/// Work unit dequeued by a pool worker thread.
 enum NextPoolWork {
+    /// Foreground active open job.
     Active(ActiveOpenJob),
-    Prewarm { uid: u64, job: PrewarmJob },
+    /// Background standby prewarm job with its pool-assigned `uid`.
+    Prewarm {
+        /// Unique prewarm identifier used to detect promotion on completion.
+        uid: u64,
+        /// Standby prewarm job payload.
+        job: PrewarmJob,
+    },
 }
 
+/// Execution lane isolating low-latency local opens from slow network opens.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WorkerLane {
+    /// Dedicated worker lane for file, memory, and `custom://` sources.
     Local,
+    /// Multi-worker lane for `http://`, `https://`, and `icy://` network streams.
     Network,
 }
 
@@ -224,23 +297,35 @@ enum WorkerLane {
 /// and `4` `map-io-net-*` workers for `http://`, `https://`, and `icy://` tracks with
 /// rapid-skip epoch coalescing.
 pub struct IoWorkerPool {
+    /// Synchronized job mailbox and condition variable shared across all worker lanes.
     state: Arc<(Mutex<PoolMailbox>, Condvar)>,
+    /// Pool-wide cancellation token triggered on shutdown.
     shutdown_token: CancelToken,
+    /// Off-RT reaper handle used to drop cancelled/superseded decks safely.
     reaper: ReaperHandle,
+    /// Count of currently running worker threads paired with a shutdown condvar.
     active_workers: Arc<(Mutex<usize>, Condvar)>,
+    /// Worker completion flags and join handles tracked for bounded shutdown.
     workers_done_flags: Mutex<Vec<(Arc<AtomicBool>, JoinHandle<()>)>>,
+    /// Callback invoked whenever an active or prewarm job finishes.
     on_complete: CompletionCallback,
+    /// Highest transport epoch observed by the pool for discarding stale submissions.
     latest_epoch: Arc<AtomicU64>,
+    /// Total number of active track opens executed by workers.
     pub active_opens_executed: Arc<AtomicU64>,
+    /// Total number of active track open requests coalesced or superseded before completion.
     pub active_opens_coalesced: Arc<AtomicU64>,
 }
 
 impl IoWorkerPool {
+    /// Number of worker threads dedicated to network (`http://`, `https://`, `icy://`) opens.
     const NET_WORKERS: usize = 4;
+    /// Quiet-window delay in milliseconds used to coalesce rapid network skips.
     const COALESCE_QUIET_MS: u64 = 18;
+    /// Maximum cumulative coalescing delay in milliseconds during a rapid skip burst.
     const COALESCE_BURST_CAP_MS: u64 = 140;
 
-    /// Returns `true` for tracks handled on the low-latency `map-io-local` lane.
+    /// Returns `true` when `item` should run on the low-latency `map-io-local` lane.
     #[inline]
     pub fn is_local_item(item: &AudioSourceCore) -> bool {
         if item.data_bytes.is_some() {
@@ -250,7 +335,14 @@ impl IoWorkerPool {
         !(s.starts_with("http://") || s.starts_with("https://") || s.starts_with("icy://"))
     }
 
+    /// Spawns the `IoWorkerPool` (`1` local worker and `4` network workers) backed by `reaper`
+    /// and delivering completed opens to `on_complete`.
     pub fn spawn(reaper: ReaperHandle, on_complete: CompletionCallback) -> Arc<Self> {
+        crate::map_log!(
+            3,
+            "[IO_POOL] Spawning IoWorkerPool (local=1, net={})",
+            Self::NET_WORKERS
+        );
         let state = Arc::new((
             Mutex::new(PoolMailbox {
                 shutdown: false,
@@ -296,6 +388,8 @@ impl IoWorkerPool {
         pool
     }
 
+    /// Spawns a single worker thread named `name` servicing `lane` on `pool`, recording its
+    /// completion flag and join handle in `handles`.
     fn spawn_worker_thread(
         pool: &Arc<Self>,
         name: &str,
@@ -329,13 +423,17 @@ impl IoWorkerPool {
                 }
             });
 
-        if let Ok(handle) = jh {
-            handles.push((done, handle));
-        } else {
-            let (wlock, wcv) = &*pool.active_workers;
-            let mut cnt = lock_unpoisoned(wlock);
-            *cnt = cnt.saturating_sub(1);
-            wcv.notify_all();
+        match jh {
+            Ok(handle) => {
+                handles.push((done, handle));
+            }
+            Err(e) => {
+                crate::map_log!(1, "[IO_POOL] Failed to spawn worker thread {}: {}", name, e);
+                let (wlock, wcv) = &*pool.active_workers;
+                let mut cnt = lock_unpoisoned(wlock);
+                *cnt = cnt.saturating_sub(1);
+                wcv.notify_all();
+            }
         }
     }
 
@@ -382,6 +480,8 @@ impl IoWorkerPool {
         self.cancel_matching(true);
     }
 
+    /// Cancels queued and in-flight active opens (and all prewarms when `!auto_only`),
+    /// resolving any associated waiters with `Ok(None)`.
     fn cancel_matching(&self, auto_only: bool) {
         let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
         let mut waiters_to_resolve: Vec<OpenWaiter> = Vec::new();
@@ -482,10 +582,17 @@ impl IoWorkerPool {
         }
     }
 
-    /// Submits a foreground open job, superseding/cancelling any prior active or prewarm job.
+    /// Submits a foreground open `job`, superseding/cancelling any prior active or prewarm job.
     pub fn submit_active(&self, job: ActiveOpenJob) {
         let prev = self.latest_epoch.fetch_max(job.epoch, Ordering::AcqRel);
         if job.epoch < prev {
+            crate::map_log!(
+                4,
+                "[IO_POOL] Coalesced stale active open (epoch={} < prev={}, track_id={})",
+                job.epoch,
+                prev,
+                job.item.id
+            );
             job.cancel.cancel();
             if let Some(ref w) = job.waiter {
                 w.resolve(Ok(None));
@@ -497,6 +604,8 @@ impl IoWorkerPool {
         let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
         let mut waiters_to_resolve: Vec<OpenWaiter> = Vec::new();
         let is_local = Self::is_local_item(&job.item);
+        let job_epoch = job.epoch;
+        let job_track_id = job.item.id;
         let now = Instant::now();
 
         {
@@ -578,6 +687,13 @@ impl IoWorkerPool {
                 guard.net_coalesce_until = None;
                 guard.net_burst_cap = None;
                 guard.promoted_prewarms.insert(matched_uid, (job, matched_tok));
+                crate::map_log!(
+                    4,
+                    "[IO_POOL] Promoted inflight prewarm uid={} to active open (epoch={}, track_id={})",
+                    matched_uid,
+                    job_epoch,
+                    job_track_id
+                );
             } else {
                 for (_, _, _, tok) in &guard.inflight_local_prewarm {
                     tokens_to_cancel.push(tok.clone());
@@ -603,6 +719,13 @@ impl IoWorkerPool {
                     }
                     guard.net_active = Some(job);
                 }
+                crate::map_log!(
+                    4,
+                    "[IO_POOL] Queued active open (lane={}, epoch={}, track_id={})",
+                    if is_local { "local" } else { "net" },
+                    job_epoch,
+                    job_track_id
+                );
             }
 
             cv.notify_all();
@@ -616,10 +739,11 @@ impl IoWorkerPool {
         }
     }
 
-    /// Submits a background prewarm job unless an active track transition is already underway.
+    /// Submits a background prewarm `job` unless an active track transition is already underway.
     pub fn submit_prewarm(&self, job: PrewarmJob) {
         let mut tokens_to_cancel: Vec<CancelToken> = Vec::new();
         let is_local = Self::is_local_item(&job.item);
+        let track_id = job.item.id;
         {
             let (lock, cv) = &*self.state;
             let mut guard = lock_unpoisoned(lock);
@@ -677,6 +801,13 @@ impl IoWorkerPool {
             } else {
                 guard.net_prewarm = Some(queued);
             }
+            crate::map_log!(
+                4,
+                "[IO_POOL] Queued prewarm uid={} (lane={}, track_id={})",
+                uid,
+                if is_local { "local" } else { "net" },
+                track_id
+            );
             cv.notify_all();
         }
         for tok in tokens_to_cancel {
@@ -684,6 +815,7 @@ impl IoWorkerPool {
         }
     }
 
+    /// Blocks until the next eligible work unit for `lane` is ready or the pool shuts down.
     fn take_next_work(&self, lane: WorkerLane) -> Option<NextPoolWork> {
         let (lock, cv) = &*self.state;
         let mut guard = lock_unpoisoned(lock);
@@ -805,6 +937,7 @@ impl IoWorkerPool {
         }
     }
 
+    /// Removes the completed active job matching `epoch` from `lane`'s in-flight tracking list.
     fn finish_inflight_active(&self, lane: WorkerLane, epoch: u64) {
         let (lock, cv) = &*self.state;
         let mut guard = lock_unpoisoned(lock);
@@ -818,6 +951,8 @@ impl IoWorkerPool {
         cv.notify_all();
     }
 
+    /// Removes the completed prewarm job matching `uid` from `lane` and returns any promoted
+    /// foreground [`ActiveOpenJob`] that was attached while it was in flight.
     fn finish_inflight_prewarm_and_take_promoted(
         &self,
         lane: WorkerLane,
@@ -837,6 +972,8 @@ impl IoWorkerPool {
         promoted
     }
 
+    /// Executes a dequeued `work` unit on `lane`, handling cancellation, prewarm promotion,
+    /// initial PCM pre-buffering, and completion callback dispatch.
     fn execute_work(&self, lane: WorkerLane, work: NextPoolWork) {
         match work {
             NextPoolWork::Active(job) => {
@@ -937,6 +1074,9 @@ impl IoWorkerPool {
         }
     }
 
+    /// Opens `item` onto a fresh [`StreamingDeck`] configured from `template`, using optional
+    /// `custom_factory` and `dart_resolver`, cooperatively observing `cancel` and `shutdown_token`,
+    /// and optionally waiting for an initial PCM cushion when `prebuffer_pcm` is `true`.
     fn run_open(
         item: &AudioSourceCore,
         custom_factory: Option<&CustomSourceFactory>,
@@ -956,6 +1096,11 @@ impl IoWorkerPool {
             template.channels,
             template.period_size,
         ) else {
+            crate::map_log!(
+                1,
+                "[IO_POOL] Failed to allocate StreamingDeck for track id={}",
+                item.id
+            );
             return IoOpenOutcome::Failed(-1, None);
         };
         deck.apply_dsp_template_silent(template, Some(item));
@@ -969,11 +1114,19 @@ impl IoWorkerPool {
             Some(cancel),
         );
         if res == MAP_ERROR_ABORTED || cancel.is_cancelled() || shutdown_token.is_cancelled() {
+            crate::map_log!(4, "[IO_POOL] Open aborted for track id={}", item.id);
             drop(deck);
             return IoOpenOutcome::Aborted;
         }
         if res != MAP_SUCCESS {
             let err_msg = deck.take_last_open_error_message();
+            crate::map_log!(
+                1,
+                "[IO_POOL] Open failed for track id={} (code={}, err={:?})",
+                item.id,
+                res,
+                err_msg
+            );
             drop(deck);
             return IoOpenOutcome::Failed(res, err_msg);
         }
@@ -981,15 +1134,27 @@ impl IoWorkerPool {
             // Ensure an initial PCM cushion (~93 ms at 44.1 kHz) is decoded before playback starts.
             deck.wait_for_initial_pcm(4096, Duration::from_millis(180), Some(cancel));
             if cancel.is_cancelled() || shutdown_token.is_cancelled() {
+                crate::map_log!(
+                    4,
+                    "[IO_POOL] Open aborted during prebuffer for track id={}",
+                    item.id
+                );
                 drop(deck);
                 return IoOpenOutcome::Aborted;
             }
         }
+        crate::map_log!(
+            4,
+            "[IO_POOL] Open succeeded for track id={} (prebuffer_pcm={})",
+            item.id,
+            prebuffer_pcm
+        );
         IoOpenOutcome::Opened(deck)
     }
 
     /// Signals cancellation to all workers and joins finished workers within a bounded 300ms window.
     pub fn shutdown(&self) {
+        crate::map_log!(3, "[IO_POOL] Shutting down IoWorkerPool");
         self.shutdown_token.cancel();
         {
             let (lock, cv) = &*self.state;
@@ -1023,6 +1188,13 @@ impl IoWorkerPool {
             } else {
                 remaining.push((done, jh));
             }
+        }
+        if !remaining.is_empty() {
+            crate::map_log!(
+                2,
+                "[IO_POOL] {} worker(s) still active after shutdown timeout",
+                remaining.len()
+            );
         }
         *handles = remaining;
     }

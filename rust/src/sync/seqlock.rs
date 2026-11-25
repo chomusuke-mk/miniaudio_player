@@ -8,8 +8,11 @@ use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 ///
 /// Ensures readers never block the real-time audio thread while writers safely update state.
 pub struct CachePaddedSeqlock<T> {
+    /// Monotonic sequence counter (odd while a write is in progress, even when consistent).
     sequence: CachePadded<AtomicUsize>,
+    /// Mutual-exclusion spin flag serializing concurrent writers.
     writer_lock: AtomicBool,
+    /// Protected payload updated by writers and optimistically copied by readers.
     data: UnsafeCell<T>,
 }
 
@@ -26,7 +29,7 @@ impl<T> CachePaddedSeqlock<T> {
         }
     }
 
-    /// Mutates the protected data with writer mutual exclusion. Guaranteed to never block readers indefinitely.
+    /// Mutates the protected data via `f` with writer mutual exclusion. Guaranteed to never block readers indefinitely.
     pub fn write<F: FnOnce(&mut T)>(&self, f: F) {
         // Spin until acquiring exclusive writer permission
         while self

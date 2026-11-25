@@ -7,14 +7,22 @@ pub const NUM_ALLPASS: usize = 4;
 /// Sample spread offset between left and right channels for stereo decorrelation.
 pub const STEREO_SPREAD: usize = 23;
 
+/// Default Freeverb comb delay lengths in samples at 44.1 kHz for the left channel.
 const COMB_TUNINGS_L: [usize; NUM_COMBS] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+/// Default Freeverb allpass delay lengths in samples at 44.1 kHz for the left channel.
 const ALLPASS_TUNINGS_L: [usize; NUM_ALLPASS] = [556, 441, 341, 225];
 
+/// Scaling factor mapping normalized `room_size` to comb feedback gain.
 const SCALE_ROOM: f32 = 0.28;
+/// Base comb feedback offset added to scaled `room_size`.
 const OFFSET_ROOM: f32 = 0.70;
+/// Scaling factor mapping normalized `damping` to one-pole lowpass damping.
 const SCALE_DAMP: f32 = 0.40;
+/// Wet gain scaling factor compensating for Freeverb's fixed input attenuation.
 const SCALE_WET: f32 = 2.50;
+/// Input attenuation factor preventing comb filter bank saturation.
 const SCALE_INPUT: f32 = 0.015;
+/// Fixed feedback coefficient used by all Freeverb series all-pass diffusers.
 const ALLPASS_FEEDBACK: f32 = 0.50;
 
 /// Parameters configuring algorithmic studio reverberation.
@@ -36,6 +44,7 @@ pub struct ReverbConfig {
 }
 
 impl Default for ReverbConfig {
+    /// Returns a disabled [`ReverbConfig`] with balanced room size, damping, width, wet, and dry defaults.
     fn default() -> Self {
         Self {
             enabled: 0,
@@ -48,15 +57,21 @@ impl Default for ReverbConfig {
     }
 }
 
+/// Lowpass-damped feedback comb filter used in Freeverb's parallel early/late decay bank.
 #[derive(Clone)]
 struct CombFilter {
+    /// Circular delay line storage.
     buffer: Vec<f32>,
+    /// Delay line length in samples.
     buf_size: usize,
+    /// Current read/write cursor index inside `buffer`.
     buf_idx: usize,
+    /// One-pole lowpass filter state register for high-frequency damping.
     filter_store: f32,
 }
 
 impl CombFilter {
+    /// Creates a zero-initialized `CombFilter` with delay line length `size` samples.
     fn new(size: usize) -> Self {
         Self {
             buffer: vec![0.0; size],
@@ -66,18 +81,21 @@ impl CombFilter {
         }
     }
 
+    /// Resizes the comb delay line to `new_size` samples and clears internal state.
     fn resize(&mut self, new_size: usize) {
         self.buf_size = new_size.max(1);
         self.buffer.resize(self.buf_size, 0.0);
         self.clear();
     }
 
+    /// Zeroes the delay buffer, cursor index, and lowpass damping state.
     fn clear(&mut self) {
         self.buffer.fill(0.0);
         self.buf_idx = 0;
         self.filter_store = 0.0;
     }
 
+    /// Processes one `input` sample through the damped comb filter with `damp` and `feedback`.
     #[inline(always)]
     fn process(&mut self, input: f32, damp: f32, feedback: f32) -> f32 {
         let out = self.buffer[self.buf_idx];
@@ -102,14 +120,19 @@ impl CombFilter {
     }
 }
 
+/// Series all-pass diffuser filter used after Freeverb's parallel comb bank.
 #[derive(Clone)]
 struct AllpassFilter {
+    /// Circular delay line storage.
     buffer: Vec<f32>,
+    /// Delay line length in samples.
     buf_size: usize,
+    /// Current read/write cursor index inside `buffer`.
     buf_idx: usize,
 }
 
 impl AllpassFilter {
+    /// Creates a zero-initialized `AllpassFilter` with delay line length `size` samples.
     fn new(size: usize) -> Self {
         Self {
             buffer: vec![0.0; size],
@@ -118,17 +141,20 @@ impl AllpassFilter {
         }
     }
 
+    /// Resizes the all-pass delay line to `new_size` samples and clears internal state.
     fn resize(&mut self, new_size: usize) {
         self.buf_size = new_size.max(1);
         self.buffer.resize(self.buf_size, 0.0);
         self.clear();
     }
 
+    /// Zeroes the delay buffer and resets the cursor index.
     fn clear(&mut self) {
         self.buffer.fill(0.0);
         self.buf_idx = 0;
     }
 
+    /// Processes one `input` sample through the all-pass diffuser.
     #[inline(always)]
     fn process(&mut self, input: f32) -> f32 {
         let mut buf_out = self.buffer[self.buf_idx];
@@ -154,30 +180,46 @@ impl AllpassFilter {
 
 /// Algorithmic studio reverberation unit based on the classic Freeverb physical model.
 pub struct Freeverb {
+    /// Active audio sample rate in Hz.
     sample_rate: u32,
+    /// Current reverberation configuration parameters.
     config: ReverbConfig,
 
+    /// Left-channel parallel comb filter bank.
     combs_l: Vec<CombFilter>,
+    /// Right-channel parallel comb filter bank.
     combs_r: Vec<CombFilter>,
+    /// Left-channel series all-pass diffuser bank.
     allpass_l: Vec<AllpassFilter>,
+    /// Right-channel series all-pass diffuser bank.
     allpass_r: Vec<AllpassFilter>,
 
+    /// Derived comb feedback gain from `room_size`.
     feedback: f32,
+    /// Derived lowpass damping coefficient from `damping`.
     damp: f32,
+    /// Target direct-channel wet mix gain.
     target_wet1: f32,
+    /// Target cross-channel wet mix gain controlling stereo width.
     target_wet2: f32,
+    /// Target dry direct signal gain.
     target_dry: f32,
 
+    /// Current block-ramped dry signal gain.
     current_dry: f32,
+    /// Current block-ramped direct wet gain.
     current_wet1: f32,
+    /// Current block-ramped cross-channel wet gain.
     current_wet2: f32,
 
+    /// Whether all delay lines are silent and processing can be bypassed.
     is_dormant: bool,
+    /// Count of consecutive silent blocks used to transition into dormancy.
     silent_blocks: usize,
 }
 
 impl Freeverb {
-    /// Constructs a new `Freeverb` instance calibrated for the given sample rate.
+    /// Constructs a new `Freeverb` instance calibrated for `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
         let sr = if sample_rate == 0 { 44100 } else { sample_rate };
         let rate_scale = sr as f64 / 44100.0;
@@ -225,7 +267,7 @@ impl Freeverb {
         rev
     }
 
-    /// Re-scales comb and all-pass delay line lengths to match the new sample rate.
+    /// Re-scales comb and all-pass delay line lengths to match `sample_rate`.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         let sr = if sample_rate == 0 { 44100 } else { sample_rate };
         if self.sample_rate == sr {
@@ -251,7 +293,7 @@ impl Freeverb {
         }
     }
 
-    /// Updates reverb room size, damping, width, wet, and dry parameters.
+    /// Updates reverb room size, damping, width, wet, and dry parameters from `config`.
     pub fn set_config(&mut self, config: ReverbConfig) {
         self.config = config;
         self.update_params();
@@ -281,7 +323,7 @@ impl Freeverb {
         self.silent_blocks = 0;
     }
 
-    /// Processes interleaved PCM audio frames in-place through the reverberation network.
+    /// Processes interleaved PCM `samples` across `channels` in-place through the reverberation network.
     pub fn process_frames(&mut self, samples: &mut [f32], channels: usize) {
         if samples.is_empty() || channels == 0 {
             return;
@@ -393,6 +435,7 @@ impl Freeverb {
         }
     }
 
+    /// Recomputes clamped Freeverb feedback, damping, and wet/dry mix targets from `config`.
     fn update_params(&mut self) {
         let room_size = self.config.room_size.clamp(0.0, 1.0);
         let damping = self.config.damping.clamp(0.0, 1.0);

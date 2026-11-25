@@ -1,42 +1,49 @@
-/// Immutable 10-band parametric equalizer representation for miniaudio_player.
+import 'api/logger.dart';
+
+/// Immutable 10-band parametric equalizer representation for `miniaudio_player`.
 ///
 /// Follows the ISO 266 standard preferred 1/1 octave band center frequencies:
-/// 31 Hz, 63 Hz, 125 Hz, 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz, 8 kHz, 16 kHz.
+/// `31` Hz, `63` Hz, `125` Hz, `250` Hz, `500` Hz, `1` kHz, `2` kHz, `4` kHz,
+/// `8` kHz, and `16` kHz.
 class Equalizer {
   /// Whether the equalizer DSP stage is actively applied.
   final bool enabled;
 
-  /// The gain for the 31 Hz band in decibels (dB).
+  /// The gain for the `31` Hz band in decibels (dB).
   final double hz31;
 
-  /// The gain for the 63 Hz band in decibels (dB).
+  /// The gain for the `63` Hz band in decibels (dB).
   final double hz63;
 
-  /// The gain for the 125 Hz band in decibels (dB).
+  /// The gain for the `125` Hz band in decibels (dB).
   final double hz125;
 
-  /// The gain for the 250 Hz band in decibels (dB).
+  /// The gain for the `250` Hz band in decibels (dB).
   final double hz250;
 
-  /// The gain for the 500 Hz band in decibels (dB).
+  /// The gain for the `500` Hz band in decibels (dB).
   final double hz500;
 
-  /// The gain for the 1 kHz band in decibels (dB).
+  /// The gain for the `1` kHz band in decibels (dB).
   final double hz1k;
 
-  /// The gain for the 2 kHz band in decibels (dB).
+  /// The gain for the `2` kHz band in decibels (dB).
   final double hz2k;
 
-  /// The gain for the 4 kHz band in decibels (dB).
+  /// The gain for the `4` kHz band in decibels (dB).
   final double hz4k;
 
-  /// The gain for the 8 kHz band in decibels (dB).
+  /// The gain for the `8` kHz band in decibels (dB).
   final double hz8k;
 
-  /// The gain for the 16 kHz band in decibels (dB).
+  /// The gain for the `16` kHz band in decibels (dB).
   final double hz16k;
 
-  /// Creates an immutable [Equalizer] with optional band gains in dB (defaults to `0.0` dB).
+  /// Creates an immutable [Equalizer] with optional band gains in decibels.
+  ///
+  /// Configures whether the stage is [enabled] and sets gains for [hz31],
+  /// [hz63], [hz125], [hz250], [hz500], [hz1k], [hz2k], [hz4k], [hz8k], and
+  /// [hz16k] (all defaulting to `0.0` dB).
   const Equalizer({
     this.enabled = true,
     this.hz31 = 0.0,
@@ -90,9 +97,16 @@ class Equalizer {
           'hz16k must be finite',
         );
 
-  /// Factory constructor to create an [Equalizer] from an ordered 10-element list.
+  /// Creates an [Equalizer] from an ordered 10-element [gains] list.
+  ///
+  /// Sets whether the equalizer is [enabled] and maps the first ten entries of
+  /// [gains] to bands `31` Hz through `16` kHz. Throws an [ArgumentError] if
+  /// [gains] contains fewer than `10` elements.
   factory Equalizer.fromList(List<double> gains, {bool enabled = true}) {
     if (gains.length < 10) {
+      MapLogger.error(
+        'Equalizer.fromList() requires 10 band gains, got ${gains.length}',
+      );
       throw ArgumentError.value(
         gains.length,
         'gains.length',
@@ -114,13 +128,13 @@ class Equalizer {
     );
   }
 
-  /// Completely disabled/bypassed equalizer stage.
+  /// Completely disabled and bypassed equalizer stage.
   static const Equalizer off = Equalizer(enabled: false);
 
-  /// Flat frequency response (all bands at 0.0 dB).
+  /// Flat frequency response with all bands at `0.0` dB.
   static const Equalizer flat = Equalizer(enabled: true);
 
-  /// Rock preset: boosted bass and treble with recessed mid-range.
+  /// Rock preset with boosted bass and treble and recessed mid-range.
   static const Equalizer rock = Equalizer(
     enabled: true,
     hz31: 4.5,
@@ -135,7 +149,7 @@ class Equalizer {
     hz16k: 4.5,
   );
 
-  /// Pop preset: enhanced mid-bass and vocal range.
+  /// Pop preset with enhanced mid-bass and vocal presence.
   static const Equalizer pop = Equalizer(
     enabled: true,
     hz31: -1.5,
@@ -150,7 +164,7 @@ class Equalizer {
     hz16k: -2.0,
   );
 
-  /// Jazz preset: smooth warmth for acoustic instruments.
+  /// Jazz preset providing smooth warmth for acoustic instruments.
   static const Equalizer jazz = Equalizer(
     enabled: true,
     hz31: 3.5,
@@ -165,7 +179,7 @@ class Equalizer {
     hz16k: 3.5,
   );
 
-  /// Classical preset: dynamic balance with subdued harsh mids for orchestra.
+  /// Classical preset offering dynamic balance with subdued harsh mids.
   static const Equalizer classical = Equalizer(
     enabled: true,
     hz31: 4.0,
@@ -180,7 +194,7 @@ class Equalizer {
     hz16k: -2.5,
   );
 
-  /// Bass boost preset: elevated low-end frequencies.
+  /// Bass boost preset with elevated low-end frequencies.
   static const Equalizer bassBoost = Equalizer(
     enabled: true,
     hz31: 7.0,
@@ -196,6 +210,9 @@ class Equalizer {
   );
 
   /// Returns a copy of this [Equalizer] with modified band values.
+  ///
+  /// Replaces [enabled], [hz31], [hz63], [hz125], [hz250], [hz500], [hz1k],
+  /// [hz2k], [hz4k], [hz8k], and [hz16k] when non-`null`.
   Equalizer copyWith({
     bool? enabled,
     double? hz31,
@@ -224,21 +241,27 @@ class Equalizer {
     );
   }
 
-  /// Minimum supported band gain in decibels (`-24.0 dB`).
+  /// Minimum supported band gain in decibels (`-24.0` dB).
   static const double minGainDb = -24.0;
 
-  /// Maximum supported band gain in decibels (`+24.0 dB`).
+  /// Maximum supported band gain in decibels (`+24.0` dB).
   static const double maxGainDb = 24.0;
 
-  /// Clamps a band gain value in dB to `[minGainDb, maxGainDb]`.
+  /// Clamps [gainDb] to the supported range between [minGainDb] and [maxGainDb].
   static double clampGain(double gainDb) => gainDb.clamp(minGainDb, maxGainDb);
 
   /// Returns a new [Equalizer] with the band at [index] (`0..9`) updated to [gainDb].
+  ///
+  /// Clamps [gainDb] via [clampGain] and throws a [RangeError] if [index] is
+  /// outside `0..9`.
   Equalizer withBand(int index, double gainDb) {
     if (index < 0 || index >= 10) {
+      MapLogger.error(
+        'Equalizer.withBand() index out of range: $index (expected 0..9)',
+      );
       throw RangeError.range(index, 0, 9, 'index');
     }
-    final bands = List<double>.from(toList());
+    final bands = toList();
     bands[index] = clampGain(gainDb);
     return Equalizer.fromList(bands, enabled: enabled);
   }
@@ -248,6 +271,8 @@ class Equalizer {
     return [hz31, hz63, hz125, hz250, hz500, hz1k, hz2k, hz4k, hz8k, hz16k];
   }
 
+  /// Returns `true` if [other] is an [Equalizer] with identical band gains and
+  /// enabled state.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -265,6 +290,7 @@ class Equalizer {
           hz8k == other.hz8k &&
           hz16k == other.hz16k;
 
+  /// Returns a hash code derived from [enabled] and all ten frequency bands.
   @override
   int get hashCode => Object.hash(
         enabled,
@@ -280,6 +306,7 @@ class Equalizer {
         hz16k,
       );
 
+  /// Returns a human-readable string representation of this [Equalizer].
   @override
   String toString() {
     return 'Equalizer(enabled: $enabled, 31Hz: ${hz31}dB, 63Hz: ${hz63}dB, 125Hz: ${hz125}dB, '

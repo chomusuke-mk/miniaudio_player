@@ -1,14 +1,15 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
-import 'package:miniaudio_player_example/theme/studio_theme.dart';
-import 'package:miniaudio_player_example/widgets/cards/dsp_effects_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/equalizer_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
-import 'package:miniaudio_player_example/widgets/common/compact_slider_overlay.dart';
-import 'package:miniaudio_player_example/widgets/common/dsp_sub_card.dart';
-import 'package:miniaudio_player_example/widgets/common/studio_badge.dart';
+import 'package:miniaudio_player_example/core/theme/studio_theme.dart';
+import 'package:miniaudio_player_example/features/console/controllers/audio_engine_controller.dart';
+import 'package:miniaudio_player_example/features/dsp/widgets/dsp_effects_card.dart';
+import 'package:miniaudio_player_example/features/dsp/widgets/equalizer_sub_card.dart';
+import 'package:miniaudio_player_example/features/playback/widgets/playback_engine_card.dart';
+import 'package:miniaudio_player_example/shared/widgets/compact_slider_overlay.dart';
+import 'package:miniaudio_player_example/shared/widgets/dsp_sub_card.dart';
+import 'package:miniaudio_player_example/shared/widgets/studio_badge.dart';
+import 'package:miniaudio_player_example/shared/widgets/studio_card.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -934,7 +935,7 @@ void main() {
     );
 
     testWidgets(
-      'EqualizerCard replaces badge with OFF/ON switch, removes preamp, and uses labeled Preset dropdown with Custom state',
+      'EqualizerSubCard replaces badge with OFF/ON switch, removes preamp, and uses labeled Preset dropdown with Custom state',
       (tester) async {
         Future<void> pumpEq({
           Size size = const Size(640, 800),
@@ -958,7 +959,13 @@ void main() {
                 child: Scaffold(
                   body: SingleChildScrollView(
                     padding: const EdgeInsets.all(12),
-                    child: EqualizerCard(controller: controller),
+                    child: StudioCard(
+                      icon: Icons.tune,
+                      title: 'ISO 266 10-BAND PARAMETRIC EQUALIZER',
+                      subtitle:
+                          'Direct Form II Transposed (DF2T) SIMD • 0.00 dB Analytical Error',
+                      child: EqualizerSubCard(controller: controller),
+                    ),
                   ),
                 ),
               ),
@@ -976,7 +983,7 @@ void main() {
         expect(find.byType(ChoiceChip), findsNothing);
 
         final eqSwitchFinder = find.descendant(
-          of: find.byType(EqualizerCard),
+          of: find.byType(EqualizerSubCard),
           matching: find.byType(Switch),
         );
         expect(eqSwitchFinder, findsOneWidget);

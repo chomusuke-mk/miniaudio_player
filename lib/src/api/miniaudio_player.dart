@@ -40,14 +40,16 @@ part 'player_stream.dart';
 part 'recording_session.dart';
 part 'voice.dart';
 
+/// Cached in-flight future for idempotent Flutter Rust Bridge runtime initialization.
 Future<void>? _rustInitFuture;
 
 /// Ensures the Flutter Rust Bridge runtime is initialized exactly once in the
 /// current isolate before calling static methods or constructing [MiniaudioPlayer].
 ///
 /// Safe to invoke concurrently: simultaneous callers share the same in-flight
-/// [Future] rather than racing to call `RustLib.init()` twice. If initialization
-/// fails, the cached future is cleared so subsequent calls can retry.
+/// [Future] rather than racing to initialize the native library twice. If
+/// initialization fails, the cached future is cleared so subsequent calls can
+/// retry, optionally overriding the native library path with [libraryPath].
 Future<void> ensureRustInitialized({String? libraryPath}) {
   if (RustLib.instance.initialized) {
     return Future<void>.value();
@@ -57,12 +59,17 @@ Future<void> ensureRustInitialized({String? libraryPath}) {
     StackTrace stackTrace,
   ) {
     _rustInitFuture = null;
+    MapLogger.error('Rust runtime initialization failed: $error');
     Error.throwWithStackTrace(error, stackTrace);
   });
 }
 
+/// Resolves the platform native library from [libraryPath] and initializes [RustLib].
 Future<void> _initRustRuntime(String? libraryPath) async {
   if (RustLib.instance.initialized) return;
+  MapLogger.debug(
+    'Initializing Rust runtime (libraryPath: ${libraryPath ?? "auto"})',
+  );
   final externalLib = await resolvePlatformExternalLibrary(
     customLibraryPath: libraryPath,
   );
@@ -73,6 +80,7 @@ Future<void> _initRustRuntime(String? libraryPath) async {
     forceSameCodegenVersion: false,
     externalLibrary: externalLib,
   );
+  MapLogger.info('Rust runtime initialized successfully');
 }
 
 /// Supported audio file extensions natively decoded by [MiniaudioPlayer].
@@ -126,9 +134,13 @@ enum MiniaudioLogLevel {
 
   /// Raw native log level integer value.
   final int value;
+
+  /// Creates a [MiniaudioLogLevel] backed by its raw native integer [value].
   const MiniaudioLogLevel(this.value);
 
   /// Resolves a [MiniaudioLogLevel] from its raw integer [value].
+  ///
+  /// Returns [MiniaudioLogLevel.none] when [value] does not match a known level.
   static MiniaudioLogLevel fromValue(int value) {
     for (final level in MiniaudioLogLevel.values) {
       if (level.value == value) return level;
@@ -142,37 +154,42 @@ typedef DefaultDeviceDisplayNameResolver = String Function(String resolvedName);
 
 /// Global configuration parameters for [MiniaudioPlayer] instances.
 class MiniaudioPlayerGlobalConfig {
-  /// The optional global log callback for intercepting or redirecting diagnostic messages.
+  /// Optional global log callback for intercepting or redirecting diagnostic messages.
   static MiniaudioLogCallback? onLog;
 
-  /// The default buffer frame size for newly created player instances.
+  /// Default buffer frame size for newly created player instances.
   int defaultBufferSize;
 
-  /// The global native diagnostic logging verbosity level.
+  /// Global native diagnostic logging verbosity level.
   MiniaudioLogLevel logLevel;
 
-  /// The resolver function producing a human-readable name for system default audio devices.
+  /// Resolver function producing a human-readable name for system default audio devices.
   DefaultDeviceDisplayNameResolver defaultDeviceDisplayNameResolver;
 
-  /// The prefetch buffer duration for local media files.
+  /// Prefetch buffer duration for local media files.
   Duration bufferLocalDuration;
 
-  /// The prefetch buffer duration for remote HTTP/HTTPS network streams.
+  /// Prefetch buffer duration for remote HTTP/HTTPS network streams.
   Duration bufferNetworkDuration;
 
-  /// The prefetch buffer duration for live unbounded streams.
+  /// Prefetch buffer duration for live unbounded streams.
   Duration bufferLiveStreamDuration;
 
-  /// The duration of played audio preserved in the ring buffer behind the playback position for local media.
+  /// Duration of played audio preserved in the ring buffer behind the playback position for local media.
   Duration bufferBehindLocalDuration;
 
-  /// The duration of played audio preserved in the ring buffer behind the playback position for network streams.
+  /// Duration of played audio preserved in the ring buffer behind the playback position for network streams.
   Duration bufferBehindNetworkDuration;
 
-  /// The duration of played audio preserved in the ring buffer behind the playback position for live streams.
+  /// Duration of played audio preserved in the ring buffer behind the playback position for live streams.
   Duration bufferBehindLiveStreamDuration;
 
-  /// Creates a [MiniaudioPlayerGlobalConfig] container with default options.
+  /// Creates a [MiniaudioPlayerGlobalConfig] container with configurable default options.
+  ///
+  /// Initializes [defaultBufferSize], [logLevel], [defaultDeviceDisplayNameResolver],
+  /// [bufferLocalDuration], [bufferNetworkDuration], [bufferLiveStreamDuration],
+  /// [bufferBehindLocalDuration], [bufferBehindNetworkDuration], and
+  /// [bufferBehindLiveStreamDuration].
   MiniaudioPlayerGlobalConfig({
     this.defaultBufferSize = 0,
     this.logLevel = MiniaudioLogLevel.none,
@@ -186,6 +203,7 @@ class MiniaudioPlayerGlobalConfig {
   }) : defaultDeviceDisplayNameResolver = defaultDeviceDisplayNameResolver ??
             _defaultDeviceDisplayNameResolver;
 
+  /// Formats the default display label from the OS-resolved [resolvedName].
   static String _defaultDeviceDisplayNameResolver(String resolvedName) {
     final clean = resolvedName.trim();
     return clean.isEmpty ? 'System Default' : 'System Default ($clean)';
@@ -193,6 +211,7 @@ class MiniaudioPlayerGlobalConfig {
 
   /// Resets all global configuration parameters to their clean default values.
   void reset() {
+    MapLogger.debug('Resetting MiniaudioPlayerGlobalConfig to defaults');
     onLog = null;
     defaultBufferSize = 0;
     logLevel = MiniaudioLogLevel.none;
@@ -206,21 +225,28 @@ class MiniaudioPlayerGlobalConfig {
   }
 }
 
-/// Master Miniaudio Player Coordinator orchestrating streaming music decks,
-/// polyphonic RAM sound effects, multi-destination output matrix, and microphone sidechain.
+/// Master audio player coordinator orchestrating streaming decks, polyphonic SFX,
+/// multi-destination output routing, and microphone sidechain capture.
 ///
-/// Features 3 consolidated, orthogonal namespaces:
-/// - `player.action` : Asynchronous imperative commands.
-/// - `player.state`  : $O(1)$ lock-free synchronous state snapshot (stream-backed).
-/// - `player.stream` : Reactive broadcast streams for UI bindings.
+/// Exposes three orthogonal namespaces:
+/// - [action] ([PlayerAction]): asynchronous imperative commands.
+/// - [state] ([PlayerState]): synchronous lock-free state snapshot.
+/// - [stream] ([PlayerStream]): reactive broadcast streams for UI bindings.
 class MiniaudioPlayer<T> {
+  /// Singleton backing [globalConfig].
   static final MiniaudioPlayerGlobalConfig _globalConfig =
       MiniaudioPlayerGlobalConfig();
 
-  /// The global configuration singleton for [MiniaudioPlayer].
+  /// Global configuration singleton for [MiniaudioPlayer].
   static MiniaudioPlayerGlobalConfig get globalConfig => _globalConfig;
 
   /// Updates global configuration parameters and returns the configuration singleton.
+  ///
+  /// Any non-`null` argument among [defaultBufferSize], [logLevel],
+  /// [defaultDeviceDisplayNameResolver], [bufferLocalDuration],
+  /// [bufferNetworkDuration], [bufferLiveStreamDuration],
+  /// [bufferBehindLocalDuration], [bufferBehindNetworkDuration], and
+  /// [bufferBehindLiveStreamDuration] updates the corresponding setting.
   static MiniaudioPlayerGlobalConfig config({
     int? defaultBufferSize,
     MiniaudioLogLevel? logLevel,
@@ -262,20 +288,30 @@ class MiniaudioPlayer<T> {
       _globalConfig.bufferBehindLiveStreamDuration =
           bufferBehindLiveStreamDuration;
     }
+    MapLogger.debug(
+      'Updated MiniaudioPlayer global config: logLevel=${_globalConfig.logLevel.name}, '
+      'defaultBufferSize=${_globalConfig.defaultBufferSize}',
+    );
     return _globalConfig;
   }
 
   /// Resets global audio player configuration to clean defaults.
   static void resetGlobalConfig() => _globalConfig.reset();
 
-  /// Ensures native Rust audio player backend is initialized.
+  /// Ensures the native Rust audio player backend is initialized.
   ///
-  /// Optionally accepts an explicit [libraryPath] to override the automatic
-  /// Native Assets / platform library resolution.
+  /// Optionally accepts an explicit [libraryPath] to override automatic
+  /// Native Assets or platform library resolution, and a [rootIsolateToken]
+  /// enabling background isolate platform-channel resolution (such as Android
+  /// `content://` URIs).
   static Future<void> ensureInitialized({
     String? libraryPath,
     RootIsolateToken? rootIsolateToken,
   }) async {
+    MapLogger.debug(
+      'Ensuring MiniaudioPlayer initialized '
+      '(hasLibraryPath: ${libraryPath != null}, hasRootIsolateToken: ${rootIsolateToken != null})',
+    );
     registerSourceResolverIsolateToken(rootIsolateToken);
     await ensureRustInitialized(libraryPath: libraryPath);
     setLogLevel(_globalConfig.logLevel);
@@ -292,7 +328,8 @@ class MiniaudioPlayer<T> {
     try {
       final devs = rust.RustMiniaudioPlayer.getOutputDevicesSync();
       return devs.map(_toAudioDevice).toList();
-    } catch (_) {
+    } catch (e) {
+      MapLogger.warn('Failed to enumerate output devices synchronously: $e');
       return const [AudioDevice.auto];
     }
   }
@@ -304,7 +341,8 @@ class MiniaudioPlayer<T> {
     try {
       final devs = await rust.RustMiniaudioPlayer.getOutputDevices();
       return devs.map(_toAudioDevice).toList();
-    } catch (_) {
+    } catch (e) {
+      MapLogger.warn('Failed to enumerate output devices asynchronously: $e');
       return const [AudioDevice.auto];
     }
   }
@@ -316,7 +354,8 @@ class MiniaudioPlayer<T> {
     try {
       final devs = rust.RustMiniaudioPlayer.getInputDevicesSync();
       return devs.map(_toAudioDevice).toList();
-    } catch (_) {
+    } catch (e) {
+      MapLogger.warn('Failed to enumerate input devices synchronously: $e');
       return const [AudioDevice.auto];
     }
   }
@@ -328,7 +367,8 @@ class MiniaudioPlayer<T> {
     try {
       final devs = await rust.RustMiniaudioPlayer.getInputDevices();
       return devs.map(_toAudioDevice).toList();
-    } catch (_) {
+    } catch (e) {
+      MapLogger.warn('Failed to enumerate input devices asynchronously: $e');
       return const [AudioDevice.auto];
     }
   }
@@ -350,20 +390,16 @@ class MiniaudioPlayer<T> {
   /// When `replayGain: false && waveform: false`, static header analysis resolves
   /// near-instantaneously (< 1 ms) without decoding audio sample frames.
   ///
-  /// Parameters:
-  /// - [source]: An [AudioSource], local/Web OPFS file path [String], remote URL [String] / [Uri],
-  ///   or in-memory audio bytes ([Uint8List] / `List<int>`).
-  /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
-  ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
-  /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
-  ///   [waveformPoints] for rendering seekbars and waveform visualizations.
-  /// - [metadata]: When `true` (defaults to `false`), extracts container/header metadata bytes
-  ///   into [AudioAnalysisResult.metadata].
-  /// - [chromaprint]: When `true` (defaults to `false`), computes a Chromaprint / AcoustID digital
-  ///   audio fingerprint for track identification into [AudioAnalysisResult.chromaprint].
-  /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
-  /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
-  /// - [maxAnalysisDuration]: Optional maximum duration to analyze (e.g. for live or unbounded streams).
+  /// Analyzes [source] (an [AudioSource], local/Web OPFS file path [String], remote URL
+  /// [String] or [Uri], or in-memory audio bytes as [Uint8List] or `List<int>`). When
+  /// [replayGain] is `true`, computes ITU-R BS.1770-4 / EBU R128 integrated loudness
+  /// (LUFS) and ReplayGain adjustment relative to [targetLufs]. When [waveform] is
+  /// `true`, extracts a normalized amplitude envelope of length [waveformPoints] for
+  /// rendering seekbars and waveform visualizations. When [metadata] is `true`,
+  /// extracts container/header tags into [AudioAnalysisResult.metadata]. When
+  /// [chromaprint] is `true`, computes a Chromaprint / AcoustID fingerprint into
+  /// [AudioAnalysisResult.chromaprint]. Optionally caps decoded frames using
+  /// [maxAnalysisDuration] (for live or unbounded streams).
   static Future<AudioAnalysisResult> analyzeAudio(
     Object source, {
     bool replayGain = true,
@@ -377,11 +413,20 @@ class MiniaudioPlayer<T> {
     await ensureRustInitialized();
     final audioSource = source is AudioSource ? source : AudioSource(source);
     if (audioSource._directErrorCode != null) {
+      MapLogger.warn(
+        'analyzeAudio rejected invalid source "${audioSource.uri}": '
+        '${audioSource._directErrorMessage}',
+      );
       throw MiniaudioPlayerException(
         audioSource._directErrorMessage ?? 'Unsupported or invalid audio source.',
         errorCode: audioSource._directErrorCode,
       );
     }
+    MapLogger.debug(
+      'Analyzing audio source asynchronously (uri: ${audioSource.uri}, '
+      'replayGain: $replayGain, waveform: $waveform, metadata: $metadata, '
+      'chromaprint: $chromaprint)',
+    );
     var rustSource = audioSource.toRustSource();
     rust_types.RustResolvedSource? preResolved;
     if (audioSource._resolveInDart) {
@@ -399,11 +444,17 @@ class MiniaudioPlayer<T> {
         case DartResolvedBytes():
           preResolved = _toRustResolvedSource(resolved);
         case DartResolvedCustomStream():
+          MapLogger.warn(
+            'analyzeAudio rejected live custom/WebSocket stream "${audioSource.uri}"',
+          );
           throw const MiniaudioPlayerException(
             'Live custom/WebSocket streams cannot be analyzed statically by analyzeAudio().',
             errorCode: MapResult.errorUnsupported,
           );
         case DartResolvedError(:final code, :final message):
+          MapLogger.warn(
+            'analyzeAudio source resolution failed for "${audioSource.uri}": $message',
+          );
           throw MiniaudioPlayerException(message, errorCode: code);
       }
     }
@@ -426,6 +477,7 @@ class MiniaudioPlayer<T> {
       );
       return _toAnalysisResult(res);
     } catch (e) {
+      MapLogger.error('Audio analysis failed for "${audioSource.uri}": $e');
       if (e is MiniaudioPlayerException) rethrow;
       throw MiniaudioPlayerException.fromRustError(
         e,
@@ -435,6 +487,7 @@ class MiniaudioPlayer<T> {
     }
   }
 
+  /// Returns a copy of [base] with its URI replaced by [directSource] and Dart resolution disabled.
   static rust_types.RustAudioSource _withResolvedRustSource(
     rust_types.RustAudioSource base,
     String directSource,
@@ -450,6 +503,7 @@ class MiniaudioPlayer<T> {
     );
   }
 
+  /// Converts a Dart-resolved source descriptor [resolved] into its Rust FFI union equivalent.
   static rust_types.RustResolvedSource _toRustResolvedSource(
     DartResolvedSourceResult resolved,
   ) {
@@ -491,22 +545,17 @@ class MiniaudioPlayer<T> {
   ///
   /// Network, streaming, and **Web OPFS** sources are not supported synchronously
   /// (Web browsers prohibit `Atomics.wait` on the main UI thread, so Web OPFS paths throw
-  /// [MiniaudioPlayerException] with [MapResult.errorUnsupported]); use `await analyzeAudio()`
+  /// [MiniaudioPlayerException] with [MapResult.errorUnsupported]); use [analyzeAudio]
   /// instead.
   ///
-  /// Parameters:
-  /// - [source]: An [AudioSource], local file path [String], or in-memory audio bytes ([Uint8List]).
-  /// - [replayGain]: When `true` (default), computes ITU-R BS.1770-4 / EBU R128 integrated
-  ///   loudness (LUFS) and ReplayGain adjustment relative to [targetLufs].
-  /// - [waveform]: When `true` (default), extracts a normalized amplitude envelope of length
-  ///   [waveformPoints] for rendering seekbars and waveform visualizations.
-  /// - [metadata]: When `true` (defaults to `false`), extracts container/header metadata bytes
-  ///   into [AudioAnalysisResult.metadata].
-  /// - [chromaprint]: When `true` (defaults to `false`), computes a Chromaprint / AcoustID digital
-  ///   audio fingerprint for track identification into [AudioAnalysisResult.chromaprint].
-  /// - [waveformPoints]: Number of normalized peak buckets (`> 0`) to extract across the track.
-  /// - [targetLufs]: Target reference loudness in LUFS (defaults to `-18.0` LUFS).
-  /// - [maxAnalysisDuration]: Optional maximum duration to analyze.
+  /// Analyzes [source] (an [AudioSource], local file path [String], or in-memory audio bytes
+  /// as [Uint8List]). When [replayGain] is `true`, computes ITU-R BS.1770-4 / EBU R128
+  /// integrated loudness (LUFS) and ReplayGain adjustment relative to [targetLufs]. When
+  /// [waveform] is `true`, extracts a normalized amplitude envelope of length [waveformPoints]
+  /// for rendering seekbars and waveform visualizations. When [metadata] is `true`, extracts
+  /// container/header metadata into [AudioAnalysisResult.metadata]. When [chromaprint] is
+  /// `true`, computes a Chromaprint / AcoustID fingerprint into [AudioAnalysisResult.chromaprint].
+  /// Optionally caps decoded frames using [maxAnalysisDuration].
   static AudioAnalysisResult analyzeAudioSync(
     Object source, {
     bool replayGain = true,
@@ -519,6 +568,10 @@ class MiniaudioPlayer<T> {
   }) {
     final audioSource = source is AudioSource ? source : AudioSource(source);
     if (audioSource._directErrorCode != null) {
+      MapLogger.warn(
+        'analyzeAudioSync rejected invalid source "${audioSource.uri}": '
+        '${audioSource._directErrorMessage}',
+      );
       throw MiniaudioPlayerException(
         audioSource._directErrorMessage ?? 'Unsupported or invalid audio source.',
         errorCode: audioSource._directErrorCode,
@@ -561,6 +614,11 @@ class MiniaudioPlayer<T> {
         errorCode: MapResult.errorInvalidArgs,
       );
     }
+    MapLogger.debug(
+      'Analyzing audio source synchronously (uri: ${audioSource.uri}, '
+      'replayGain: $replayGain, waveform: $waveform, metadata: $metadata, '
+      'chromaprint: $chromaprint)',
+    );
     final rustConfig = rust_types.RustAnalysisConfig(
       replayGain: replayGain,
       waveform: waveform,
@@ -579,6 +637,9 @@ class MiniaudioPlayer<T> {
       );
       return _toAnalysisResult(res);
     } catch (e) {
+      MapLogger.error(
+        'Synchronous audio analysis failed for "${audioSource.uri}": $e',
+      );
       if (e is MiniaudioPlayerException) rethrow;
       throw MiniaudioPlayerException.fromRustError(
         e,
@@ -588,41 +649,51 @@ class MiniaudioPlayer<T> {
     }
   }
 
-  /// Sets global native diagnostic log level.
+  /// Sets the global native diagnostic log [level].
   static void setLogLevel(MiniaudioLogLevel level) {
     try {
       rust.setLogLevel(level: level.value);
-    } catch (_) {}
+    } catch (e) {
+      MapLogger.warn('Failed to set native log level to ${level.name}: $e');
+    }
   }
 
   // =========================================================================
   // Instance State & Core Fields
   // =========================================================================
 
+  /// Underlying native Rust player instance backing this coordinator.
   late final rust.RustMiniaudioPlayer _rustPlayer;
 
+  /// Subscription listening to native Rust player events.
   StreamSubscription<rust_types.RustPlayerEvent>? _eventSub;
+
+  /// Backing flag for [isDisposed].
   bool _isDisposed = false;
 
   /// Whether this player instance has been disposed.
   bool get isDisposed => _isDisposed;
 
-  /// The monotonic counter allocating unique identifiers for queued sources.
+  /// Monotonic counter allocating unique identifiers for queued sources.
   int _nextSourceId = 1;
 
-  /// The lookup registry mapping unique monotonic track IDs to their [AudioSource] instances.
+  /// Lookup registry mapping unique monotonic track IDs to their [AudioSource] instances.
   final Map<int, AudioSource<T>> _sourceRegistry = {};
 
-  /// The active [CustomByteProvider] instances keyed by stream ID.
+  /// Active [CustomByteProvider] instances keyed by stream ID.
   final Map<int, CustomByteProvider> _customProviders = {};
 
-  /// Stream IDs belonging to internally managed resolvers (e.g. WebSockets).
+  /// Stream IDs belonging to internally managed resolvers (such as WebSockets).
   final Set<int> _managedProviderIds = {};
 
+  /// Monotonic sequence counter incremented each time a queue snapshot event arrives from Rust.
   int _queueEventSeq = 0;
+
+  /// Pending completers awaiting a queue snapshot event beyond a prior sequence number.
   final List<({int targetSeq, Completer<void> completer})> _queueEventWaiters =
       [];
 
+  /// Waits until a queue snapshot event arrives after [seqBefore], timing out safely after 2 seconds.
   Future<void> _waitForQueueEventAfter(int seqBefore) async {
     if (_isDisposed || _queueEventSeq > seqBefore) return;
     final completer = Completer<void>();
@@ -630,11 +701,13 @@ class MiniaudioPlayer<T> {
     _queueEventWaiters.add(entry);
     try {
       await completer.future.timeout(const Duration(seconds: 2));
-    } catch (_) {
+    } catch (e) {
       _queueEventWaiters.remove(entry);
+      MapLogger.warn('Timed out waiting for queue event after seq $seqBefore: $e');
     }
   }
 
+  /// Advances [_queueEventSeq] and completes any waiters satisfied by the new sequence number.
   void _notifyQueueEventReceived() {
     _queueEventSeq++;
     if (_queueEventWaiters.isEmpty) return;
@@ -649,6 +722,7 @@ class MiniaudioPlayer<T> {
     });
   }
 
+  /// Removes stale source and custom-provider entries that are no longer referenced by [PlayerState.queue].
   void _pruneSourceRegistryToCurrentQueue() {
     final activeIds = <int>{};
     final activeProviderStreamIds = <int>{..._managedProviderIds};
@@ -668,27 +742,47 @@ class MiniaudioPlayer<T> {
         .removeWhere((id, _) => !activeProviderStreamIds.contains(id));
   }
 
+  /// Active broadcast push-tap entries keyed by bus, format, and frame duration.
   final Map<_PushTapKey, _PushTapEntry> _pushTaps = {};
+
+  /// Currently open pull-mode [AudioTapBuffer] handles keyed by native tap ID.
   final Map<int, AudioTapBuffer> _openPullTaps = {};
+
+  /// Monotonic client key allocator for push audio tap subscriptions.
   int _nextTapClientKey = 1;
 
+  /// Effective sample rate in Hz configured at player construction.
   late final int _configuredSampleRate;
+
+  /// Effective channel count configured at player construction.
   late final int _configuredChannels;
+
+  /// Active Dart-side buffer recording session when recording into a [RecordingByteBuffer].
   _DartBufferRecordingSession<T>? _activeDartRecording;
+
+  /// Active container encoding used by the current native recording session.
   AudioFileFormat? _activeRecordingFormat;
+
+  /// Whether the active native recording session writes to Web OPFS.
   bool _activeRecordingIsOpfs = false;
+
+  /// Reentrancy guard preventing overlapping `startRecording` invocations.
   bool _isStartingRecording = false;
 
+  /// Closes and clears all internally managed [CustomByteProvider] instances.
   Future<void> _closeManagedProviders() async {
     if (_managedProviderIds.isEmpty) return;
     final ids = _managedProviderIds.toList(growable: false);
     _managedProviderIds.clear();
+    MapLogger.debug('Closing ${ids.length} managed custom byte providers');
     for (final id in ids) {
       final p = _customProviders.remove(id);
       if (p != null) {
         try {
           await p.close();
-        } catch (_) {}
+        } catch (e) {
+          MapLogger.warn('Failed to close managed provider $id: $e');
+        }
       }
     }
   }
@@ -733,6 +827,12 @@ class MiniaudioPlayer<T> {
       );
     }
     MapLogger.info('Initializing MiniaudioPlayer');
+    MapLogger.debug(
+      'MiniaudioPlayer config: sampleRate=${config.sampleRate}, channels=${config.channels}, '
+      'bufferSizeFrames=${config.bufferSizeFrames}, maxVoices=${config.maxVoices}, '
+      'initialQueue=${queue.length}, initialEffects=${effects.length}, '
+      'initialInputs=${inputs.length}',
+    );
     stream = PlayerStream<T>(this);
     state = PlayerState<T>(this);
 
@@ -806,12 +906,13 @@ class MiniaudioPlayer<T> {
   // Native Rust Event Dispatcher (Fine-Grained Active Stream Ingestion)
   // =========================================================================
 
-  /// Feeds a native Rust player event directly into [_onRustEvent] for
+  /// Feeds a native Rust player [event] directly into [_onRustEvent] for
   /// deterministic telemetry synchronization tests.
   @visibleForTesting
   void dispatchRustEventForTesting(rust_types.RustPlayerEvent event) =>
       _onRustEvent(event);
 
+  /// Processes a native Rust player [event], updating [state] and emitting to [stream].
   void _onRustEvent(rust_types.RustPlayerEvent event) {
     if (_isDisposed) return;
     switch (event) {
@@ -847,6 +948,9 @@ class MiniaudioPlayer<T> {
         }
       case rust_types.RustPlayerEvent_IsBuffering(:final field0):
         state._isBuffering = field0;
+        if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+          MapLogger.verbose('[EVENT:IS_BUFFERING] isBuffering -> $field0');
+        }
         stream._bufferingController.add(field0);
         if (state._buffer.isBuffering != field0) {
           final synced = Buffer(
@@ -860,11 +964,18 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_Position(:final field0):
         final pos = Duration(milliseconds: field0.toInt());
         state._position = pos;
+        if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+          MapLogger.verbose('[EVENT:POSITION] ${pos.inMilliseconds}ms');
+        }
         stream._positionController.add(pos);
       case rust_types.RustPlayerEvent_AudioInfo(:final field0):
         final info = AudioInfo.fromRust(field0);
         state._audioInfo = info;
         state._duration = info.duration;
+        MapLogger.debug(
+          '[EVENT:AUDIO_INFO] sampleRate=${info.sampleRate}, channels=${info.channels}, '
+          'durationMs=${info.duration?.inMilliseconds}',
+        );
         stream._audioInfoController.add(info);
         stream._durationController.add(info.duration);
       case rust_types.RustPlayerEvent_Buffer(:final field0):
@@ -878,6 +989,12 @@ class MiniaudioPlayer<T> {
             state._buffer.isBuffering != b.isBuffering;
         state._buffer = b;
         if (bufferChanged) {
+          if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+            MapLogger.verbose(
+              '[EVENT:BUFFER] start=${b.start.inMilliseconds}ms, '
+              'end=${b.end.inMilliseconds}ms, isBuffering=${b.isBuffering}',
+            );
+          }
           stream._bufferController.add(b);
         }
         if (state._isBuffering != field0.isBuffering) {
@@ -956,6 +1073,11 @@ class MiniaudioPlayer<T> {
           right: field0.right,
         );
         state._visualizer = vis;
+        if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+          MapLogger.verbose(
+            '[EVENT:VISUALIZER] rms=${vis.rms.toStringAsFixed(3)}, peak=${vis.peak.toStringAsFixed(3)}',
+          );
+        }
         stream._visualizerController.add(vis);
       case rust_types.RustPlayerEvent_OutputDevices(:final field0):
         final list = field0.map(_toAudioDevice).toList();
@@ -1064,12 +1186,18 @@ class MiniaudioPlayer<T> {
       case rust_types.RustPlayerEvent_RecordedDuration(:final field0):
         final d = Duration(milliseconds: field0.toInt());
         state._recordedDuration = d;
+        if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+          MapLogger.verbose('[EVENT:RECORDED_DURATION] ${d.inMilliseconds}ms');
+        }
         stream._recordedDurationController.add(d);
       case rust_types.RustPlayerEvent_IsDuckingActive(:final field0):
         state._isDuckingActive = field0;
         stream._isDuckingActiveController.add(field0);
       case rust_types.RustPlayerEvent_MicRmsLevel(:final field0):
         state._micRmsLevel = field0;
+        if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+          MapLogger.verbose('[EVENT:MIC_RMS] ${field0.toStringAsFixed(4)}');
+        }
         stream._micRmsLevelController.add(field0);
       case rust_types.RustPlayerEvent_VoiceCompleted(:final field0):
         stream._voiceCompletedController.add(field0);
@@ -1137,6 +1265,7 @@ class MiniaudioPlayer<T> {
             field0 >= 0 && field0 < state.queue.length ? field0 : null;
         final indexChanged = state._currentIndex != idx;
         state._currentIndex = idx;
+        MapLogger.debug('[EVENT:CURRENT_INDEX] currentIndex -> $idx');
         stream._currentIndexController.add(idx);
         stream._currentItemController.add(state.currentItem);
         if (indexChanged) {
@@ -1163,6 +1292,9 @@ class MiniaudioPlayer<T> {
             ? currentIndex
             : null;
         state._currentIndex = idx;
+        MapLogger.debug(
+          '[EVENT:QUEUE] Reconciled ${state._queue.length} items, currentIndex=$idx',
+        );
         stream._currentIndexController.add(idx);
         stream._queueController.add(state.queue);
         stream._currentItemController.add(state.currentItem);
@@ -1177,11 +1309,13 @@ class MiniaudioPlayer<T> {
         ):
         _onNeedMoreTracks(currentTrackId.toInt(), remainingTracks);
       case rust_types.RustPlayerEvent_Error(:final message, :final code):
+        MapLogger.error('[EVENT:ERROR] Native error (code=$code): $message');
         stream._errorsController
             .add(MiniaudioPlayerException(message, errorCode: code));
     }
   }
 
+  /// Services an asynchronous byte-read request [req] from Rust for a [CustomByteProvider] stream.
   void _onDartReadRequest(rust_types.RustDartReadRequest req) async {
     final provider = _customProviders[req.streamId];
     if (provider != null) {
@@ -1190,6 +1324,12 @@ class MiniaudioPlayer<T> {
         final isEof = bytes.isEmpty ||
             (provider.totalBytes != null &&
                 (req.offset.toInt() + bytes.length >= provider.totalBytes!));
+        if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+          MapLogger.verbose(
+            'DartReadRequest streamId=${req.streamId}, requestId=${req.requestId}, '
+            'offset=${req.offset}, read=${bytes.length}, isEof=$isEof',
+          );
+        }
         if (!_isDisposed) {
           _rustPlayer.respondDartReadRequest(
             requestId: req.requestId,
@@ -1198,6 +1338,9 @@ class MiniaudioPlayer<T> {
           );
         }
       } catch (e) {
+        MapLogger.error(
+          'DartReadRequest failed for streamId=${req.streamId}, requestId=${req.requestId}: $e',
+        );
         if (!_isDisposed) {
           _rustPlayer.respondDartReadRequest(
             requestId: req.requestId,
@@ -1206,12 +1349,23 @@ class MiniaudioPlayer<T> {
           );
         }
       }
+    } else {
+      MapLogger.warn(
+        'DartReadRequest received for unregistered streamId=${req.streamId} (requestId=${req.requestId})',
+      );
     }
   }
 
+  /// Resolves a platform-specific audio source [req] in Dart and returns the descriptor to Rust.
   void _onDartResolveRequest(rust_types.RustDartResolveRequest req) async {
+    MapLogger.debug(
+      'Resolving source in Dart: "${req.source}" (requestId=${req.requestId})',
+    );
     final norm = normalizePlatformAudioSourceUri(req.source);
     if (norm.hasError) {
+      MapLogger.warn(
+        'Source URI normalization failed for "${req.source}": ${norm.directErrorMessage}',
+      );
       if (!_isDisposed) {
         try {
           _rustPlayer.respondDartResolveRequest(
@@ -1221,7 +1375,11 @@ class MiniaudioPlayer<T> {
               message: norm.directErrorMessage!,
             ),
           );
-        } catch (_) {}
+        } catch (e) {
+          MapLogger.warn(
+            'Failed sending normalization error response for requestId=${req.requestId}: $e',
+          );
+        }
       }
       return;
     }
@@ -1243,7 +1401,11 @@ class MiniaudioPlayer<T> {
         if (_isDisposed) {
           try {
             await resolved.provider.close();
-          } catch (_) {}
+          } catch (e) {
+            MapLogger.warn(
+              'Failed closing custom stream provider after disposal (streamId=${resolved.streamId}): $e',
+            );
+          }
           return;
         }
         _customProviders[resolved.streamId] = resolved.provider;
@@ -1256,11 +1418,17 @@ class MiniaudioPlayer<T> {
         return;
       }
 
+      MapLogger.debug(
+        'Resolved source "${req.source}" as ${resolved.runtimeType} (requestId=${req.requestId})',
+      );
       _rustPlayer.respondDartResolveRequest(
         requestId: req.requestId,
         resolved: _toRustResolvedSource(resolved),
       );
     } catch (e) {
+      MapLogger.error(
+        'Failed resolving audio source "${req.source}" (requestId=${req.requestId}): $e',
+      );
       if (!_isDisposed) {
         try {
           _rustPlayer.respondDartResolveRequest(
@@ -1270,22 +1438,32 @@ class MiniaudioPlayer<T> {
               message: 'Failed resolving audio source "${req.source}": $e',
             ),
           );
-        } catch (_) {}
+        } catch (respondErr) {
+          MapLogger.warn(
+            'Failed sending resolve error response for requestId=${req.requestId}: $respondErr',
+          );
+        }
       }
     }
   }
 
-  /// Handles native Infinite Mix queue replenishment requests.
+  /// Handles native Infinite Mix queue replenishment requests for [currentTrackId] with [remainingTracks] left.
   void _onNeedMoreTracks(int currentTrackId, int remainingTracks) async {
     if (_infiniteMixProvider != null) {
       try {
         final threshold = state.infiniteMix.remainingTracksThreshold;
         final countToFetch = (threshold - remainingTracks).clamp(1, 10);
+        MapLogger.debug(
+          'InfiniteMix requesting $countToFetch tracks '
+          '(currentTrackId=$currentTrackId, remainingTracks=$remainingTracks)',
+        );
         final more = await _infiniteMixProvider!(countToFetch);
         if (more.isNotEmpty && !_isDisposed) {
           action.append(more);
         }
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.error('InfiniteMix provider callback failed: $e');
+      }
     }
   }
 
@@ -1306,7 +1484,7 @@ class MiniaudioPlayer<T> {
 
   /// Subscribes to a lock-free broadcast PCM stream for the specified audio bus.
   ///
-  /// Multiple listeners sharing the same `(source, format, frameDuration)` key share
+  /// Multiple listeners sharing the same ([source], [format], [frameDuration]) key share
   /// a single native SPSC-backed dispatcher stream and receive unmodifiable
   /// [AudioPcmChunk] views without redundant FFI serialization or copies. The bus
   /// automatically disables in the real-time engine when the last listener cancels.
@@ -1330,9 +1508,15 @@ class MiniaudioPlayer<T> {
     final key = (source: source, format: format, frameDurationMs: ms);
     final existing = _pushTaps[key];
     if (existing != null) {
+      MapLogger.debug(
+        'Reusing push audio tap stream (source=${source.name}, format=${format.name}, frameDurationMs=$ms)',
+      );
       return existing.stream;
     }
 
+    MapLogger.debug(
+      'Creating push audio tap stream (source=${source.name}, format=${format.name}, frameDurationMs=$ms)',
+    );
     final entry = _PushTapEntry(key);
     entry.controller = StreamController<AudioPcmChunk>.broadcast(
       onListen: () => _startPushTapEntry(entry),
@@ -1345,12 +1529,18 @@ class MiniaudioPlayer<T> {
     return entry.stream;
   }
 
+  /// Opens the native push audio tap stream for [entry] and forwards PCM chunks to listeners.
   void _startPushTapEntry(_PushTapEntry entry) {
     if (_isDisposed || entry.controller.isClosed) return;
     final gen = ++entry.generation;
     final clientKey = BigInt.from(_nextTapClientKey++);
     entry.activeClientKey = clientKey;
     entry.pendingStop = null;
+    MapLogger.debug(
+      'Starting native push audio tap (clientKey=$clientKey, '
+      'source=${entry.key.source.name}, format=${entry.key.format.name}, '
+      'frameDurationMs=${entry.key.frameDurationMs})',
+    );
 
     final nativeStream = _rustPlayer.openPushAudioTap(
       clientKey: clientKey,
@@ -1377,6 +1567,9 @@ class MiniaudioPlayer<T> {
         );
       },
       onError: (Object error, StackTrace st) {
+        MapLogger.error(
+          'Push audio tap stream error (clientKey=$clientKey): $error',
+        );
         if (_isDisposed || gen != entry.generation || entry.controller.isClosed) {
           return;
         }
@@ -1385,26 +1578,42 @@ class MiniaudioPlayer<T> {
     );
   }
 
+  /// Closes the native push audio tap subscription and stream handle associated with [entry].
   Future<void> _stopPushTapEntry(_PushTapEntry entry) async {
     ++entry.generation;
     final sub = entry.nativeSub;
     entry.nativeSub = null;
     final clientKey = entry.activeClientKey;
     entry.activeClientKey = null;
+    MapLogger.debug(
+      'Stopping native push audio tap (clientKey=$clientKey, '
+      'source=${entry.key.source.name}, format=${entry.key.format.name})',
+    );
 
     if (clientKey != null && !_isDisposed) {
       try {
         await _rustPlayer.closePushAudioTap(clientKey: clientKey);
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn(
+          'Failed closing native push audio tap (clientKey=$clientKey): $e',
+        );
+      }
     }
     if (sub != null) {
       try {
         await sub.cancel();
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn(
+          'Failed cancelling native push audio tap subscription (clientKey=$clientKey): $e',
+        );
+      }
     }
   }
 
-  /// Opens a zero-allocation reusable Pull buffer reading PCM frames directly from a bus.
+  /// Opens a zero-allocation reusable pull buffer reading PCM frames from [source].
+  ///
+  /// Allocates a client-side ring-read buffer with [capacityFrames] capacity using
+  /// sample encoding [format].
   Future<AudioTapBuffer> openAudioTapBuffer({
     AudioOutputSource source = AudioOutputSource.all,
     AudioTapFormat format = AudioTapFormat.float32,
@@ -1419,6 +1628,10 @@ class MiniaudioPlayer<T> {
       );
     }
 
+    MapLogger.debug(
+      'Opening pull AudioTapBuffer (source=${source.name}, format=${format.name}, '
+      'capacityFrames=$capacityFrames)',
+    );
     final info = await _rustPlayer.createPullAudioTap(
       source: source.value,
       format: format.value,
@@ -1426,7 +1639,11 @@ class MiniaudioPlayer<T> {
     if (_isDisposed) {
       try {
         await _rustPlayer.closePullAudioTap(tapId: info.tapId);
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn(
+          'Failed closing pull AudioTapBuffer ${info.tapId} during disposal: $e',
+        );
+      }
       throw StateError('MiniaudioPlayer was disposed while opening AudioTapBuffer');
     }
 
@@ -1439,8 +1656,13 @@ class MiniaudioPlayer<T> {
       capacityFrames: capacityFrames,
       onExplicitClose: (id) {
         _openPullTaps.remove(id);
+        MapLogger.debug('Closing pull AudioTapBuffer (tapId=$id)');
         if (!_isDisposed) {
-          unawaited(_rustPlayer.closePullAudioTap(tapId: id).catchError((_) {}));
+          unawaited(
+            _rustPlayer.closePullAudioTap(tapId: id).catchError((Object e) {
+              MapLogger.warn('Failed closing pull AudioTapBuffer $id: $e');
+            }),
+          );
         }
       },
     );
@@ -1448,11 +1670,17 @@ class MiniaudioPlayer<T> {
     return buf;
   }
 
+  /// Closes all open pull-mode and push-mode audio taps owned by this player.
   Future<void> _disposeAudioTaps() async {
+    MapLogger.debug(
+      'Disposing audio taps (pull=${_openPullTaps.length}, push=${_pushTaps.length})',
+    );
     for (final pull in _openPullTaps.values.toList(growable: false)) {
       try {
         pull.close();
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn('Failed closing pull AudioTapBuffer ${pull.tapId}: $e');
+      }
     }
     _openPullTaps.clear();
 
@@ -1460,12 +1688,16 @@ class MiniaudioPlayer<T> {
       ++entry.generation;
       try {
         await entry.nativeSub?.cancel();
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn('Failed cancelling push audio tap subscription: $e');
+      }
       entry.nativeSub = null;
       entry.activeClientKey = null;
       try {
         await entry.controller.close();
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn('Failed closing push audio tap controller: $e');
+      }
     }
     _pushTaps.clear();
   }
@@ -1495,23 +1727,29 @@ class MiniaudioPlayer<T> {
     if (activeRec != null) {
       try {
         await activeRec.stop(suppressThrowOnDispose: true);
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn('Failed stopping active Dart recording on dispose: $e');
+      }
     }
     await _disposeAudioTaps();
     await _closeManagedProviders();
     try {
       _rustPlayer.dispose();
-    } catch (_) {}
+    } catch (e) {
+      MapLogger.warn('Failed disposing native RustMiniaudioPlayer: $e');
+    }
     for (final p in _customProviders.values) {
       try {
         await p.close();
-      } catch (_) {}
+      } catch (e) {
+        MapLogger.warn('Failed closing custom byte provider on dispose: $e');
+      }
     }
     _customProviders.clear();
     await stream.dispose();
   }
 
-  // Model Mappers
+  /// Converts a native Rust device descriptor [dev] into an [AudioDevice].
   static AudioDevice _toAudioDevice(rust_types.RustAudioDevice dev) {
     final isAuto = dev.isAuto || dev.id == 'AUTO' || dev.id == 'auto';
     final hasResolvedName = isAuto &&
@@ -1527,6 +1765,7 @@ class MiniaudioPlayer<T> {
     );
   }
 
+  /// Converts a native Rust acoustic analysis result [res] into an [AudioAnalysisResult].
   static AudioAnalysisResult _toAnalysisResult(
     rust_types.RustAudioAnalysisResult res,
   ) {
@@ -1563,32 +1802,53 @@ class MiniaudioPlayer<T> {
   }
 }
 
+/// Composite lookup key identifying a shared push audio tap broadcast stream.
 typedef _PushTapKey = ({
   AudioOutputSource source,
   AudioTapFormat format,
   int frameDurationMs,
 });
 
+/// Shared state for a reference-counted push audio tap broadcast stream.
 final class _PushTapEntry {
+  /// Configuration key identifying this push tap stream.
   final _PushTapKey key;
+
+  /// Broadcast stream controller distributing decoded PCM chunks to Dart listeners.
   late final StreamController<AudioPcmChunk> controller;
+
+  /// Public wrapper stream returning [_AudioTapSubscription] instances on listen.
   late final Stream<AudioPcmChunk> stream;
+
+  /// Active native FFI event subscription while at least one listener is attached.
   StreamSubscription<rust_types.RustAudioTapChunk>? nativeSub;
+
+  /// Client registration key passed to Rust when opening the push tap.
   BigInt? activeClientKey;
+
+  /// In-flight stop future awaited by cancelling subscriptions to prevent races.
   Future<void>? pendingStop;
+
+  /// Monotonic generation counter guarding stale asynchronous tap callbacks.
   int generation = 0;
 
+  /// Creates a [_PushTapEntry] for [key].
   _PushTapEntry(this.key);
 }
 
+/// Broadcast [Stream] wrapper returning [_AudioTapSubscription] handles.
 final class _AudioTapStream extends Stream<AudioPcmChunk> {
+  /// Shared push tap entry backing this stream.
   final _PushTapEntry _entry;
 
+  /// Creates an [_AudioTapStream] backed by [_entry].
   _AudioTapStream(this._entry);
 
+  /// Always returns `true` because audio bus tap streams support multiple listeners.
   @override
   bool get isBroadcast => true;
 
+  /// Subscribes [onData], [onError], [onDone], and [cancelOnError] to the underlying broadcast stream.
   @override
   StreamSubscription<AudioPcmChunk> listen(
     void Function(AudioPcmChunk event)? onData, {
@@ -1606,12 +1866,18 @@ final class _AudioTapStream extends Stream<AudioPcmChunk> {
   }
 }
 
+/// Subscription wrapper awaiting pending native push-tap teardown upon [cancel].
 final class _AudioTapSubscription implements StreamSubscription<AudioPcmChunk> {
+  /// Shared push tap entry whose teardown future is awaited on cancel.
   final _PushTapEntry _entry;
+
+  /// Underlying broadcast stream subscription.
   final StreamSubscription<AudioPcmChunk> _inner;
 
+  /// Creates an [_AudioTapSubscription] wrapping [_inner] for [_entry].
   _AudioTapSubscription(this._entry, this._inner);
 
+  /// Cancels the subscription and awaits any in-flight native push tap teardown.
   @override
   Future<void> cancel() async {
     await _inner.cancel();
@@ -1621,25 +1887,32 @@ final class _AudioTapSubscription implements StreamSubscription<AudioPcmChunk> {
     }
   }
 
+  /// Replaces the data callback with [handleData].
   @override
   void onData(void Function(AudioPcmChunk data)? handleData) =>
       _inner.onData(handleData);
 
+  /// Replaces the error callback with [handleError].
   @override
   void onError(Function? handleError) => _inner.onError(handleError);
 
+  /// Replaces the done callback with [handleDone].
   @override
   void onDone(void Function()? handleDone) => _inner.onDone(handleDone);
 
+  /// Pauses event delivery until [resume] is called or [resumeSignal] completes.
   @override
   void pause([Future<void>? resumeSignal]) => _inner.pause(resumeSignal);
 
+  /// Resumes event delivery after a prior [pause].
   @override
   void resume() => _inner.resume();
 
+  /// Whether this subscription is currently paused.
   @override
   bool get isPaused => _inner.isPaused;
 
+  /// Returns a future completing with [futureValue] when the stream finishes.
   @override
   Future<E> asFuture<E>([E? futureValue]) => _inner.asFuture<E>(futureValue);
 }

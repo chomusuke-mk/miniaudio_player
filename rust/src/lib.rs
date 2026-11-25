@@ -32,7 +32,10 @@ use std::sync::atomic::AtomicI32;
 /// Global log level filter (0: none, 1: error, 2: warn, 3: info, 4: debug, 5: verbose).
 pub static LOG_LEVEL: AtomicI32 = AtomicI32::new(0);
 
-/// Diagnostic logging macro adhering to the global log level filter.
+/// Diagnostic logging macro adhering to the global [`LOG_LEVEL`] filter.
+///
+/// Emits a tagged message to `stderr` when `$level` does not exceed [`LOG_LEVEL`],
+/// formatting `$arg` via `format_args!`.
 #[macro_export]
 macro_rules! map_log {
     ($level:expr, $($arg:tt)*) => {

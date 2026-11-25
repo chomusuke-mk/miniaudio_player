@@ -5058,6 +5058,7 @@ extension RustResolvedSourcePatterns on RustResolvedSource {
 class RustResolvedSource_Path extends RustResolvedSource {
   const RustResolvedSource_Path({required this.path}) : super._();
 
+  /// Local filesystem path to the audio asset.
   final String path;
 
   /// Create a copy of RustResolvedSource
@@ -5125,6 +5126,7 @@ class _$RustResolvedSource_PathCopyWithImpl<$Res>
 class RustResolvedSource_Url extends RustResolvedSource {
   const RustResolvedSource_Url({required this.url}) : super._();
 
+  /// Resolved HTTP or HTTPS URL.
   final String url;
 
   /// Create a copy of RustResolvedSource
@@ -5194,9 +5196,16 @@ class RustResolvedSource_Fd extends RustResolvedSource {
       {required this.fd, required this.offset, this.length, this.hintExt})
       : super._();
 
+  /// Detached POSIX file descriptor whose ownership transfers to Rust.
   final int fd;
+
+  /// Starting byte offset within the file descriptor.
   final BigInt offset;
+
+  /// Optional byte length of the audio slice.
   final BigInt? length;
+
+  /// Optional format or file extension hint (e.g. `"mp3"`).
   final String? hintExt;
 
   /// Create a copy of RustResolvedSource
@@ -5283,7 +5292,10 @@ class RustResolvedSource_Bytes extends RustResolvedSource {
   const RustResolvedSource_Bytes({required this.data, this.hintExt})
       : super._();
 
+  /// Raw encoded audio bytes.
   final Uint8List data;
+
+  /// Optional format or file extension hint (e.g. `"flac"`).
   final String? hintExt;
 
   /// Create a copy of RustResolvedSource
@@ -5360,8 +5372,13 @@ class RustResolvedSource_CustomStream extends RustResolvedSource {
       {required this.streamId, this.totalBytes, this.hintExt})
       : super._();
 
+  /// Identifier of the registered custom byte stream.
   final int streamId;
+
+  /// Total byte length of the stream when known.
   final BigInt? totalBytes;
+
+  /// Optional format or file extension hint (e.g. `"ogg"`).
   final String? hintExt;
 
   /// Create a copy of RustResolvedSource
@@ -5445,7 +5462,10 @@ class RustResolvedSource_Error extends RustResolvedSource {
   const RustResolvedSource_Error({required this.code, required this.message})
       : super._();
 
+  /// Numeric error code describing the failure reason.
   final int code;
+
+  /// Human-readable error message.
   final String message;
 
   /// Create a copy of RustResolvedSource

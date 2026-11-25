@@ -5,7 +5,9 @@
 
 /// Universal channel matrix mixer and adapter performing ITU-R BS.775 upmixing and downmixing.
 pub struct ChannelMatrix {
+    /// Expected number of interleaved channels per input frame.
     channels_in: usize,
+    /// Target number of interleaved channels per output frame.
     channels_out: usize,
 }
 
@@ -20,10 +22,22 @@ impl ChannelMatrix {
         }
     }
 
-    /// Reconfigures input and output channel counts.
+    /// Reconfigures input (`channels_in`) and output (`channels_out`) channel counts.
     pub fn set_channels(&mut self, channels_in: usize, channels_out: usize) {
-        self.channels_in = channels_in.max(1);
-        self.channels_out = channels_out.max(1);
+        let ch_in = channels_in.max(1);
+        let ch_out = channels_out.max(1);
+        if self.channels_in != ch_in || self.channels_out != ch_out {
+            crate::map_log!(
+                4,
+                "[CH_MATRIX] Reconfigured channels: {} -> {} (was {} -> {})",
+                ch_in,
+                ch_out,
+                self.channels_in,
+                self.channels_out
+            );
+            self.channels_in = ch_in;
+            self.channels_out = ch_out;
+        }
     }
 
     /// Process interleaved frames from `input` into `output`.

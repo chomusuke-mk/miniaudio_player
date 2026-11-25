@@ -11,7 +11,7 @@ enum BitrateMode {
   /// Variable Bitrate (VBR).
   vbr;
 
-  /// Converts a native [rust_types.RustBitrateMode] into a [BitrateMode].
+  /// Converts a native `RustBitrateMode` [mode] into a [BitrateMode].
   static BitrateMode fromRust(rust_types.RustBitrateMode mode) =>
       switch (mode) {
         rust_types.RustBitrateMode.cbr => BitrateMode.cbr,
@@ -20,53 +20,59 @@ enum BitrateMode {
       };
 }
 
-/// Represents core technical audio information extracted at zero cost from
-/// the container and codec headers (sample rate, raw sample rate, channel count,
-/// bit depth, duration, nominal bitrate, bitrate mode, codec, container format,
-/// lossless flag, and file size).
+/// Core technical audio properties extracted at zero cost from container and codec headers.
+///
+/// Includes [sampleRate], [rawSampleRate], [channels], [bitsPerSample], [duration],
+/// [bitrate], [bitrateMode], [codec], [containerFormat], [lossless], and [fileSize].
 class AudioInfo {
-  /// Total duration of the audio track, or `null` if unknown or infinite (e.g. livestream).
+  /// Total duration of the audio track, or `null` if unknown or infinite (for example, a livestream).
   final Duration? duration;
 
-  /// Decoded output PCM audio sample rate in Hz (e.g. 44100, 48000, 88200, 352800).
+  /// Decoded output PCM audio sample rate in Hz (for example, `44100`, `48000`, `88200`, or `352800`).
   final int sampleRate;
 
-  /// Native stream sample rate in Hz before decimation when it differs from [sampleRate]
-  /// (e.g. `2822400` Hz for DSD64 where [sampleRate] is `352800` Hz PCM), or `null` otherwise.
+  /// Native stream sample rate in Hz before decimation when it differs from [sampleRate],
+  /// or `null` otherwise.
+  ///
+  /// For example, DSD64 has a [rawSampleRate] of `2822400` Hz and a decimated [sampleRate] of `352800` Hz PCM.
   final int? rawSampleRate;
 
-  /// Number of audio channels (e.g. 1 for Mono, 2 for Stereo).
+  /// Number of audio channels (for example, `1` for Mono or `2` for Stereo).
   final int channels;
 
-  /// Bit depth per sample (e.g. 16, 24, 32, or 1 for 1-bit DSD), or `null` for lossy codecs
+  /// Bit depth per sample (for example, `16`, `24`, `32`, or `1` for 1-bit DSD), or `null` for lossy codecs
   /// without a fixed PCM bit depth.
   final int? bitsPerSample;
 
   /// Average nominal bitrate of the track in bits per second (bps).
   final int bitrate;
 
-  /// Short container or codec format identifier (e.g. `"mp3"`, `"flac"`, `"wav"`, `"aac"`).
+  /// Short container or codec format identifier (for example, `"mp3"`, `"flac"`, `"wav"`, or `"aac"`),
+  /// or `null` if unspecified.
   final String? format;
 
-  /// Canonical codec name (e.g. `"MP3"`, `"FLAC"`, `"AAC"`, `"ALAC"`, `"Opus"`, `"Vorbis"`,
-  /// `"PCM"`, `"DSD"`, `"APE"`, `"WavPack"`).
+  /// Canonical codec name (for example, `"MP3"`, `"FLAC"`, `"AAC"`, `"ALAC"`, `"Opus"`, `"Vorbis"`,
+  /// `"PCM"`, `"DSD"`, `"APE"`, or `"WavPack"`).
   final String codec;
 
-  /// Canonical container format (e.g. `"MP3"`, `"FLAC"`, `"MP4"`, `"Ogg"`, `"WAV"`, `"RF64"`,
+  /// Canonical container format (for example, `"MP3"`, `"FLAC"`, `"MP4"`, `"Ogg"`, `"WAV"`, `"RF64"`,
   /// `"W64"`, `"RIFX"`, `"AIFF"`, `"CAF"`, `"Matroska"`, `"DSF"`, `"APE"`, `"WavPack"`,
-  /// `"ADTS"`, `"HLS"`).
+  /// `"ADTS"`, or `"HLS"`).
   final String containerFormat;
 
-  /// Whether the audio codec is lossless (`true` for PCM, FLAC, ALAC, WavPack, APE, DSD).
+  /// Whether the audio codec is lossless (`true` for PCM, FLAC, ALAC, WavPack, APE, and DSD).
   final bool lossless;
 
   /// Bitrate encoding mode ([BitrateMode.cbr], [BitrateMode.vbr], or [BitrateMode.unknown]).
   final BitrateMode bitrateMode;
 
-  /// Total file or stream size in bytes when known, or `null` for unbounded/live streams.
+  /// Total file or stream size in bytes when known, or `null` for unbounded or live streams.
   final int? fileSize;
 
   /// Creates an immutable [AudioInfo] instance.
+  ///
+  /// Requires [sampleRate], [channels], and [bitrate], with optional [duration], [rawSampleRate],
+  /// [bitsPerSample], [format], [codec], [containerFormat], [lossless], [bitrateMode], and [fileSize].
   const AudioInfo({
     this.duration,
     required this.sampleRate,
@@ -82,7 +88,7 @@ class AudioInfo {
     this.fileSize,
   });
 
-  /// Creates an [AudioInfo] from a native [rust_types.RustAudioInfo] struct.
+  /// Creates an [AudioInfo] from a native `RustAudioInfo` struct [r].
   factory AudioInfo.fromRust(rust_types.RustAudioInfo r) {
     final durMs = r.durationMs?.toInt();
     final dur =
@@ -111,6 +117,7 @@ class AudioInfo {
     );
   }
 
+  /// Compares this [AudioInfo] with [other] for value equality.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -129,6 +136,7 @@ class AudioInfo {
           bitrateMode == other.bitrateMode &&
           fileSize == other.fileSize;
 
+  /// Returns a hash code combining all technical audio properties.
   @override
   int get hashCode => Object.hash(
         duration,
@@ -145,6 +153,7 @@ class AudioInfo {
         fileSize,
       );
 
+  /// Returns a readable string summary of this [AudioInfo].
   @override
   String toString() =>
       'AudioInfo(duration: $duration, sampleRate: $sampleRate Hz'

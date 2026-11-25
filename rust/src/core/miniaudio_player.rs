@@ -72,11 +72,20 @@ impl Drop for MiniaudioPlayer {
 impl MiniaudioPlayer {
     /// Disposes underlying music and output managers, releasing hardware resources.
     pub fn dispose(&mut self) {
+        crate::map_log!(4, "[PLAYER] Disposing MiniaudioPlayer subsystems");
         self.music_manager.dispose();
         self.output_manager.dispose();
     }
 
     /// Creates and initializes the master `MiniaudioPlayer` engine with all modular domains.
+    ///
+    /// Configures `sample_rate`, `channels`, and `period_size` (falling back to `44100` Hz, `2`
+    /// channels, and `1024` frames when zero), initializes the voice pool with `max_voices` and
+    /// `max_ram_bytes`, and forwards `device_trigger` to [`OutputManager`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if [`MusicManager::new`] fails to initialize the dual streaming decks.
     pub fn new(
         sample_rate: u32,
         channels: u32,
@@ -89,7 +98,20 @@ impl MiniaudioPlayer {
         let ch = if channels > 0 { channels as usize } else { 2 };
         let period = if period_size > 0 { period_size } else { 1024 };
 
-        let music_manager = MusicManager::new(sr, ch as u32, period)?;
+        crate::map_log!(
+            3,
+            "[PLAYER] Initializing MiniaudioPlayer (sr={}, ch={}, period={}, max_voices={}, max_ram_bytes={:?})",
+            sr,
+            ch,
+            period,
+            max_voices,
+            max_ram_bytes
+        );
+
+        let music_manager = MusicManager::new(sr, ch as u32, period).map_err(|e| {
+            crate::map_log!(1, "[PLAYER] Failed to initialize MusicManager: {}", e);
+            e
+        })?;
         let music_dsp = DspProcessor::new(sr, ch);
         let inherit_dsp = DspProcessor::new(sr, ch);
         let effects_manager = EffectsManager::new(max_voices, max_ram_bytes, sr, ch);
@@ -122,18 +144,35 @@ impl MiniaudioPlayer {
         }))
     }
 
-    /// Sets the global ReplayGain operating mode (`0 = Disabled`, `1 = Track`, `2 = Forced`)
+    /// Sets the global ReplayGain operating `mode` (`0 = Disabled`, `1 = Track`, `2 = Forced`)
     /// and recalculates per-deck ReplayGain normalization cleanly.
     pub fn set_replay_gain_mode(&mut self, mode: u32) -> (f32, f32) {
         self.music_manager.inner.replay_gain_mode = mode;
-        self.recalculate_and_apply_replay_gain()
+        let eff = self.recalculate_and_apply_replay_gain();
+        crate::map_log!(
+            3,
+            "[PLAYER] ReplayGain mode updated (mode={}, effective_gain_db={}, peak={})",
+            mode,
+            eff.0,
+            eff.1
+        );
+        eff
     }
 
-    /// Sets the fallback or forced ReplayGain adjustment `(gain_db, peak)`
+    /// Sets the fallback or forced ReplayGain adjustment (`gain_db`, `peak`)
     /// and recalculates per-deck ReplayGain normalization cleanly.
     pub fn set_default_replay_gain(&mut self, gain_db: f32, peak: f32) -> (f32, f32) {
         self.music_manager.inner.default_replay_gain = (gain_db, peak);
-        self.recalculate_and_apply_replay_gain()
+        let eff = self.recalculate_and_apply_replay_gain();
+        crate::map_log!(
+            3,
+            "[PLAYER] Default ReplayGain updated (gain_db={}, peak={}, effective=({}, {}))",
+            gain_db,
+            peak,
+            eff.0,
+            eff.1
+        );
+        eff
     }
 
     /// Recalculates per-deck ReplayGain independently on Deck A and Deck B based on each deck's
@@ -149,7 +188,7 @@ impl MiniaudioPlayer {
         eff
     }
 
-    /// Renders one period of PCM frames across all active decks, effects, and microphone DSP,
+    /// Renders `frame_count` PCM frames across all active decks, effects, and microphone DSP,
     /// then dispatches symmetrically to all active outputs, disk recording, and visualizer.
     pub fn render_pcm(&mut self, frame_count: usize) {
         let sample_count = frame_count * self.channels;
@@ -233,7 +272,7 @@ impl MiniaudioPlayer {
     // Cross-Cutting Commands
     // =========================================================================
 
-    /// Sets the master music volume level.
+    /// Sets the master music `volume` level.
     #[inline]
     pub fn set_volume(&mut self, volume: f32) {
         self.music_dsp.set_volume(volume);

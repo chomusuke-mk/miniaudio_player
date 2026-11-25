@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:miniaudio_player_example/controllers/audio_analyzer_controller.dart';
-import 'package:miniaudio_player_example/widgets/common/acoustid_lookup_dialog.dart';
+import 'package:miniaudio_player_example/features/analyzer/controllers/audio_analyzer_controller.dart';
+import 'package:miniaudio_player_example/features/metadata/widgets/acoustid_lookup_dialog.dart';
 
 class _RealHttpOverrides extends HttpOverrides {}
 

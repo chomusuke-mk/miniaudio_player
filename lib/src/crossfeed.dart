@@ -6,13 +6,16 @@ class Crossfeed {
   /// Whether crossfeed processing is actively applied.
   final bool enabled;
 
-  /// Lowpass cutoff frequency in Hertz (typically 300.0 Hz to 2000.0 Hz).
+  /// Lowpass cutoff frequency in Hertz (typically `300.0` Hz to `2000.0` Hz).
   final double cutoffHz;
 
-  /// Crossfeed feed level in decibels (typically 1.0 dB to 15.0 dB).
+  /// Crossfeed feed level in decibels (typically `1.0` dB to `15.0` dB).
   final double feedDb;
 
   /// Creates an immutable [Crossfeed] configuration.
+  ///
+  /// Configures whether processing is [enabled], the lowpass [cutoffHz]
+  /// (`300.0` to `2000.0` Hz), and the crossfeed [feedDb] (`1.0` to `15.0` dB).
   const Crossfeed({
     this.enabled = false,
     this.cutoffHz = 700.0,
@@ -22,32 +25,36 @@ class Crossfeed {
         assert(feedDb >= 1.0 && feedDb <= 15.0,
             'feedDb must be between 1.0 and 15.0');
 
-  /// Completely disabled/bypassed crossfeed effect.
+  /// Completely disabled and bypassed crossfeed effect.
   static const Crossfeed off = Crossfeed(
     enabled: false,
     cutoffHz: 700.0,
     feedDb: 4.5,
   );
 
-  /// Moffat-Bauer standard crossfeed curve (700 Hz cutoff, 4.5 dB feed).
+  /// Moffat-Bauer standard crossfeed curve (`700` Hz cutoff, `4.5` dB feed).
   ///
-  /// The standard default BS2B curve providing natural stereo blending for general headphone listening.
+  /// Provides the standard BS2B curve for natural stereo blending during
+  /// general headphone listening.
   static const Crossfeed moffatBauer = Crossfeed(
     enabled: true,
     cutoffHz: 700.0,
     feedDb: 4.5,
   );
 
-  /// Chu Moy classic headphone crossfeed curve (700 Hz cutoff, 6.0 dB feed).
+  /// Chu Moy classic headphone crossfeed curve (`700` Hz cutoff, `6.0` dB feed).
   ///
-  /// A slightly stronger crossfeed effect popular in DIY headphone amplifiers.
+  /// Provides a slightly stronger crossfeed effect popular in DIY headphone
+  /// amplifiers.
   static const Crossfeed chuMoy = Crossfeed(
     enabled: true,
     cutoffHz: 700.0,
     feedDb: 6.0,
   );
 
-  /// Creates a copy of this [Crossfeed] with modified parameters.
+  /// Returns a copy of this [Crossfeed] with modified parameters.
+  ///
+  /// Replaces [enabled], [cutoffHz], and [feedDb] when non-`null`.
   Crossfeed copyWith({
     bool? enabled,
     double? cutoffHz,
@@ -60,6 +67,7 @@ class Crossfeed {
     );
   }
 
+  /// Returns `true` if [other] is a [Crossfeed] with identical settings.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -69,9 +77,11 @@ class Crossfeed {
           cutoffHz == other.cutoffHz &&
           feedDb == other.feedDb;
 
+  /// Returns a hash code derived from [enabled], [cutoffHz], and [feedDb].
   @override
   int get hashCode => Object.hash(enabled, cutoffHz, feedDb);
 
+  /// Returns a human-readable string representation of this [Crossfeed].
   @override
   String toString() =>
       'Crossfeed(enabled: $enabled, cutoffHz: $cutoffHz, feedDb: $feedDb)';

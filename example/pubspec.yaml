@@ -16,6 +16,7 @@ dependencies:
   path_provider: ^2.1.6
   http: ^1.6.0
   open_file: ^4.0.0
+  material_ui: 1.11.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

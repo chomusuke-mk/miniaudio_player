@@ -307,11 +307,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RustHttpHeader>? dco_decode_opt_list_rust_http_header(dynamic raw);
 
   @protected
-  (List<RustAudioDevice>, List<RustAudioDevice>)
-      dco_decode_record_list_rust_audio_device_list_rust_audio_device(
-          dynamic raw);
-
-  @protected
   RustAnalysisConfig dco_decode_rust_analysis_config(dynamic raw);
 
   @protected
@@ -364,9 +359,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustCrossfeedConfig dco_decode_rust_crossfeed_config(dynamic raw);
-
-  @protected
-  RustCueConfig dco_decode_rust_cue_config(dynamic raw);
 
   @protected
   RustCustomTagField dco_decode_rust_custom_tag_field(dynamic raw);
@@ -445,9 +437,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustVisualizerData dco_decode_rust_visualizer_data(dynamic raw);
-
-  @protected
-  RustVoiceStealingPolicy dco_decode_rust_voice_stealing_policy(dynamic raw);
 
   @protected
   RustWavFormat dco_decode_rust_wav_format(dynamic raw);
@@ -787,11 +776,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (List<RustAudioDevice>, List<RustAudioDevice>)
-      sse_decode_record_list_rust_audio_device_list_rust_audio_device(
-          SseDeserializer deserializer);
-
-  @protected
   RustAnalysisConfig sse_decode_rust_analysis_config(
       SseDeserializer deserializer);
 
@@ -852,9 +836,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   RustCrossfeedConfig sse_decode_rust_crossfeed_config(
       SseDeserializer deserializer);
-
-  @protected
-  RustCueConfig sse_decode_rust_cue_config(SseDeserializer deserializer);
 
   @protected
   RustCustomTagField sse_decode_rust_custom_tag_field(
@@ -949,10 +930,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustVisualizerData sse_decode_rust_visualizer_data(
-      SseDeserializer deserializer);
-
-  @protected
-  RustVoiceStealingPolicy sse_decode_rust_voice_stealing_policy(
       SseDeserializer deserializer);
 
   @protected
@@ -1301,11 +1278,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<RustHttpHeader>? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_list_rust_audio_device_list_rust_audio_device(
-      (List<RustAudioDevice>, List<RustAudioDevice>) self,
-      SseSerializer serializer);
-
-  @protected
   void sse_encode_rust_analysis_config(
       RustAnalysisConfig self, SseSerializer serializer);
 
@@ -1374,9 +1346,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_crossfeed_config(
       RustCrossfeedConfig self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_rust_cue_config(RustCueConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_custom_tag_field(
@@ -1479,10 +1448,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_rust_visualizer_data(
       RustVisualizerData self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_rust_voice_stealing_policy(
-      RustVoiceStealingPolicy self, SseSerializer serializer);
 
   @protected
   void sse_encode_rust_wav_format(RustWavFormat self, SseSerializer serializer);

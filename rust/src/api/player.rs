@@ -31,8 +31,10 @@ use crate::sync::{lock_unpoisoned, read_unpoisoned, write_unpoisoned};
 
 use super::types::*;
 
+/// Bridges core tap chunk broadcasts into a Flutter Rust Bridge [`StreamSink`].
 #[flutter_rust_bridge::frb(ignore)]
 struct FrbTapChunkSink {
+    /// Active FRB stream sink delivering [`RustAudioTapChunk`] payloads to Dart.
     sink: StreamSink<RustAudioTapChunk>,
 }
 
@@ -52,45 +54,74 @@ impl crate::core::tap::TapChunkSink for FrbTapChunkSink {
     }
 }
 
+/// Sentinel value representing an uninitialized signed telemetry register.
 #[flutter_rust_bridge::frb(ignore)]
 const SENTINEL_NONE: i64 = i64::MIN;
+/// Encoded atomic representation for a `false` boolean telemetry flag.
 const OPT_BOOL_FALSE: u8 = 1;
+/// Encoded atomic representation for a `true` boolean telemetry flag.
 const OPT_BOOL_TRUE: u8 = 2;
 
+/// Parses a wire integer `format` code into a [`RecordingEncoding`].
+///
+/// # Errors
+///
+/// Returns an error string if `format` does not map to a supported recording encoding.
 #[flutter_rust_bridge::frb(ignore)]
 fn parse_recording_format(format: i32) -> Result<RecordingEncoding, String> {
     RecordingEncoding::from_wire_code(format)
 }
 
+/// Encodes a boolean `v` into its atomic register representation (`OPT_BOOL_TRUE` or `OPT_BOOL_FALSE`).
 #[inline]
 fn encode_opt_bool(v: bool) -> u8 {
     if v { OPT_BOOL_TRUE } else { OPT_BOOL_FALSE }
 }
 
+/// Cached complex non-atomic telemetry payloads used for change deduplication.
 #[flutter_rust_bridge::frb(ignore)]
 #[derive(Default)]
 struct ComplexTelemetryCache {
+    /// Last emitted ReplayGain `(gain_db_bits, peak_bits)` pair.
     replay_gain: Option<(u32, u32)>,
+    /// Last emitted audio metadata payload.
     metadata: Option<RustAudioMetadata>,
+    /// Last emitted technical audio stream info payload.
     audio_info: Option<RustAudioInfo>,
+    /// Last emitted visualizer spectrum and loudness snapshot.
     visualizer: Option<RustVisualizerData>,
 }
 
+/// Lock-free (for scalar fields) deduplication filter preventing redundant telemetry emissions.
 #[flutter_rust_bridge::frb(ignore)]
 struct AtomicTelemetryFilter {
+    /// Last emitted playback state code.
     state: AtomicI64,
+    /// Last emitted playback position in milliseconds.
     pos: AtomicI64,
+    /// Last emitted playlist queue index.
     index: AtomicI64,
+    /// Last emitted buffered range start timestamp in milliseconds.
     buffered_start: AtomicI64,
+    /// Last emitted buffered range end timestamp in milliseconds.
     buffered_end: AtomicI64,
+    /// Last emitted `IsBuffering` flag.
     is_buffering: AtomicU8,
+    /// Last emitted `Buffer.is_buffering` flag.
     buffer_is_buffering: AtomicU8,
+    /// Last emitted crossfade state flag.
     is_xfading: AtomicU8,
+    /// Last emitted recording active flag.
     is_recording: AtomicU8,
+    /// Last emitted recorded duration in milliseconds.
     recorded_duration: AtomicU64,
+    /// Last emitted sidechain ducking active flag.
     is_ducking: AtomicU8,
+    /// Last emitted `IsPlaying` flag.
     is_playing: AtomicU8,
+    /// Last emitted active sound effect voice count.
     active_voices: AtomicI64,
+    /// Mutex-guarded cache for structured telemetry payloads.
     complex: Mutex<ComplexTelemetryCache>,
 }
 
@@ -118,6 +149,7 @@ impl Default for AtomicTelemetryFilter {
 
 #[flutter_rust_bridge::frb(ignore)]
 impl AtomicTelemetryFilter {
+    /// Resets all atomic and cached telemetry state back to initial baseline defaults.
     fn reset(&self) {
         self.state.store(0, Ordering::Release);
         self.pos.store(0, Ordering::Release);
@@ -136,22 +168,26 @@ impl AtomicTelemetryFilter {
         *lock_unpoisoned(&self.complex) = ComplexTelemetryCache::default();
     }
 
+    /// Updates `slot` with encoded `val` and returns `true` if the boolean value changed.
     #[inline]
     fn should_emit_opt_bool(slot: &AtomicU8, val: bool) -> bool {
         let encoded = encode_opt_bool(val);
         slot.swap(encoded, Ordering::AcqRel) != encoded
     }
 
+    /// Updates `slot` with `val` and returns `true` if the signed integer value changed.
     #[inline]
     fn should_emit_i64(slot: &AtomicI64, val: i64) -> bool {
         slot.swap(val, Ordering::AcqRel) != val
     }
 
+    /// Updates `slot` with `val` and returns `true` if the unsigned integer value changed.
     #[inline]
     fn should_emit_u64(slot: &AtomicU64, val: u64) -> bool {
         slot.swap(val, Ordering::AcqRel) != val
     }
 
+    /// Evaluates whether `event` represents a state change that should be emitted to Dart.
     fn should_emit(&self, event: &RustPlayerEvent) -> bool {
         match event {
             RustPlayerEvent::PlaybackState(s) => Self::should_emit_i64(&self.state, *s as i64),
@@ -246,17 +282,22 @@ impl AtomicTelemetryFilter {
     }
 }
 
+/// Internal stream sink and pre-subscription queue protected by `EventReporter::sink_state`.
 #[flutter_rust_bridge::frb(ignore)]
 #[derive(Default)]
 struct EventSinkState {
+    /// Active Flutter Rust Bridge stream sink when subscribed.
     sink: Option<StreamSink<RustPlayerEvent>>,
+    /// Buffered events accumulated before a sink is attached.
     pending: Vec<RustPlayerEvent>,
 }
 
 /// Dispatches engine events to the Flutter Rust Bridge stream sink with deduplication filtering.
 #[derive(Clone)]
 pub struct EventReporter {
+    /// Synchronized sink handle and pending pre-subscription buffer.
     sink_state: Arc<Mutex<EventSinkState>>,
+    /// Atomic telemetry deduplication filter shared across threads.
     filter: Arc<AtomicTelemetryFilter>,
 }
 
@@ -269,21 +310,29 @@ impl EventReporter {
         }
     }
 
-    /// Attaches an active Flutter Rust Bridge stream sink, flushing any queued events atomically.
+    /// Attaches an active Flutter Rust Bridge stream `sink`, flushing any queued events atomically.
     pub fn set_sink(&self, sink: StreamSink<RustPlayerEvent>) {
         let mut state = lock_unpoisoned(&self.sink_state);
+        let pending_count = state.pending.len();
         for ev in state.pending.drain(..) {
             let _ = sink.add(ev);
         }
         state.sink = Some(sink);
+        map_log!(
+            4,
+            "[EVENT] Attached event stream sink (flushed_pending={})",
+            pending_count
+        );
     }
 
     /// Detaches the active stream sink.
     pub fn clear_sink(&self) {
         let mut state = lock_unpoisoned(&self.sink_state);
         state.sink = None;
+        map_log!(4, "[EVENT] Cleared event stream sink");
     }
 
+    /// Filters `events` through the deduplication filter and pushes them into `state`.
     fn push_filtered_events<I>(&self, state: &mut EventSinkState, events: I)
     where
         I: IntoIterator<Item = RustPlayerEvent>,
@@ -300,7 +349,7 @@ impl EventReporter {
         }
     }
 
-    /// Atomically evaluates deduplication filters and emits an ordered sequence of events
+    /// Atomically evaluates deduplication filters and emits an ordered sequence of `events`
     /// under `sink_state`, guaranteeing strict cross-thread event ordering.
     pub(crate) fn emit_batch<I>(&self, events: I)
     where
@@ -310,8 +359,8 @@ impl EventReporter {
         self.push_filtered_events(&mut state, events);
     }
 
-    /// Emits edge-triggered notices unconditionally and conditionally emits level-triggered
-    /// snapshot events only if `snapshots` has not been republished since `read_seq`,
+    /// Emits `edge_events` unconditionally and conditionally emits level-triggered
+    /// `snapshot_events` only if `snapshots` has not been republished since `read_seq`,
     /// eliminating TOCTOU stale overwrites against synchronous action emissions.
     pub(crate) fn emit_snapshot_tick<E, S>(
         &self,
@@ -333,7 +382,7 @@ impl EventReporter {
         true
     }
 
-    /// Atomically resets telemetry deduplication caches and emits initial baseline events.
+    /// Atomically resets telemetry deduplication caches and emits initial baseline `events`.
     pub(crate) fn reset_and_emit_batch<I>(&self, events: I)
     where
         I: IntoIterator<Item = RustPlayerEvent>,
@@ -343,7 +392,7 @@ impl EventReporter {
         self.push_filtered_events(&mut state, events);
     }
 
-    /// Emits an event to Dart if it passes the deduplication filter.
+    /// Emits a single `event` to Dart if it passes the deduplication filter.
     pub fn emit(&self, event: RustPlayerEvent) {
         self.emit_batch(std::iter::once(event));
     }
@@ -351,17 +400,29 @@ impl EventReporter {
 
 /// Primary native audio engine instance exposed to Dart via Flutter Rust Bridge.
 pub struct RustMiniaudioPlayer {
+    /// Handle to the dedicated engine actor thread and shared lock-free snapshots.
     engine: EngineActorHandle,
+    /// Asynchronous playback and track-transition coordinator.
     coordinator: ControlCoordinator,
+    /// Hardware device topology supervisor for multi-output, multi-input, and recording.
     hw: HardwareDeviceSupervisor,
+    /// Deduplicated event dispatcher streaming updates to Dart.
     reporter: EventReporter,
+    /// Registry of active `CustomDartByteSource` streams awaiting read responses.
     custom_registry: CustomSourceRegistry,
+    /// Registry of pending Dart-side source resolution requests.
     resolve_registry: Arc<DartResolveRegistry>,
+    /// Shared flag signaling background monitor and watcher threads to stay alive.
     monitor_running: Arc<AtomicBool>,
+    /// Join handle for the periodic telemetry polling thread.
     monitor_thread: Mutex<Option<JoinHandle<()>>>,
+    /// Condition variable trigger waking the hardware device watcher on hot-swap or disconnect.
     device_trigger: Arc<(Mutex<bool>, Condvar)>,
+    /// Join handle for the background hardware device watcher thread.
     watcher_thread: Mutex<Option<JoinHandle<()>>>,
+    /// Atomic flag controlling whether parsed metadata payloads are emitted to Dart.
     metadata_enabled: Arc<AtomicBool>,
+    /// Idempotent disposal guard ensuring cleanup runs at most once.
     disposed: AtomicBool,
 }
 
@@ -374,12 +435,12 @@ impl Drop for RustMiniaudioPlayer {
     }
 }
 
+/// Emits an ordered batch of track-transition events from `snap` via `reporter`,
+/// optionally including parsed metadata when `meta_enabled` is true.
 fn emit_track_transition_core(
     reporter: &EventReporter,
     meta_enabled: bool,
-    emit_queue: Option<&dyn Fn()>,
     snap: TrackTransitionSnapshot,
-    emit_shuffle: bool,
 ) {
     let mut events = Vec::with_capacity(13);
     if snap.queue_changed {
@@ -388,8 +449,6 @@ fn emit_track_transition_core(
                 queue: queue_ids,
                 current_index: snap.cur_idx as i32,
             });
-        } else if let Some(cb) = emit_queue {
-            cb();
         }
     }
     if let Some((gain_db, peak)) = snap.replay_gain {
@@ -398,7 +457,7 @@ fn emit_track_transition_core(
             peak,
         }));
     }
-    if emit_shuffle || snap.emit_shuffle {
+    if snap.emit_shuffle {
         events.push(RustPlayerEvent::IsShuffled(snap.is_shuffled));
     }
     events.push(RustPlayerEvent::CurrentIndex(snap.cur_idx as i32));
@@ -427,7 +486,12 @@ fn emit_track_transition_core(
 }
 
 impl RustMiniaudioPlayer {
-    /// Initializes and boots the native miniaudio engine, DSP pipeline, and mixer.
+    /// Initializes and boots the native miniaudio engine, DSP pipeline, and mixer
+    /// using `config`, `sample_rate`, `channels`, `period_size`, and `initial_outputs`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor or initial audio outputs fail to initialize.
     #[flutter_rust_bridge::frb(sync)]
     pub fn new(
         config: RustPlayerConfig,
@@ -436,11 +500,20 @@ impl RustMiniaudioPlayer {
         period_size: u32,
         initial_outputs: Vec<RustAudioOutput>,
     ) -> Result<RustMiniaudioPlayer, String> {
+        map_log!(
+            3,
+            "[API:INIT] Creating RustMiniaudioPlayer (sr={}, ch={}, period={}, outputs={}, max_voices={})",
+            sample_rate,
+            channels,
+            period_size,
+            initial_outputs.len(),
+            config.max_voices
+        );
         crate::sync::init_wasm_thread_spawner();
         let device_trigger = Arc::new((Mutex::new(true), Condvar::new()));
         #[cfg(target_arch = "wasm32")]
         crate::bridge::ffi::register_web_device_trigger(device_trigger.clone());
-        let (engine, notify_rx, hint_rx) = EngineActorHandle::spawn(
+        let (engine, notify_rx, hint_rx) = match EngineActorHandle::spawn(
             sample_rate,
             channels,
             period_size,
@@ -450,7 +523,13 @@ impl RustMiniaudioPlayer {
             config.pause_on_device_change,
             config.visualizer_source,
             initial_outputs.clone(),
-        )?;
+        ) {
+            Ok(handles) => handles,
+            Err(e) => {
+                map_log!(1, "[API:INIT] EngineActorHandle::spawn failed: {}", e);
+                return Err(e);
+            }
+        };
 
         let reporter = EventReporter::new();
         reporter.emit(RustPlayerEvent::Outputs(initial_outputs));
@@ -488,9 +567,7 @@ impl RustMiniaudioPlayer {
                     emit_track_transition_core(
                         &coord_reporter,
                         coord_meta.load(Ordering::Relaxed),
-                        None,
                         snap,
-                        false,
                     );
                 })
             },
@@ -781,6 +858,10 @@ impl RustMiniaudioPlayer {
                     }
                 }
             })
+            .map_err(|e| {
+                map_log!(2, "[WATCHER] Failed to spawn device watcher thread: {}", e);
+                e
+            })
             .ok();
 
         let worker_snapshots = engine.snapshots().clone();
@@ -830,6 +911,12 @@ impl RustMiniaudioPlayer {
                         });
                     }
                     RtEngineNotice::RecordingError { message, code } => {
+                        map_log!(
+                            1,
+                            "[API:REC] Recording error received from engine (code={}): {}",
+                            code,
+                            message
+                        );
                         edge_events.push(RustPlayerEvent::IsRecording(false));
                         edge_events.push(RustPlayerEvent::RecordingState {
                             is_recording: false,
@@ -995,7 +1082,18 @@ impl RustMiniaudioPlayer {
                     }
                 }
             })
+            .map_err(|e| {
+                map_log!(2, "[TELEMETRY] Failed to spawn telemetry monitor thread: {}", e);
+                e
+            })
             .ok();
+
+        map_log!(
+            3,
+            "[API:INIT] RustMiniaudioPlayer ready (watcher_active={}, monitor_active={})",
+            watcher_thread.is_some(),
+            monitor_thread.is_some()
+        );
 
         Ok(RustMiniaudioPlayer {
             engine,
@@ -1013,6 +1111,7 @@ impl RustMiniaudioPlayer {
         })
     }
 
+    /// Wakes the background hardware device watcher thread to perform an immediate scan.
     fn notify_device_watcher(&self) {
         let (lock, cvar) = &*self.device_trigger;
         let mut flag = lock_unpoisoned(lock);
@@ -1020,11 +1119,16 @@ impl RustMiniaudioPlayer {
         cvar.notify_all();
     }
 
-    /// Subscribes a Dart StreamSink to real-time engine events and telemetry updates.
+    /// Subscribes a Dart `StreamSink` (`sink`) to real-time engine events and telemetry updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string only if attaching or initializing the stream fails.
     pub fn subscribe_events(
         &self,
         sink: StreamSink<RustPlayerEvent>,
     ) -> Result<(), String> {
+        map_log!(4, "[API:EVENTS] subscribe_events() attaching Dart sink");
         self.reporter.set_sink(sink);
 
         let snap = self.engine.snapshots();
@@ -1038,10 +1142,12 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
+    /// Emits a single `event` via the deduplicated [`EventReporter`].
     fn emit_event(&self, event: RustPlayerEvent) {
         self.reporter.emit(event);
     }
 
+    /// Snapshots the active queue IDs and current index and emits a `Queue` event.
     fn emit_queue(&self) {
         if let Ok((queue, current_index)) = self.engine.exec(|ply| snapshot_queue_ids(ply)) {
             self.emit_event(RustPlayerEvent::Queue {
@@ -1051,6 +1157,7 @@ impl RustMiniaudioPlayer {
         }
     }
 
+    /// Snapshots the active queue and emits it together with `trailing` events in a single atomic batch.
     fn emit_queue_and_index<const N: usize>(&self, trailing: [RustPlayerEvent; N]) {
         let mut batch = Vec::with_capacity(1 + N);
         if let Ok((queue, current_index)) = self.engine.exec(|ply| snapshot_queue_ids(ply)) {
@@ -1067,8 +1174,12 @@ impl RustMiniaudioPlayer {
     // Transport & Playback Methods
     // =========================================================================
 
-    /// Universal playback command: starts, resumes, or switches tracks by ID or position,
-    /// optionally applying shuffle and/or seeking to an initial offset.
+    /// Universal playback command: starts, resumes, or switches tracks by `id` or `position`,
+    /// optionally toggling `shuffled` mode and/or seeking to `seek_ms`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the coordinator fails to enqueue or start the requested playback.
     pub fn play(
         &self,
         id: Option<i64>,
@@ -1076,10 +1187,22 @@ impl RustMiniaudioPlayer {
         shuffled: Option<bool>,
         seek_ms: Option<i64>,
     ) -> Result<(), String> {
+        map_log!(
+            4,
+            "[API:PLAY] play(id={:?}, position={:?}, shuffled={:?}, seek_ms={:?})",
+            id,
+            position,
+            shuffled,
+            seek_ms
+        );
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        let _ = self
+        if let Err(e) = self
             .coordinator
-            .play(id, position, shuffled, seek_ms, include_meta)?;
+            .play(id, position, shuffled, seek_ms, include_meta)
+        {
+            map_log!(1, "[API:PLAY] play() failed: {}", e);
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -1087,17 +1210,22 @@ impl RustMiniaudioPlayer {
     pub fn pause(&self) {
         map_log!(3, "[NATIVE:PAUSE:START] pause() requested from Dart. Cancelling pending opens and dispatching to engine actor...");
         let t0 = Instant::now();
-        if let Ok((state, is_xfading)) = self.coordinator.pause() {
-            map_log!(
-                3,
-                "[NATIVE:PAUSE:DONE] pause() completed in {}ms. Emitting events...",
-                t0.elapsed().as_millis()
-            );
-            self.reporter.emit_batch([
-                RustPlayerEvent::PlaybackState(state),
-                RustPlayerEvent::IsPlaying(false),
-                RustPlayerEvent::IsCrossfading(is_xfading),
-            ]);
+        match self.coordinator.pause() {
+            Ok((state, is_xfading)) => {
+                map_log!(
+                    3,
+                    "[NATIVE:PAUSE:DONE] pause() completed in {}ms. Emitting events...",
+                    t0.elapsed().as_millis()
+                );
+                self.reporter.emit_batch([
+                    RustPlayerEvent::PlaybackState(state),
+                    RustPlayerEvent::IsPlaying(false),
+                    RustPlayerEvent::IsCrossfading(is_xfading),
+                ]);
+            }
+            Err(e) => {
+                map_log!(2, "[API:PAUSE] pause() failed: {}", e);
+            }
         }
     }
 
@@ -1105,27 +1233,42 @@ impl RustMiniaudioPlayer {
     pub fn stop(&self) {
         map_log!(3, "[NATIVE:STOP:START] stop() requested from Dart. Cancelling pending opens and dispatching to engine actor...");
         let t0 = Instant::now();
-        if let Ok((state, is_xfading)) = self.coordinator.stop() {
-            map_log!(
-                3,
-                "[NATIVE:STOP:DONE] stop() completed in {}ms. Emitting events...",
-                t0.elapsed().as_millis()
-            );
-            self.reporter.emit_batch([
-                RustPlayerEvent::PlaybackState(state),
-                RustPlayerEvent::Position(0),
-                RustPlayerEvent::IsPlaying(false),
-                RustPlayerEvent::IsCrossfading(is_xfading),
-                RustPlayerEvent::Visualizer(RustVisualizerData::default()),
-            ]);
+        match self.coordinator.stop() {
+            Ok((state, is_xfading)) => {
+                map_log!(
+                    3,
+                    "[NATIVE:STOP:DONE] stop() completed in {}ms. Emitting events...",
+                    t0.elapsed().as_millis()
+                );
+                self.reporter.emit_batch([
+                    RustPlayerEvent::PlaybackState(state),
+                    RustPlayerEvent::Position(0),
+                    RustPlayerEvent::IsPlaying(false),
+                    RustPlayerEvent::IsCrossfading(is_xfading),
+                    RustPlayerEvent::Visualizer(RustVisualizerData::default()),
+                ]);
+            }
+            Err(e) => {
+                map_log!(2, "[API:STOP] stop() failed: {}", e);
+            }
         }
     }
 
-    /// Seeks to the specified position in milliseconds within the current track.
+    /// Seeks to `position_ms` milliseconds within the current track.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if seeking fails or the engine actor is unavailable.
     pub fn seek(&self, position_ms: i64) -> Result<(), String> {
         map_log!(3, "[NATIVE:SEEK:START] seek({}ms) requested. Cancelling stale auto-advance and dispatching to engine actor...", position_ms);
         let t0 = Instant::now();
-        let (cur_idx, state, is_playing, is_xfading) = self.coordinator.seek(position_ms)?;
+        let (cur_idx, state, is_playing, is_xfading) = match self.coordinator.seek(position_ms) {
+            Ok(res) => res,
+            Err(e) => {
+                map_log!(1, "[API:SEEK] seek({}ms) failed: {}", position_ms, e);
+                return Err(e);
+            }
+        };
         map_log!(
             3,
             "[NATIVE:SEEK:DONE] seek() completed in {}ms. Emitting events...",
@@ -1145,6 +1288,7 @@ impl RustMiniaudioPlayer {
     // Queue Management Methods
     // =========================================================================
 
+    /// Constructs a [`CustomSourceFactory`] wired to `reporter` and `custom_registry`.
     fn build_custom_source_factory(
         reporter: &EventReporter,
         custom_registry: &CustomSourceRegistry,
@@ -1167,14 +1311,23 @@ impl RustMiniaudioPlayer {
     }
 
     /// Replaces the entire playback queue with `queue` without starting playback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if updating the queue in the engine fails.
     pub fn set_queue(&self, queue: Vec<RustAudioSource>) -> Result<(), String> {
+        map_log!(3, "[API:QUEUE] set_queue(len={})", queue.len());
         let core_queue: Vec<AudioSourceCore> = queue.into_iter().map(Into::into).collect();
         self.custom_registry.abort_all();
         let custom_factory =
             Self::build_custom_source_factory(&self.reporter, &self.custom_registry);
-        let (g, p) = self
-            .coordinator
-            .set_queue(core_queue, custom_factory)?;
+        let (g, p) = match self.coordinator.set_queue(core_queue, custom_factory) {
+            Ok(rg) => rg,
+            Err(e) => {
+                map_log!(1, "[API:QUEUE] set_queue() failed: {}", e);
+                return Err(e);
+            }
+        };
         let queue_evt = self
             .engine
             .exec(|ply| snapshot_queue_ids(ply))
@@ -1197,29 +1350,54 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Appends a batch of audio sources to the end of the playlist queue.
+    /// Appends a batch of `sources` to the end of the playlist queue.
     pub fn append(&self, sources: Vec<RustAudioSource>) {
+        let count = sources.len();
         let core_sources: Vec<AudioSourceCore> = sources.into_iter().map(Into::into).collect();
-        if self.coordinator.append(core_sources).is_ok() {
-            self.emit_queue();
+        match self.coordinator.append(core_sources) {
+            Ok(_) => {
+                map_log!(4, "[API:QUEUE] append(count={})", count);
+                self.emit_queue();
+            }
+            Err(e) => {
+                map_log!(2, "[API:QUEUE] append(count={}) failed: {}", count, e);
+            }
         }
     }
 
-    /// Inserts an audio source directly after the currently playing track.
+    /// Inserts an audio `source` directly after the currently playing track.
     pub fn insert_next(&self, source: RustAudioSource) {
+        let id = source.id;
         let core_src: AudioSourceCore = source.into();
-        if self.coordinator.insert_next(core_src).is_ok() {
-            self.emit_queue();
+        match self.coordinator.insert_next(core_src) {
+            Ok(_) => {
+                map_log!(4, "[API:QUEUE] insert_next(id={})", id);
+                self.emit_queue();
+            }
+            Err(e) => {
+                map_log!(2, "[API:QUEUE] insert_next(id={}) failed: {}", id, e);
+            }
         }
     }
 
-    /// Removes an audio source at the specified index from the playlist queue.
+    /// Removes an audio source at `index` from the playlist queue, returning `true` if removed.
     pub fn remove_at(&self, index: usize) -> bool {
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        let Ok((res, idx, transition_emitted)) = self.coordinator.remove_at(index, include_meta)
-        else {
-            return false;
+        let (res, idx, transition_emitted) = match self.coordinator.remove_at(index, include_meta) {
+            Ok(v) => v,
+            Err(e) => {
+                map_log!(2, "[API:QUEUE] remove_at(index={}) failed: {}", index, e);
+                return false;
+            }
         };
+        map_log!(
+            4,
+            "[API:QUEUE] remove_at(index={}) -> removed={}, next_idx={}, transition={}",
+            index,
+            res,
+            idx,
+            transition_emitted
+        );
         if res && !transition_emitted {
             if idx < 0 {
                 self.emit_queue_and_index([
@@ -1234,70 +1412,111 @@ impl RustMiniaudioPlayer {
         res
     }
 
-    /// Reorders a track within the queue from `old_index` to `new_index`.
+    /// Reorders a track within the queue from `old_index` to `new_index`, returning `true` if moved.
     pub fn reorder(&self, old_index: usize, new_index: usize) -> bool {
-        let Ok(res) = self.coordinator.reorder(old_index, new_index) else {
-            return false;
+        let res = match self.coordinator.reorder(old_index, new_index) {
+            Ok(r) => r,
+            Err(e) => {
+                map_log!(
+                    2,
+                    "[API:QUEUE] reorder({} -> {}) failed: {}",
+                    old_index,
+                    new_index,
+                    e
+                );
+                return false;
+            }
         };
         if res {
+            map_log!(4, "[API:QUEUE] reorder({} -> {})", old_index, new_index);
             let idx = self.engine.snapshots().current_index();
             self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
         }
         res
     }
 
-    /// Reorders the playlist queue to match the specified list of track IDs.
+    /// Reorders the playlist queue to match the specified list of track `ids`, returning `true` if updated.
     pub fn reorder_by_ids(&self, ids: Vec<i64>) -> bool {
-        let Ok(res) = self.coordinator.reorder_by_ids(ids) else {
-            return false;
+        let len = ids.len();
+        let res = match self.coordinator.reorder_by_ids(ids) {
+            Ok(r) => r,
+            Err(e) => {
+                map_log!(2, "[API:QUEUE] reorder_by_ids(len={}) failed: {}", len, e);
+                return false;
+            }
         };
         if res {
+            map_log!(4, "[API:QUEUE] reorder_by_ids(len={})", len);
             let idx = self.engine.snapshots().current_index();
             self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
         }
         res
     }
 
-    /// Clears pending tracks from the queue, optionally preserving the currently active track.
+    /// Clears pending tracks from the queue, optionally preserving the active track when `keep_current` is `true`.
     pub fn clear_queue(&self, keep_current: bool) {
-        if let Ok(idx) = self.coordinator.clear_queue(keep_current) {
-            if idx < 0 {
-                self.emit_queue_and_index([
-                    RustPlayerEvent::CurrentIndex(-1),
-                    RustPlayerEvent::PlaybackState(0),
-                    RustPlayerEvent::IsPlaying(false),
-                ]);
-            } else {
-                self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
+        match self.coordinator.clear_queue(keep_current) {
+            Ok(idx) => {
+                map_log!(4, "[API:QUEUE] clear_queue(keep_current={}) -> idx={}", keep_current, idx);
+                if idx < 0 {
+                    self.emit_queue_and_index([
+                        RustPlayerEvent::CurrentIndex(-1),
+                        RustPlayerEvent::PlaybackState(0),
+                        RustPlayerEvent::IsPlaying(false),
+                    ]);
+                } else {
+                    self.emit_queue_and_index([RustPlayerEvent::CurrentIndex(idx as i32)]);
+                }
+            }
+            Err(e) => {
+                map_log!(2, "[API:QUEUE] clear_queue(keep_current={}) failed: {}", keep_current, e);
             }
         }
     }
 
-    /// Skips to the next track in the queue, optionally overriding crossfade duration.
+    /// Skips to the next track in the queue, optionally overriding crossfade with `crossfade_duration_ms`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if advancing to the next track fails.
     pub fn next(&self, crossfade_duration_ms: Option<u64>) -> Result<(), String> {
+        map_log!(4, "[API:PLAY] next(crossfade_duration_ms={:?})", crossfade_duration_ms);
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        let _ = self.coordinator.next(crossfade_duration_ms, include_meta)?;
+        if let Err(e) = self.coordinator.next(crossfade_duration_ms, include_meta) {
+            map_log!(1, "[API:PLAY] next() failed: {}", e);
+            return Err(e);
+        }
         Ok(())
     }
 
     /// Rewinds or skips to the previous track in the queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if rewinding or switching to the previous track fails.
     pub fn previous(&self) -> Result<(), String> {
+        map_log!(4, "[API:PLAY] previous()");
         let include_meta = self.metadata_enabled.load(Ordering::Relaxed);
-        let _ = self.coordinator.previous(include_meta)?;
+        if let Err(e) = self.coordinator.previous(include_meta) {
+            map_log!(1, "[API:PLAY] previous() failed: {}", e);
+            return Err(e);
+        }
         Ok(())
     }
 
-    /// Sets the queue loop policy (0: off, 1: one, 2: all).
+    /// Sets the queue loop policy `mode` (`0`: off, `1`: one, `2`: all).
     pub fn set_loop_mode(&self, mode: i32) {
         let clamped = mode.clamp(0, 2);
         if let Ok(true) = self.coordinator.set_loop_mode(clamped) {
+            map_log!(4, "[API:QUEUE] set_loop_mode({})", clamped);
             self.emit_event(RustPlayerEvent::LoopMode(clamped));
         }
     }
 
-    /// Enables or disables playlist shuffle mode.
+    /// Enables or disables playlist shuffle mode based on `enabled`.
     pub fn set_shuffle(&self, enabled: bool) {
         if let Ok(Some(idx)) = self.coordinator.set_shuffle(enabled) {
+            map_log!(4, "[API:QUEUE] set_shuffle({}) -> idx={}", enabled, idx);
             self.emit_queue_and_index([
                 RustPlayerEvent::IsShuffled(enabled),
                 RustPlayerEvent::CurrentIndex(idx as i32),
@@ -1305,7 +1524,7 @@ impl RustMiniaudioPlayer {
         }
     }
 
-    /// Enables or disables continuous auto-refill infinite mix mode and sets queue replenishment threshold.
+    /// Applies the continuous auto-refill infinite mix `config`.
     pub fn set_infinite_mix(&self, config: RustInfiniteMixConfig) {
         let enabled = config.enabled;
         let threshold = config.remaining_tracks_threshold as usize;
@@ -1329,11 +1548,17 @@ impl RustMiniaudioPlayer {
             })
             .is_ok()
         {
+            map_log!(
+                4,
+                "[API:QUEUE] set_infinite_mix(enabled={}, threshold={})",
+                enabled,
+                threshold
+            );
             self.emit_event(RustPlayerEvent::InfiniteMix(config));
         }
     }
 
-    /// Configures automatic and manual crossfade durations and curve formulas.
+    /// Configures automatic and manual crossfade durations and curve formulas from `config`.
     pub fn set_crossfade(&self, config: RustCrossfadeConfig) {
         let auto_ms = config.auto_duration_ms;
         let manual_ms = config.manual_duration_ms;
@@ -1343,6 +1568,13 @@ impl RustMiniaudioPlayer {
             .exec(move |ply| ply.music_manager.set_crossfade(auto_ms, manual_ms, curve))
             .is_ok()
         {
+            map_log!(
+                4,
+                "[API:QUEUE] set_crossfade(auto_ms={}, manual_ms={}, curve={})",
+                auto_ms,
+                manual_ms,
+                curve
+            );
             self.emit_event(RustPlayerEvent::CrossfadeConfig(config));
         }
     }
@@ -1351,7 +1583,7 @@ impl RustMiniaudioPlayer {
     // DSP & Audio Modulation Methods
     // =========================================================================
 
-    /// Sets the master output volume level (0.0 to 1.0+).
+    /// Sets the master output `volume` level (`0.0` to `1.0+`).
     pub fn set_volume(&self, volume: f32) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply.music_dsp.volume;
@@ -1362,11 +1594,12 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_volume({})", volume);
             self.emit_event(RustPlayerEvent::Volume(volume));
         }
     }
 
-    /// Sets the playback speed multiplier with automatic pitch compensation.
+    /// Sets the playback speed `rate` multiplier with automatic pitch compensation.
     pub fn set_rate(&self, rate: f32) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply.music_manager.rate();
@@ -1377,11 +1610,12 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_rate({})", rate);
             self.emit_event(RustPlayerEvent::Rate(rate));
         }
     }
 
-    /// Sets the pitch shift frequency multiplier independently of playback speed.
+    /// Sets the `pitch` shift frequency multiplier independently of playback speed.
     pub fn set_pitch(&self, pitch: f32) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply.music_manager.pitch();
@@ -1392,11 +1626,12 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_pitch({})", pitch);
             self.emit_event(RustPlayerEvent::Pitch(pitch));
         }
     }
 
-    /// Sets the stereo pan balance from -1.0 (hard left) to +1.0 (hard right).
+    /// Sets the stereo pan `balance` from `-1.0` (hard left) to `+1.0` (hard right).
     pub fn set_balance(&self, balance: f32) {
         if let Ok(Some(actual)) = self.engine.exec(move |ply| {
             let prev = ply.music_dsp.balance;
@@ -1408,11 +1643,12 @@ impl RustMiniaudioPlayer {
                 None
             }
         }) {
+            map_log!(4, "[API:DSP] set_balance({})", actual);
             self.emit_event(RustPlayerEvent::Balance(actual));
         }
     }
 
-    /// Toggles mono downmixing of multi-channel audio.
+    /// Toggles mono downmixing of multi-channel audio according to `enabled`.
     pub fn set_mono(&self, enabled: bool) {
         if let Ok(true) = self.engine.exec(move |ply| {
             if ply.music_dsp.mono != enabled {
@@ -1423,11 +1659,12 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_mono({})", enabled);
             self.emit_event(RustPlayerEvent::Mono(enabled));
         }
     }
 
-    /// Sets the equalizer pre-amplification gain in decibels.
+    /// Sets the equalizer pre-amplification gain `preamp_db` in decibels.
     pub fn set_preamp(&self, preamp_db: f32) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply.music_dsp.equalizer.preamp_db();
@@ -1439,11 +1676,12 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_preamp({} dB)", preamp_db);
             self.emit_event(RustPlayerEvent::Preamp(preamp_db));
         }
     }
 
-    /// Sets the Bauer binaural headphone crossfeed configuration.
+    /// Sets the Bauer binaural headphone crossfeed `config`.
     pub fn set_crossfeed(&self, config: RustCrossfeedConfig) {
         let core_cfg: crate::dsp::crossfeed::CrossfeedConfig = config.clone().into();
         if let Ok(true) = self.engine.exec(move |ply| {
@@ -1456,11 +1694,18 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(
+                4,
+                "[API:DSP] set_crossfeed(enabled={}, cutoff_hz={}, feed_db={})",
+                config.enabled,
+                config.cutoff_hz,
+                config.feed_db
+            );
             self.emit_event(RustPlayerEvent::Crossfeed(config));
         }
     }
 
-    /// Enables or disables 3D stereo widening spatializer with width multiplier.
+    /// Enables or disables 3D stereo widening spatializer (`enabled`) with multiplier `width`.
     pub fn set_spatializer(&self, enabled: bool, width: f32) {
         let w = width.clamp(0.0, 2.0);
         if let Ok(true) = self.engine.exec(move |ply| {
@@ -1474,18 +1719,24 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_spatializer(enabled={}, width={})", enabled, w);
             self.emit_event(RustPlayerEvent::Spatializer { enabled, width: w });
         }
     }
 
-    /// Sets, updates, or clears ReplayGain normalization settings for a queue item or current track.
+    /// Sets, updates, or clears ReplayGain normalization `config` for a queue item selected by
+    /// `id`, `position`, or the current track when both are `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor is unavailable.
     pub fn set_replay_gain(
         &self,
         config: Option<RustReplayGainConfig>,
         id: Option<i64>,
         position: Option<usize>,
     ) -> Result<(), String> {
-        let rg_update = self.engine.exec(move |ply| {
+        let rg_update = match self.engine.exec(move |ply| {
             let target_idx = {
                 let q = read_unpoisoned(&ply.music_manager.inner.queue);
                 if let Some(target_id) = id {
@@ -1542,9 +1793,16 @@ impl RustMiniaudioPlayer {
                 }
             }
             None
-        })?;
+        }) {
+            Ok(res) => res,
+            Err(e) => {
+                map_log!(1, "[API:DSP] set_replay_gain() failed: {}", e);
+                return Err(e);
+            }
+        };
 
         if let Some((g, p)) = rg_update {
+            map_log!(4, "[API:DSP] set_replay_gain() active update: gain_db={}, peak={}", g, p);
             self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
                 gain_db: g,
                 peak: p,
@@ -1553,11 +1811,20 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Sets the global ReplayGain operating mode (0: disabled, 1: track, 2: forced).
+    /// Sets the global ReplayGain operating `mode` (`0`: disabled, `1`: track, `2`: forced).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor is unavailable.
     pub fn set_replay_gain_mode(&self, mode: u32) -> Result<(), String> {
-        let (g, p) = self
-            .engine
-            .exec(move |ply| ply.set_replay_gain_mode(mode))?;
+        let (g, p) = match self.engine.exec(move |ply| ply.set_replay_gain_mode(mode)) {
+            Ok(res) => res,
+            Err(e) => {
+                map_log!(1, "[API:DSP] set_replay_gain_mode({}) failed: {}", mode, e);
+                return Err(e);
+            }
+        };
+        map_log!(4, "[API:DSP] set_replay_gain_mode({}) -> gain_db={}, peak={}", mode, g, p);
         self.emit_event(RustPlayerEvent::ReplayGainMode(mode));
         self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db: g,
@@ -1566,11 +1833,29 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Sets the fallback or forced ReplayGain adjustment in dB and peak.
+    /// Sets the fallback or forced ReplayGain adjustment in `gain_db` and `peak`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor is unavailable.
     pub fn set_default_replay_gain(&self, gain_db: f32, peak: f32) -> Result<(), String> {
-        let (g, p) = self
+        let (g, p) = match self
             .engine
-            .exec(move |ply| ply.set_default_replay_gain(gain_db, peak))?;
+            .exec(move |ply| ply.set_default_replay_gain(gain_db, peak))
+        {
+            Ok(res) => res,
+            Err(e) => {
+                map_log!(
+                    1,
+                    "[API:DSP] set_default_replay_gain(gain_db={}, peak={}) failed: {}",
+                    gain_db,
+                    peak,
+                    e
+                );
+                return Err(e);
+            }
+        };
+        map_log!(4, "[API:DSP] set_default_replay_gain({}, {}) -> ({}, {})", gain_db, peak, g, p);
         self.emit_event(RustPlayerEvent::DefaultReplayGain(gain_db));
         self.emit_event(RustPlayerEvent::ReplayGain(RustReplayGainConfig {
             gain_db: g,
@@ -1579,31 +1864,57 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Configures automatic silence skipping and trimming parameters.
+    /// Configures automatic silence skipping and trimming parameters from `config`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor is unavailable.
     pub fn set_silence_config(&self, config: RustSilenceConfig) -> Result<(), String> {
         let sc = SilenceConfig::from(config.clone());
-        self.engine.exec(move |ply| {
+        if let Err(e) = self.engine.exec(move |ply| {
             ply.music_manager.inner.deck_a.set_silence_config(&sc);
             ply.music_manager.inner.deck_b.set_silence_config(&sc);
-        })?;
+        }) {
+            map_log!(1, "[API:DSP] set_silence_config() failed: {}", e);
+            return Err(e);
+        }
+        map_log!(
+            4,
+            "[API:DSP] set_silence_config(enabled={}, mode={}, threshold_db={})",
+            config.enabled,
+            config.mode,
+            config.threshold_db
+        );
         self.emit_event(RustPlayerEvent::SilenceConfig(config));
         Ok(())
     }
 
-    /// Updates 10-band graphic equalizer band gain levels and enabled bypass state.
+    /// Updates 10-band graphic equalizer band gain levels and enabled bypass state using `params`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor is unavailable.
     pub fn set_equalizer(&self, params: RustEqualizerParams) -> Result<(), String> {
         let eq = EqualizerParams::from(params.clone());
-        self.engine.exec(move |ply| {
+        if let Err(e) = self.engine.exec(move |ply| {
             ply.music_dsp.set_equalizer(&eq);
             ply.inherit_dsp.set_equalizer(&eq);
             ply.music_manager.inner.deck_a.set_equalizer(&eq);
             ply.music_manager.inner.deck_b.set_equalizer(&eq);
-        })?;
+        }) {
+            map_log!(1, "[API:DSP] set_equalizer() failed: {}", e);
+            return Err(e);
+        }
+        map_log!(4, "[API:DSP] set_equalizer(enabled={})", params.enabled);
         self.emit_event(RustPlayerEvent::Equalizer(params));
         Ok(())
     }
 
-    /// Updates studio reverberation acoustic parameters.
+    /// Updates studio reverberation acoustic parameters from `params`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the engine actor is unavailable.
     pub fn set_reverb(&self, params: RustReverbParams) -> Result<(), String> {
         let conf = ReverbConfig {
             enabled: if params.enabled { 1 } else { 0 },
@@ -1613,15 +1924,25 @@ impl RustMiniaudioPlayer {
             wet: params.wet,
             dry: params.dry,
         };
-        self.engine.exec(move |ply| {
+        if let Err(e) = self.engine.exec(move |ply| {
             ply.music_dsp.set_reverb(conf);
             ply.inherit_dsp.set_reverb(conf);
-        })?;
+        }) {
+            map_log!(1, "[API:DSP] set_reverb() failed: {}", e);
+            return Err(e);
+        }
+        map_log!(
+            4,
+            "[API:DSP] set_reverb(enabled={}, room_size={}, wet={})",
+            params.enabled,
+            params.room_size,
+            params.wet
+        );
         self.emit_event(RustPlayerEvent::Reverb(params));
         Ok(())
     }
 
-    /// Enables or disables the output brickwall peak limiter.
+    /// Enables or disables the output brickwall peak limiter according to `enabled`.
     pub fn set_limiter(&self, enabled: bool) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply.master_limiter.is_enabled();
@@ -1632,11 +1953,12 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:DSP] set_limiter({})", enabled);
             self.emit_event(RustPlayerEvent::Limiter(enabled));
         }
     }
 
-    /// Enables or disables the FFT audio visualizer and spectrum analysis stream.
+    /// Enables or disables the FFT audio visualizer and spectrum analysis stream according to `enabled`.
     pub fn set_visualizer_enabled(&self, enabled: bool) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply.output_manager.visualizer_enabled.load(Ordering::Relaxed);
@@ -1647,6 +1969,7 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:VIS] set_visualizer_enabled({})", enabled);
             self.emit_event(RustPlayerEvent::VisualizerEnabled(enabled));
             if !enabled {
                 self.emit_event(RustPlayerEvent::Visualizer(RustVisualizerData::default()));
@@ -1654,7 +1977,7 @@ impl RustMiniaudioPlayer {
         }
     }
 
-    /// Configures the audio bus feeding the real-time FFT spectrum visualizer.
+    /// Configures the audio bus `source` feeding the real-time FFT spectrum visualizer.
     pub fn set_visualizer_source(&self, source: i32) {
         if self
             .engine
@@ -1664,14 +1987,16 @@ impl RustMiniaudioPlayer {
             })
             .is_ok()
         {
+            map_log!(4, "[API:VIS] set_visualizer_source({})", source);
             self.emit_event(RustPlayerEvent::VisualizerSource(source));
         }
     }
 
-    /// Enables or disables forwarding of audio metadata payloads.
+    /// Enables or disables forwarding of audio metadata payloads according to `enabled`.
     pub fn set_metadata_enabled(&self, enabled: bool) {
         let prev = self.metadata_enabled.swap(enabled, Ordering::Relaxed);
         if prev != enabled {
+            map_log!(4, "[API:META] set_metadata_enabled({})", enabled);
             self.emit_event(RustPlayerEvent::MetadataEnabled(enabled));
             if enabled {
                 if let Some(meta) = self.engine.snapshots().parsed_metadata() {
@@ -1683,7 +2008,7 @@ impl RustMiniaudioPlayer {
         }
     }
 
-    /// Adjusts the audio stream buffer frame size.
+    /// Adjusts the audio stream buffer size to `buffer_size_frames` frames.
     pub fn set_buffer_size(&self, buffer_size_frames: u32) {
         if self
             .engine
@@ -1693,6 +2018,7 @@ impl RustMiniaudioPlayer {
             })
             .is_ok()
         {
+            map_log!(4, "[API:BUF] set_buffer_size({} frames)", buffer_size_frames);
             self.emit_event(RustPlayerEvent::BufferSize(buffer_size_frames));
         }
     }
@@ -1701,13 +2027,28 @@ impl RustMiniaudioPlayer {
     // RAM Sound Effects Methods
     // =========================================================================
 
-    /// Declaratively registers the catalog of sound effects with the autonomous RAM engine.
+    /// Declaratively registers the catalog of sound `effects` with the autonomous RAM engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if registering or preloading pinned effects fails.
     pub fn set_effects(&self, effects: Vec<RustAudioEffect>) -> Result<(), String> {
+        let count = effects.len();
         let catalog: Vec<EffectCatalogItem> = effects.into_iter().map(Into::into).collect();
         let fx = self.engine.effects();
-        fx.set_effects(catalog)?;
+        if let Err(e) = fx.set_effects(catalog) {
+            map_log!(1, "[API:FX] set_effects(count={}) failed: {}", count, e);
+            return Err(e);
+        }
         let loaded_ids = fx.loaded_effect_ids();
         let ram_bytes = fx.allocated_ram_bytes();
+        map_log!(
+            3,
+            "[API:FX] set_effects(count={}) loaded={}, ram_bytes={}",
+            count,
+            loaded_ids.len(),
+            ram_bytes
+        );
         self.emit_event(RustPlayerEvent::LoadedEffects {
             ids: loaded_ids,
             allocated_bytes: ram_bytes,
@@ -1733,8 +2074,12 @@ impl RustMiniaudioPlayer {
         self.engine.effects().active_voices_count()
     }
 
-    /// Triggers playback of a registered sound effect (decoding on demand if not in RAM),
+    /// Triggers playback of a registered sound effect `id` with `config` (decoding on demand if not in RAM),
     /// returning the assigned voice ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `id` is unknown, decoding fails, or voice allocation fails.
     pub fn play_effect(
         &self,
         id: String,
@@ -1742,7 +2087,20 @@ impl RustMiniaudioPlayer {
     ) -> Result<u32, String> {
         let core_config = EffectConfig::from(config);
         let fx = self.engine.effects();
-        let (voice_id, ram_changed) = fx.play_effect(&id, core_config)?;
+        let (voice_id, ram_changed) = match fx.play_effect(&id, core_config) {
+            Ok(res) => res,
+            Err(e) => {
+                map_log!(1, "[API:FX] play_effect(id='{}') failed: {}", id, e);
+                return Err(e);
+            }
+        };
+        map_log!(
+            4,
+            "[API:FX] play_effect(id='{}') -> voice_id={}, ram_changed={}",
+            id,
+            voice_id,
+            ram_changed
+        );
         if ram_changed {
             self.emit_event(RustPlayerEvent::LoadedEffects {
                 ids: fx.loaded_effect_ids(),
@@ -1752,48 +2110,50 @@ impl RustMiniaudioPlayer {
         Ok(voice_id)
     }
 
-    /// Stops an active sound effect voice with an optional fade-out ramp in milliseconds.
+    /// Stops an active sound effect `voice_id` with an optional `fade_out_ms` ramp in milliseconds.
     pub fn stop_effect(&self, voice_id: u32, fade_out_ms: u64) {
+        map_log!(4, "[API:FX] stop_effect(voice_id={}, fade_out_ms={})", voice_id, fade_out_ms);
         let sr = self.engine.snapshots().sample_rate;
         let fade_samples = (fade_out_ms as f64 * (sr as f64 / 1000.0)) as usize;
         self.engine.effects().stop_effect(voice_id, fade_samples);
     }
 
-    /// Stops all actively playing sound effect voices with an optional fade-out ramp in milliseconds.
+    /// Stops all actively playing sound effect voices with an optional `fade_out_ms` ramp in milliseconds.
     pub fn stop_all_effects(&self, fade_out_ms: u64) {
+        map_log!(4, "[API:FX] stop_all_effects(fade_out_ms={})", fade_out_ms);
         let sr = self.engine.snapshots().sample_rate;
         let fade_samples = (fade_out_ms as f64 * (sr as f64 / 1000.0)) as usize;
         self.engine.effects().stop_all_effects(fade_samples);
     }
 
-    /// Modulates the volume of an active sound effect voice.
+    /// Modulates the `volume` of an active sound effect `voice_id`.
     pub fn set_effect_volume(&self, voice_id: u32, volume: f32) {
         self.engine.effects().set_voice_volume(voice_id, volume);
     }
 
-    /// Modulates the pitch multiplier of an active sound effect voice.
+    /// Modulates the `pitch` multiplier of an active sound effect `voice_id`.
     pub fn set_effect_pitch(&self, voice_id: u32, pitch: f32) {
         self.engine.effects().set_voice_pitch(voice_id, pitch);
     }
 
-    /// Adjusts stereo pan balance of an active sound effect voice.
+    /// Adjusts stereo pan `balance` of an active sound effect `voice_id`.
     pub fn set_effect_balance(&self, voice_id: u32, balance: f32) {
         self.engine.effects().set_voice_balance(voice_id, balance);
     }
 
-    /// Updates the 3D spatial emitter parameters for an active sound effect voice.
+    /// Updates the 3D spatial `emitter` parameters for an active sound effect `voice_id`.
     pub fn set_effect_emitter(&self, voice_id: u32, emitter: Option<RustSpatialEmitter>) {
         self.engine
             .effects()
             .set_voice_emitter(voice_id, emitter.map(Into::into));
     }
 
-    /// Updates the global 3D audio listener position, velocity, and orientation vectors.
+    /// Updates the global 3D audio `listener` position, velocity, and orientation vectors.
     pub fn set_listener(&self, listener: RustSpatialListener) {
         self.engine.effects().set_listener(listener.into());
     }
 
-    /// Configures global Doppler factor and medium speed of sound in meters per second.
+    /// Configures global Doppler `factor` and medium `speed_of_sound` in meters per second.
     pub fn set_doppler_parameters(&self, factor: f32, speed_of_sound: f32) {
         self.engine
             .effects()
@@ -1804,7 +2164,11 @@ impl RustMiniaudioPlayer {
     // Multiple Outputs & Live Recording Methods
     // =========================================================================
 
-    /// Replaces the active audio output destinations in the multi-sink matrix.
+    /// Replaces the active audio output destinations (`outputs`) in the multi-sink matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if opening or switching the requested output hardware fails.
     pub fn set_outputs(&self, outputs: Vec<RustAudioOutput>) -> Result<(), String> {
         map_log!(
             3,
@@ -1812,7 +2176,10 @@ impl RustMiniaudioPlayer {
             outputs.len()
         );
         let t0 = Instant::now();
-        self.hw.set_outputs(outputs.clone())?;
+        if let Err(e) = self.hw.set_outputs(outputs.clone()) {
+            map_log!(1, "[API:OUTPUTS] set_outputs() failed: {}", e);
+            return Err(e);
+        }
         map_log!(
             3,
             "[NATIVE:SET_OUTPUTS:DONE] set_outputs() finished in {}ms. Emitting event...",
@@ -1824,29 +2191,99 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Adds or routes an audio output destination to the output matrix.
+    /// Adds or routes an audio `output` destination to the output matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if opening or routing `output` fails.
     pub fn add_output(&self, output: RustAudioOutput) -> Result<(), String> {
-        if let Some(current) = self.hw.add_output(output)? {
-            self.emit_event(RustPlayerEvent::Outputs(current));
-            self.notify_device_watcher();
+        let dev_id = output.device_id.clone();
+        let src = output.source;
+        match self.hw.add_output(output) {
+            Ok(Some(current)) => {
+                map_log!(
+                    3,
+                    "[API:OUTPUTS] add_output(device_id='{}', source={}) -> total={}",
+                    dev_id,
+                    src,
+                    current.len()
+                );
+                self.emit_event(RustPlayerEvent::Outputs(current));
+                self.notify_device_watcher();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                map_log!(
+                    1,
+                    "[API:OUTPUTS] add_output(device_id='{}', source={}) failed: {}",
+                    dev_id,
+                    src,
+                    e
+                );
+                return Err(e);
+            }
         }
         Ok(())
     }
 
-    /// Removes an audio output destination from the output matrix.
+    /// Removes an audio `output` destination from the output matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if updating the output topology fails.
     pub fn remove_output(&self, output: RustAudioOutput) -> Result<(), String> {
-        if let Some(current) = self.hw.remove_output(output)? {
-            self.emit_event(RustPlayerEvent::Outputs(current));
-            self.notify_device_watcher();
+        let dev_id = output.device_id.clone();
+        let src = output.source;
+        match self.hw.remove_output(output) {
+            Ok(Some(current)) => {
+                map_log!(
+                    3,
+                    "[API:OUTPUTS] remove_output(device_id='{}', source={}) -> remaining={}",
+                    dev_id,
+                    src,
+                    current.len()
+                );
+                self.emit_event(RustPlayerEvent::Outputs(current));
+                self.notify_device_watcher();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                map_log!(
+                    1,
+                    "[API:OUTPUTS] remove_output(device_id='{}', source={}) failed: {}",
+                    dev_id,
+                    src,
+                    e
+                );
+                return Err(e);
+            }
         }
         Ok(())
     }
 
-    /// Begins recording rendered audio to a supported container at `path` with a selective source.
+    /// Begins recording rendered audio to a supported container at `path` using wire `format`
+    /// and selective bus `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `format` is invalid or opening the output file/recorder fails.
     pub fn start_recording(&self, path: String, format: i32, source: i32) -> Result<(), String> {
-        let fmt = parse_recording_format(format)?;
+        map_log!(
+            3,
+            "[API:REC] start_recording(path='{}', format={}, source={})",
+            path,
+            format,
+            source
+        );
+        let fmt = parse_recording_format(format).map_err(|e| {
+            map_log!(1, "[API:REC] Invalid recording format {}: {}", format, e);
+            e
+        })?;
         let src = AudioOutputSource::from(source);
-        self.hw.start_recording(path, fmt, src)?;
+        if let Err(e) = self.hw.start_recording(path, fmt, src) {
+            map_log!(1, "[API:REC] start_recording() failed: {}", e);
+            return Err(e);
+        }
         self.reporter.emit_batch([
             RustPlayerEvent::RecordedDuration(0),
             RustPlayerEvent::IsRecording(true),
@@ -1858,7 +2295,12 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Starts live lock-free recording targeting a detached POSIX file descriptor (Android `content://`).
+    /// Starts live lock-free recording targeting a detached POSIX file descriptor `fd`
+    /// (such as Android `content://`) labeled by `display_path`, with wire `format` and bus `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `format` is invalid or initializing the FD recorder fails.
     pub fn start_recording_fd(
         &self,
         display_path: String,
@@ -1866,9 +2308,23 @@ impl RustMiniaudioPlayer {
         format: i32,
         source: i32,
     ) -> Result<(), String> {
-        let fmt = parse_recording_format(format)?;
+        map_log!(
+            3,
+            "[API:REC] start_recording_fd(display_path='{}', fd={}, format={}, source={})",
+            display_path,
+            fd,
+            format,
+            source
+        );
+        let fmt = parse_recording_format(format).map_err(|e| {
+            map_log!(1, "[API:REC] Invalid recording format {}: {}", format, e);
+            e
+        })?;
         let src = AudioOutputSource::from(source);
-        self.hw.start_recording_fd(display_path, fd, fmt, src)?;
+        if let Err(e) = self.hw.start_recording_fd(display_path, fd, fmt, src) {
+            map_log!(1, "[API:REC] start_recording_fd() failed: {}", e);
+            return Err(e);
+        }
         self.reporter.emit_batch([
             RustPlayerEvent::RecordedDuration(0),
             RustPlayerEvent::IsRecording(true),
@@ -1881,9 +2337,28 @@ impl RustMiniaudioPlayer {
     }
 
     /// Stops active file recording and returns the finalization metrics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if stopping or finalizing the recording file fails.
     pub fn stop_recording(&self) -> Result<RustRecordingResult, String> {
         let (path, dur_ms, bytes_written, sample_count, dropped_frames) =
-            self.hw.stop_recording()?;
+            match self.hw.stop_recording() {
+                Ok(res) => res,
+                Err(e) => {
+                    map_log!(1, "[API:REC] stop_recording() failed: {}", e);
+                    return Err(e);
+                }
+            };
+        map_log!(
+            3,
+            "[API:REC] stop_recording() finished: path='{}', dur_ms={}, bytes={}, samples={}, dropped={}",
+            path,
+            dur_ms,
+            bytes_written,
+            sample_count,
+            dropped_frames
+        );
         self.reporter.emit_batch([
             RustPlayerEvent::RecordedDuration(dur_ms),
             RustPlayerEvent::IsRecording(false),
@@ -1906,7 +2381,11 @@ impl RustMiniaudioPlayer {
     // Capture & Multi-Input Methods
     // =========================================================================
 
-    /// Replaces active audio inputs with the given set and synchronizes physical capture nodes.
+    /// Replaces active audio inputs with `inputs` and synchronizes physical capture nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if opening or updating the requested capture hardware fails.
     pub fn set_inputs(&self, inputs: Vec<RustAudioInput>) -> Result<(), String> {
         map_log!(
             3,
@@ -1914,7 +2393,13 @@ impl RustMiniaudioPlayer {
             inputs.len()
         );
         let t0 = Instant::now();
-        let current = self.hw.set_inputs(inputs)?;
+        let current = match self.hw.set_inputs(inputs) {
+            Ok(c) => c,
+            Err(e) => {
+                map_log!(1, "[API:INPUTS] set_inputs() failed: {}", e);
+                return Err(e);
+            }
+        };
         map_log!(
             3,
             "[NATIVE:SET_INPUTS:DONE] set_inputs() finished in {}ms. Emitting event...",
@@ -1925,32 +2410,89 @@ impl RustMiniaudioPlayer {
         Ok(())
     }
 
-    /// Adds an audio input capture node.
+    /// Adds an audio `input` capture node.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if opening or adding `input` fails.
     pub fn add_input(&self, input: RustAudioInput) -> Result<(), String> {
-        let current = self.hw.add_input(input)?;
+        let dev_id = input.device_id.clone();
+        let current = match self.hw.add_input(input) {
+            Ok(c) => c,
+            Err(e) => {
+                map_log!(1, "[API:INPUTS] add_input(device_id='{}') failed: {}", dev_id, e);
+                return Err(e);
+            }
+        };
+        map_log!(
+            3,
+            "[API:INPUTS] add_input(device_id='{}') -> total={}",
+            dev_id,
+            current.len()
+        );
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())
     }
 
-    /// Removes an audio input capture node by matching device identifier.
+    /// Removes an audio `input` capture node by matching its device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if removing `input` fails.
     pub fn remove_input(&self, input: RustAudioInput) -> Result<(), String> {
-        let current = self.hw.remove_input(input.device_id)?;
+        let dev_id = input.device_id.clone();
+        let current = match self.hw.remove_input(input.device_id) {
+            Ok(c) => c,
+            Err(e) => {
+                map_log!(
+                    1,
+                    "[API:INPUTS] remove_input(device_id='{}') failed: {}",
+                    dev_id,
+                    e
+                );
+                return Err(e);
+            }
+        };
+        map_log!(
+            3,
+            "[API:INPUTS] remove_input(device_id='{}') -> remaining={}",
+            dev_id,
+            current.len()
+        );
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())
     }
 
-    /// Configures runtime parameters for an existing capture node without reopening hardware.
+    /// Configures runtime `config` parameters for an existing capture node identified by `device_id`
+    /// without reopening hardware.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if updating the capture node configuration fails.
     pub fn configure_input(
         &self,
         device_id: String,
         config: RustAudioInputConfig,
     ) -> Result<(), String> {
-        let current = self.hw.configure_input(device_id, config)?;
+        let current = match self.hw.configure_input(device_id.clone(), config) {
+            Ok(c) => c,
+            Err(e) => {
+                map_log!(
+                    1,
+                    "[API:INPUTS] configure_input(device_id='{}') failed: {}",
+                    device_id,
+                    e
+                );
+                return Err(e);
+            }
+        };
+        map_log!(4, "[API:INPUTS] configure_input(device_id='{}') updated", device_id);
         self.emit_event(RustPlayerEvent::Inputs(current));
         Ok(())
     }
 
-    /// Toggles whether playback automatically pauses when an output audio device changes or disconnects.
+    /// Toggles whether playback automatically pauses when an output audio device changes or disconnects
+    /// according to `enabled`.
     pub fn set_pause_on_device_change(&self, enabled: bool) {
         if let Ok(true) = self.engine.exec(move |ply| {
             let prev = ply
@@ -1964,6 +2506,7 @@ impl RustMiniaudioPlayer {
                 false
             }
         }) {
+            map_log!(4, "[API:HW] set_pause_on_device_change({})", enabled);
             self.emit_event(RustPlayerEvent::PauseOnDeviceChange(enabled));
         }
     }
@@ -1973,9 +2516,17 @@ impl RustMiniaudioPlayer {
     // =========================================================================
 
     /// Synchronously scans and enumerates connected playback output and capture devices in a single pass.
-    pub fn get_all_devices_sync() -> Result<(Vec<RustAudioDevice>, Vec<RustAudioDevice>), String> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the native backend fails to enumerate audio endpoints.
+    #[flutter_rust_bridge::frb(ignore)]
+    fn get_all_devices_sync() -> Result<(Vec<RustAudioDevice>, Vec<RustAudioDevice>), String> {
         let (raw_playback, raw_capture) = crate::bridge::ffi::safe_enumerate_all_devices()
-            .map_err(|e| format!("Unified device enumeration failed with code {}", e))?;
+            .map_err(|e| {
+                map_log!(1, "[API:HW] Unified device enumeration failed with code {}", e);
+                format!("Unified device enumeration failed with code {}", e)
+            })?;
 
         let mut out_devs = Vec::with_capacity(raw_playback.len() + 1);
         let mut default_out_name = String::new();
@@ -2035,28 +2586,49 @@ impl RustMiniaudioPlayer {
     }
 
     /// Synchronously scans and enumerates connected playback output audio devices.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if device enumeration fails.
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_output_devices_sync() -> Result<Vec<RustAudioDevice>, String> {
         Self::get_all_devices_sync().map(|(out_devs, _)| out_devs)
     }
 
     /// Asynchronously enumerates connected playback output audio devices.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if device enumeration fails.
     pub fn get_output_devices() -> Result<Vec<RustAudioDevice>, String> {
         Self::get_output_devices_sync()
     }
 
     /// Synchronously scans and enumerates connected microphone capture devices.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if device enumeration fails.
     #[flutter_rust_bridge::frb(sync)]
     pub fn get_input_devices_sync() -> Result<Vec<RustAudioDevice>, String> {
         Self::get_all_devices_sync().map(|(_, in_devs)| in_devs)
     }
 
     /// Asynchronously enumerates connected microphone capture devices.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if device enumeration fails.
     pub fn get_input_devices() -> Result<Vec<RustAudioDevice>, String> {
         Self::get_input_devices_sync()
     }
 
-    /// Responds to a pending custom stream byte read request from Dart.
+    /// Responds to a pending custom stream byte read request identified by `request_id`
+    /// with `bytes` and `is_eof` status from Dart.
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`.
     #[flutter_rust_bridge::frb(sync)]
     pub fn respond_dart_read_request(
         &self,
@@ -2064,6 +2636,13 @@ impl RustMiniaudioPlayer {
         bytes: Vec<u8>,
         is_eof: bool,
     ) -> Result<(), String> {
+        map_log!(
+            5,
+            "[API:READ] respond_dart_read_request(request_id={}, len={}, is_eof={})",
+            request_id,
+            bytes.len(),
+            is_eof
+        );
         let _ = self
             .custom_registry
             .resolve_request(request_id, bytes, is_eof);
@@ -2071,13 +2650,23 @@ impl RustMiniaudioPlayer {
     }
 
     /// Responds to a pending unified source resolution request (`asset://`,
-    /// `package:`, `content://`, `android.resource://`, `ws://`, etc.) from Dart.
+    /// `package:`, `content://`, `android.resource://`, `ws://`, etc.) identified by
+    /// `request_id` with `resolved` from Dart.
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`.
     #[flutter_rust_bridge::frb(sync)]
     pub fn respond_dart_resolve_request(
         &self,
         request_id: u64,
         resolved: RustResolvedSource,
     ) -> Result<(), String> {
+        map_log!(
+            4,
+            "[API:RESOLVE] respond_dart_resolve_request(request_id={})",
+            request_id
+        );
         let _ = self
             .resolve_registry
             .resolve_request(request_id, resolved);
@@ -2088,7 +2677,12 @@ impl RustMiniaudioPlayer {
     // Multi-Bus Audio Tap (Push Broadcast & Zero-Alloc Pull)
     // =========================================================================
 
-    /// Opens a lock-free Push stream on an audio output bus (`0`: All .. `4`: VoiceOnly).
+    /// Opens a lock-free Push stream on audio output bus `source` (`0`: All .. `4`: VoiceOnly)
+    /// under `client_key` using sample `format` and `frame_duration_ms`, pushing chunks to `sink`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the player is disposed, `format` is invalid, or tap registration fails.
     pub fn open_push_audio_tap(
         &self,
         client_key: u64,
@@ -2098,35 +2692,80 @@ impl RustMiniaudioPlayer {
         sink: StreamSink<RustAudioTapChunk>,
     ) -> Result<(), String> {
         if self.disposed.load(Ordering::Acquire) {
+            map_log!(2, "[API:TAP] open_push_audio_tap(client_key={}) rejected: engine disposed", client_key);
             return Err("AudioEngineDisposed: engine has been disposed".to_string());
         }
-        let fmt = crate::core::tap::TapSampleFormat::from_i32(format)?;
-        self.engine.tap_registry().add_push_tap(
+        let fmt = crate::core::tap::TapSampleFormat::from_i32(format).map_err(|e| {
+            map_log!(1, "[API:TAP] open_push_audio_tap invalid format {}: {}", format, e);
+            e
+        })?;
+        map_log!(
+            3,
+            "[API:TAP] open_push_audio_tap(client_key={}, source={}, format={}, frame_ms={})",
+            client_key,
+            source,
+            format,
+            frame_duration_ms
+        );
+        if let Err(e) = self.engine.tap_registry().add_push_tap(
             client_key,
             source,
             fmt,
             frame_duration_ms,
             Arc::new(FrbTapChunkSink { sink }),
-        )
+        ) {
+            map_log!(1, "[API:TAP] open_push_audio_tap(client_key={}) failed: {}", client_key, e);
+            return Err(e);
+        }
+        Ok(())
     }
 
-    /// Unregisters a Push audio tap stream subscriber by its client key.
+    /// Unregisters a Push audio tap stream subscriber by its `client_key`.
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`.
     pub fn close_push_audio_tap(&self, client_key: u64) -> Result<(), String> {
+        map_log!(3, "[API:TAP] close_push_audio_tap(client_key={})", client_key);
         self.engine.tap_registry().remove_push_tap(client_key);
         Ok(())
     }
 
-    /// Creates a zero-allocation Pull audio tap handle for reusable buffer polling.
+    /// Creates a zero-allocation Pull audio tap handle on bus `source` with sample `format`
+    /// for reusable buffer polling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the player is disposed, `format` is invalid, or creating the tap fails.
     pub fn create_pull_audio_tap(
         &self,
         source: i32,
         format: i32,
     ) -> Result<RustPullAudioTapInfo, String> {
         if self.disposed.load(Ordering::Acquire) {
+            map_log!(2, "[API:TAP] create_pull_audio_tap(source={}) rejected: engine disposed", source);
             return Err("AudioEngineDisposed: engine has been disposed".to_string());
         }
-        let fmt = crate::core::tap::TapSampleFormat::from_i32(format)?;
-        let handle = self.engine.tap_registry().create_pull_tap(source, fmt)?;
+        let fmt = crate::core::tap::TapSampleFormat::from_i32(format).map_err(|e| {
+            map_log!(1, "[API:TAP] create_pull_audio_tap invalid format {}: {}", format, e);
+            e
+        })?;
+        let handle = match self.engine.tap_registry().create_pull_tap(source, fmt) {
+            Ok(h) => h,
+            Err(e) => {
+                map_log!(1, "[API:TAP] create_pull_audio_tap(source={}) failed: {}", source, e);
+                return Err(e);
+            }
+        };
+        map_log!(
+            3,
+            "[API:TAP] create_pull_audio_tap(source={}, format={}) -> tap_id={}, sr={}, ch={}",
+            source,
+            format,
+            handle.tap_id,
+            handle.sample_rate,
+            handle.channels
+        );
         Ok(RustPullAudioTapInfo {
             tap_id: handle.tap_id,
             source,
@@ -2136,18 +2775,15 @@ impl RustMiniaudioPlayer {
         })
     }
 
-    /// Explicitly closes a Pull audio tap handle by ID and updates the active bus bitmask.
+    /// Explicitly closes a Pull audio tap handle by `tap_id` and updates the active bus bitmask.
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`.
     pub fn close_pull_audio_tap(&self, tap_id: u32) -> Result<(), String> {
+        map_log!(3, "[API:TAP] close_pull_audio_tap(tap_id={})", tap_id);
         self.engine.tap_registry().close_pull_tap(tap_id);
         Ok(())
-    }
-
-    /// Returns cumulative dropped frames observed by a Pull tap handle (wait/block-free).
-    #[flutter_rust_bridge::frb(sync)]
-    pub fn get_pull_audio_tap_dropped(&self, tap_id: u32) -> u64 {
-        crate::core::tap::lookup_pull_tap_nonblocking(tap_id)
-            .map(|h| h.total_dropped_frames())
-            .unwrap_or(0)
     }
 
     /// Returns the bitmask of active tapped buses (`0` when no taps are open).
@@ -2166,6 +2802,7 @@ impl RustMiniaudioPlayer {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
+        map_log!(3, "[API:DISPOSE] Disposing RustMiniaudioPlayer...");
         self.monitor_running.store(false, Ordering::Release);
         self.engine.snapshots().notify_telemetry_waiters();
         self.notify_device_watcher();
@@ -2181,6 +2818,7 @@ impl RustMiniaudioPlayer {
             let _ = jh.join();
         }
         self.engine.shutdown();
+        map_log!(3, "[API:DISPOSE] RustMiniaudioPlayer disposed cleanly.");
     }
 }
 
@@ -2188,33 +2826,70 @@ impl RustMiniaudioPlayer {
 // Top-Level Static Analysis & Utility Functions
 // =========================================================================
 
-/// Sets the global native diagnostic logging verbosity level.
+/// Sets the global native diagnostic logging verbosity `level` (`0`..`5`).
 #[flutter_rust_bridge::frb(sync)]
 pub fn set_log_level(level: i32) {
     crate::LOG_LEVEL.store(level, Ordering::Relaxed);
+    map_log!(3, "[API:LOG] Log level set to {}", level);
 }
 
-/// Asynchronously analyzes acoustic, loudness, waveform, and metadata properties of any audio source.
+/// Asynchronously analyzes acoustic, loudness, waveform, and metadata properties of `source`,
+/// optionally using a `pre_resolved` source payload and analysis `config`.
+///
+/// # Errors
+///
+/// Returns an error string if opening, decoding, or analyzing `source` fails.
 pub fn analyze_audio_source(
     source: RustAudioSource,
     pre_resolved: Option<RustResolvedSource>,
     config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
+    map_log!(
+        4,
+        "[API:ANALYZE] analyze_audio_source(id={}, source='{}', pre_resolved={})",
+        source.id,
+        source.source,
+        pre_resolved.is_some()
+    );
     let resolved = pre_resolved.map(ResolvedCoreSource::from_rust);
-    crate::dsp::analysis::analyze_audio_source_with_resolved(source.into(), resolved, config)
+    let res = crate::dsp::analysis::analyze_audio_source_with_resolved(source.into(), resolved, config);
+    if let Err(ref e) = res {
+        map_log!(1, "[API:ANALYZE] analyze_audio_source() failed: {}", e);
+    }
+    res
 }
 
-/// Synchronously analyzes acoustic, loudness, waveform, and metadata properties of a local audio source.
+/// Synchronously analyzes acoustic, loudness, waveform, and metadata properties of a local `source`
+/// using analysis `config`.
+///
+/// # Errors
+///
+/// Returns an error string if opening, decoding, or analyzing `source` fails.
 #[flutter_rust_bridge::frb(sync)]
 pub fn analyze_audio_source_sync(
     source: RustAudioSource,
     config: RustAnalysisConfig,
 ) -> Result<RustAudioAnalysisResult, String> {
-    crate::dsp::analysis::analyze_audio_source(source.into(), config)
+    map_log!(
+        4,
+        "[API:ANALYZE] analyze_audio_source_sync(id={}, source='{}')",
+        source.id,
+        source.source
+    );
+    let res = crate::dsp::analysis::analyze_audio_source(source.into(), config);
+    if let Err(ref e) = res {
+        map_log!(1, "[API:ANALYZE] analyze_audio_source_sync() failed: {}", e);
+    }
+    res
 }
 
-/// Encodes one lossless WavPack (`.wv`) stream block from interleaved little-endian PCM bytes
-/// (`pcm16` i16-LE or `float32` f32-LE) for Web OPFS and custom Dart recording buffers.
+/// Encodes one lossless WavPack (`.wv`) stream block starting at `block_index` from interleaved
+/// little-endian `pcm_bytes` (`pcm16` i16-LE when `is_float` is `false`, or `float32` f32-LE when
+/// `true`) with `sample_rate` and `channels`, for Web OPFS and custom Dart recording buffers.
+///
+/// # Errors
+///
+/// Returns an error string if the PCM buffer length is misaligned or encoding parameters are invalid.
 pub fn encode_wavpack_block(
     sample_rate: u32,
     channels: u16,
@@ -2222,13 +2897,26 @@ pub fn encode_wavpack_block(
     block_index: u64,
     pcm_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
-    crate::core::recording::encode_wavpack_block_wire_bytes(
+    map_log!(
+        5,
+        "[API:WAVPACK] encode_wavpack_block(sr={}, ch={}, float={}, idx={}, bytes={})",
+        sample_rate,
+        channels,
+        is_float,
+        block_index,
+        pcm_bytes.len()
+    );
+    let res = crate::core::recording::encode_wavpack_block_wire_bytes(
         sample_rate,
         channels,
         is_float,
         block_index,
         &pcm_bytes,
-    )
+    );
+    if let Err(ref e) = res {
+        map_log!(1, "[API:WAVPACK] encode_wavpack_block() failed: {}", e);
+    }
+    res
 }
 
 #[cfg(test)]

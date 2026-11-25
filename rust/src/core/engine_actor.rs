@@ -23,47 +23,79 @@ use crate::sync::{
     ReaperHandle, WakeQueue, WakeRecvError,
 };
 
+/// Bounded channel capacity for discrete engine lifecycle notices sent to the telemetry monitor.
 const RT_NOTIFY_CAP: usize = 256;
+/// Bounded channel capacity for non-blocking control hints sent to [`ControlCoordinator`].
 const RT_HINT_CAP: usize = 64;
 
 /// Wait-free and lock-free telemetry snapshots published by `map-engine-clock`.
 pub struct EngineUiSnapshots {
     /// Immutable output engine sample rate in Hz.
     pub sample_rate: u32,
+    /// Odd/even seqlock-style sequence counter incremented before and after each snapshot publish.
     pub_seq: AtomicU64,
+    /// Current [`PlaybackState`] integer representation.
     playback_state: AtomicI32,
+    /// Whether an active crossfade is currently in progress.
     is_xfading: AtomicBool,
+    /// Whether live audio recording is currently active.
     is_recording: AtomicBool,
+    /// Elapsed recorded duration in milliseconds.
     recorded_duration_ms: AtomicU64,
+    /// Whether microphone auto-ducking attenuation is currently active.
     is_ducking: AtomicBool,
+    /// IEEE-754 bit pattern of the latest microphone RMS level in dBFS.
     mic_rms_bits: AtomicU32,
+    /// Active deck playback position in milliseconds (or pending seek target while opening).
     position_ms: AtomicI64,
+    /// Buffered range start position in milliseconds.
     buffered_start_ms: AtomicI64,
+    /// Buffered range end position in milliseconds.
     buffered_end_ms: AtomicI64,
+    /// Whether the active deck is currently buffering or waiting on a pending open.
     is_buffering: AtomicBool,
+    /// Whether `buffered_start_ms` / `buffered_end_ms` hold a valid buffered range.
     has_buffered_range: AtomicBool,
+    /// Current queue track index (`-1` when none is selected).
     current_index: AtomicI64,
+    /// Active deck slot index (`0 = Deck A`, `1 = Deck B`).
     active_deck: AtomicI32,
+    /// Unique monotonic deck slot identifier for metadata/epoch correlation.
     active_deck_id: AtomicUsize,
+    /// Open generation counter of the currently active deck.
     active_open_gen: AtomicU64,
+    /// Metadata byte-payload version of the currently active deck.
     meta_version: AtomicU32,
+    /// Seek/flush generation counter of the currently active deck.
     flush_generation: AtomicU64,
+    /// Packed `(gain_db, peak)` ReplayGain telemetry bits (`gain_db` in upper 32 bits).
     replay_gain_packed: AtomicU64,
+    /// Whether the real-time FFT visualizer is enabled.
     visualizer_enabled: AtomicBool,
+    /// Configured [`AudioOutputSource`] integer for the visualizer tap.
     visualizer_source: AtomicI32,
+    /// Whether playback auto-pauses when an output device disconnects or changes.
     pause_on_device_change: AtomicBool,
+    /// Cached snapshot of active output endpoints.
     outputs: RwLock<Vec<RustAudioOutput>>,
+    /// Cached snapshot of active capture input endpoints.
     inputs: RwLock<Vec<RustAudioInput>>,
+    /// Cached [`RustAudioInfo`] for the active deck.
     audio_info: RwLock<RustAudioInfo>,
+    /// Cached parsed [`RustAudioMetadata`] for the active deck.
     parsed_metadata: RwLock<Option<RustAudioMetadata>>,
+    /// Seqlock-protected FFT/waveform visualizer frame data.
     visualizer_seqlock: CachePaddedSeqlock<VisualizerData>,
+    /// Monotonic edge counter incremented when telemetry waiters should wake immediately.
     telemetry_seq: AtomicU64,
+    /// Mutex paired with `telemetry_cvar` for edge-triggered telemetry monitor waits.
     telemetry_lock: Mutex<()>,
+    /// Condition variable notified on snapshot transition edges.
     telemetry_cvar: Condvar,
 }
 
 impl EngineUiSnapshots {
-    /// Initializes snapshots from initial player configuration state.
+    /// Initializes snapshots from the initial player configuration state in `ply`.
     pub fn from_player(ply: &MiniaudioPlayer) -> Self {
         let active_deck = ply.music_manager.active_deck_ref();
         let (rg_gain, rg_peak) = ply.active_replay_gain;
@@ -127,7 +159,8 @@ impl EngineUiSnapshots {
         self.telemetry_cvar.notify_all();
     }
 
-    /// Sleeps until snapshots publish a transition edge or `timeout` elapses.
+    /// Sleeps until snapshots publish a transition edge newer than `last_seq` or `timeout` elapses,
+    /// updating `last_seq` to the latest observed sequence.
     pub fn wait_for_telemetry_tick(&self, timeout: Duration, last_seq: &mut u64) {
         let cur = self.telemetry_seq.load(Ordering::Acquire);
         if cur != *last_seq {
@@ -144,11 +177,13 @@ impl EngineUiSnapshots {
         *last_seq = self.telemetry_seq.load(Ordering::Acquire);
     }
 
+    /// Packs ReplayGain `gain_db` and linear `peak` into a single atomic `u64`.
     #[inline]
     fn pack_rg(gain_db: f32, peak: f32) -> u64 {
         ((gain_db.to_bits() as u64) << 32) | (peak.to_bits() as u64)
     }
 
+    /// Unpacks the latest ReplayGain `(gain_db, peak)` tuple atomically.
     #[inline]
     pub fn unpack_rg(&self) -> (f32, f32) {
         let p = self.replay_gain_packed.load(Ordering::Acquire);
@@ -158,6 +193,7 @@ impl EngineUiSnapshots {
         )
     }
 
+    /// Begins a consistent lock-free snapshot read, returning `None` if a publish is currently in progress.
     #[inline]
     pub fn begin_consistent_read(&self) -> Option<u64> {
         let seq = self.pub_seq.load(Ordering::Acquire);
@@ -168,52 +204,62 @@ impl EngineUiSnapshots {
         }
     }
 
+    /// Returns `true` if no snapshot publish has occurred since `seq`.
     #[inline]
     pub fn is_consistent_since(&self, seq: u64) -> bool {
         std::sync::atomic::fence(Ordering::Acquire);
         self.pub_seq.load(Ordering::Acquire) == seq
     }
 
+    /// Returns the latest published [`PlaybackState`].
     #[inline]
     pub fn playback_state(&self) -> PlaybackState {
         PlaybackState::from_i32(self.playback_state.load(Ordering::Acquire))
     }
 
+    /// Returns `true` when a deck crossfade is active.
     #[inline]
     pub fn is_xfading(&self) -> bool {
         self.is_xfading.load(Ordering::Acquire)
     }
 
+    /// Returns `true` when live recording is active.
     #[inline]
     pub fn is_recording(&self) -> bool {
         self.is_recording.load(Ordering::Acquire)
     }
 
+    /// Returns the elapsed live recording duration in milliseconds.
     #[inline]
     pub fn recorded_duration_ms(&self) -> u64 {
         self.recorded_duration_ms.load(Ordering::Acquire)
     }
 
+    /// Returns `true` when microphone auto-ducking is actively attenuating music.
     #[inline]
     pub fn is_ducking(&self) -> bool {
         self.is_ducking.load(Ordering::Acquire)
     }
 
+    /// Returns the latest microphone RMS level in dBFS.
     #[inline]
     pub fn mic_rms_db(&self) -> f32 {
         f32::from_bits(self.mic_rms_bits.load(Ordering::Acquire))
     }
 
+    /// Returns the active deck playback position in milliseconds.
     #[inline]
     pub fn position_ms(&self) -> i64 {
         self.position_ms.load(Ordering::Acquire)
     }
 
+    /// Returns `true` when the active deck is buffering or waiting on an async track open.
     #[inline]
     pub fn is_buffering(&self) -> bool {
         self.is_buffering.load(Ordering::Acquire)
     }
 
+    /// Returns `(start_ms, end_ms, is_buffering)` if a buffered range is available for the active deck.
     #[inline]
     pub fn buffered_range(&self) -> Option<(i64, i64, bool)> {
         if !self.has_buffered_range.load(Ordering::Acquire) {
@@ -226,81 +272,97 @@ impl EngineUiSnapshots {
         ))
     }
 
+    /// Returns the current queue index (`-1` when no track is selected).
     #[inline]
     pub fn current_index(&self) -> i64 {
         self.current_index.load(Ordering::Acquire)
     }
 
+    /// Returns the active deck slot index (`0 = Deck A`, `1 = Deck B`).
     #[inline]
     pub fn active_deck(&self) -> i32 {
         self.active_deck.load(Ordering::Acquire)
     }
 
+    /// Returns the unique identifier of the currently active deck slot.
     #[inline]
     pub fn active_deck_id(&self) -> usize {
         self.active_deck_id.load(Ordering::Acquire)
     }
 
+    /// Returns the open generation counter of the currently active deck.
     #[inline]
     pub fn active_open_gen(&self) -> u64 {
         self.active_open_gen.load(Ordering::Acquire)
     }
 
+    /// Returns the active deck's metadata payload version.
     #[inline]
     pub fn meta_version(&self) -> u32 {
         self.meta_version.load(Ordering::Acquire)
     }
 
+    /// Returns the active deck's seek/flush generation counter.
     #[inline]
     pub fn flush_generation(&self) -> u64 {
         self.flush_generation.load(Ordering::Acquire)
     }
 
+    /// Returns `true` when the real-time FFT visualizer is enabled.
     #[inline]
     pub fn visualizer_enabled(&self) -> bool {
         self.visualizer_enabled.load(Ordering::Acquire)
     }
 
+    /// Returns the configured visualizer source bus integer.
     #[inline]
     pub fn visualizer_source(&self) -> i32 {
         self.visualizer_source.load(Ordering::Acquire)
     }
 
+    /// Returns `true` when auto-pause on output device disconnect/change is enabled.
     #[inline]
     pub fn pause_on_device_change(&self) -> bool {
         self.pause_on_device_change.load(Ordering::Acquire)
     }
 
+    /// Returns a cloned snapshot of the active output endpoints.
     #[inline]
     pub fn outputs(&self) -> Vec<RustAudioOutput> {
         read_unpoisoned(&self.outputs).clone()
     }
 
+    /// Returns a cloned snapshot of the active capture input endpoints.
     #[inline]
     pub fn inputs(&self) -> Vec<RustAudioInput> {
         read_unpoisoned(&self.inputs).clone()
     }
 
+    /// Returns a cloned snapshot of the active deck's [`RustAudioInfo`].
     #[inline]
     pub fn audio_info(&self) -> RustAudioInfo {
         read_unpoisoned(&self.audio_info).clone()
     }
 
+    /// Returns a cloned snapshot of the active deck's parsed [`RustAudioMetadata`].
     #[inline]
     pub fn parsed_metadata(&self) -> Option<RustAudioMetadata> {
         read_unpoisoned(&self.parsed_metadata).clone()
     }
 
+    /// Reads the latest seqlock-protected [`VisualizerData`] frame.
     #[inline]
     pub fn read_visualizer(&self) -> VisualizerData {
         self.visualizer_seqlock.read()
     }
 
+    /// Updates the cached output endpoints snapshot to `outs`.
     #[inline]
     pub fn set_outputs_snapshot(&self, outs: Vec<RustAudioOutput>) {
         *write_unpoisoned(&self.outputs) = outs;
     }
 
+    /// Updates the cached capture input endpoints snapshot to `ins`.
     #[inline]
     pub fn set_inputs_snapshot(&self, ins: Vec<RustAudioInput>) {
         *write_unpoisoned(&self.inputs) = ins;
@@ -310,14 +372,27 @@ impl EngineUiSnapshots {
 /// Discrete lifecycle notifications emitted by `map-engine-clock` to `map-telemetry-monitor`.
 #[derive(Debug, Clone)]
 pub enum RtEngineNotice {
+    /// Emitted when crossfading starts (`true`) or completes/aborts (`false`).
     IsCrossfading(bool),
-    ReplayGain { gain_db: f32, peak: f32 },
+    /// Emitted when effective ReplayGain parameters change on track transition.
+    ReplayGain {
+        /// Effective ReplayGain adjustment in decibels.
+        gain_db: f32,
+        /// Effective ReplayGain peak linear amplitude.
+        peak: f32,
+    },
+    /// Emitted when Infinite Mix remaining queue count falls below the configured threshold.
     NeedMoreTracks {
+        /// Queue item ID of the currently playing track.
         current_track_id: i64,
+        /// Number of tracks remaining after the current track.
         remaining_tracks: u32,
     },
+    /// Emitted when the asynchronous live recording writer encounters an error.
     RecordingError {
+        /// Human-readable diagnostic error message.
         message: String,
+        /// Engine error code associated with the failure.
         code: i32,
     },
 }
@@ -329,12 +404,19 @@ pub enum RtControlHint {
     PrewarmNeeded,
     /// Active track hit auto-crossfade point or EOF without a pre-warmed standby deck.
     AutoAdvanceNeeded {
+        /// Expected active deck slot ID when the transition was triggered.
         expected_deck_id: usize,
+        /// Expected active deck `open_generation` when the transition was triggered.
         expected_open_gen: u64,
+        /// Expected active deck `seek_epoch` when the transition was triggered.
         expected_seek_epoch: u64,
+        /// Target next queue index to open.
         next_idx: usize,
+        /// Target queue item descriptor to open.
         item: AudioSourceCore,
+        /// Whether an overlapping auto-crossfade is requested.
         should_auto_xfade: bool,
+        /// Configured auto-crossfade duration in milliseconds.
         auto_ms: u64,
     },
 }
@@ -342,22 +424,36 @@ pub enum RtControlHint {
 /// Consolidated track state returned synchronously to FFI callers (`play`, `next`, `previous`).
 #[derive(Clone)]
 pub struct TrackTransitionSnapshot {
+    /// Whether the queue membership changed during the transition.
     pub queue_changed: bool,
+    /// Updated queue item IDs when `queue_changed` is `true`.
     pub queue_ids: Option<Vec<i64>>,
+    /// Whether shuffle telemetry should be emitted for this transition.
     pub emit_shuffle: bool,
+    /// Current queue index (`-1` if none).
     pub cur_idx: i64,
+    /// Whether shuffle mode is currently enabled.
     pub is_shuffled: bool,
+    /// Raw integer [`PlaybackState`] value.
     pub playback_state: i32,
+    /// Convenience flag indicating `playback_state == PlaybackState::Playing`.
     pub is_playing: bool,
+    /// Whether a crossfade is active after the transition.
     pub is_xfading: bool,
+    /// Initial playback position in milliseconds.
     pub initial_pos: i64,
+    /// Active deck stream format/duration telemetry.
     pub initial_info: RustAudioInfo,
+    /// Active deck parsed metadata when requested.
     pub initial_meta: Option<RustAudioMetadata>,
+    /// Active deck buffered range `(start_ms, end_ms, is_buffering)` when requested.
     pub buffered_range: Option<(i64, i64, bool)>,
+    /// Effective ReplayGain `(gain_db, peak)` when a track is selected.
     pub replay_gain: Option<(f32, f32)>,
 }
 
-/// Captures a consistent [`TrackTransitionSnapshot`] from `MiniaudioPlayer`.
+/// Captures a consistent [`TrackTransitionSnapshot`] from `ply`, including queue IDs if
+/// `queue_changed`, parsed metadata if `include_metadata`, and buffered range if `include_buffered_range`.
 pub fn capture_track_snapshot(
     ply: &mut MiniaudioPlayer,
     queue_changed: bool,
@@ -419,7 +515,8 @@ pub fn capture_track_snapshot(
     }
 }
 
-/// Captures an immediate provisional queue-selection snapshot while the target track opens in I/O.
+/// Captures an immediate provisional queue-selection snapshot from `ply` while the target track
+/// opens in I/O, optionally including `queue_changed` IDs and `emit_shuffle`.
 pub fn capture_provisional_track_snapshot(
     ply: &mut MiniaudioPlayer,
     queue_changed: bool,
@@ -467,7 +564,7 @@ pub fn capture_provisional_track_snapshot(
     }
 }
 
-/// Captures current active queue IDs and index cleanly without poisoned-lock panics.
+/// Captures the current active queue IDs and index cleanly from `ply` without poisoned-lock panics.
 pub fn snapshot_queue_ids(ply: &MiniaudioPlayer) -> (Vec<i64>, i32) {
     let q: Vec<i64> = read_unpoisoned(&ply.music_manager.inner.queue)
         .iter()
@@ -481,16 +578,24 @@ pub fn snapshot_queue_ids(ply: &MiniaudioPlayer) -> (Vec<i64>, i32) {
     (q, cur_idx)
 }
 
+/// Optional callback executed on `map-engine-clock` right after publishing snapshots for a command.
 type PostPublishHook = Option<Box<dyn FnOnce() + Send>>;
 
+/// Control messages dispatched to the `map-engine-clock` actor thread.
 enum RtActorMsg {
+    /// Executes a closure with mutable access to the owned [`MiniaudioPlayer`].
     Call(Box<dyn FnOnce(&mut MiniaudioPlayer) -> PostPublishHook + Send>),
+    /// Disposes [`MiniaudioPlayer`] and signals the provided completion `(Mutex<bool>, Condvar)`.
     Shutdown(Arc<(Mutex<bool>, Condvar)>),
 }
 
+/// Deduplication keys avoiding redundant `RwLock` writes and condvar wakes during snapshot publishing.
 struct SnapshotPublishCache {
+    /// Cache key for `audio_info` updates: `(pending_open, active_deck, deck_id, open_gen, flush_gen, dur_ms, sr, ch)`.
     last_audio_info_key: (bool, i32, usize, u64, u64, i64, u32, u32),
+    /// Cache key for `parsed_metadata` updates: `(pending_open, active_deck, deck_id, open_gen, meta_ver, flush_gen)`.
     last_meta_key: (bool, i32, usize, u64, u32, u64),
+    /// Cache key for edge-triggered telemetry wakeups: `(current_index, playback_state, is_buffering)`.
     last_wake_key: (i64, i32, bool),
 }
 
@@ -504,6 +609,7 @@ impl Default for SnapshotPublishCache {
     }
 }
 
+/// Publishes player state from `ply` into `snap`, using `cache` to skip unchanged lock writes.
 fn publish_snapshots(
     ply: &MiniaudioPlayer,
     snap: &EngineUiSnapshots,
@@ -658,12 +764,19 @@ fn publish_snapshots(
     }
 }
 
+/// Deduplication state preventing repeated `PrewarmNeeded` and `AutoAdvanceNeeded` hints
+/// within the same deck/open/seek generation.
 #[derive(Default)]
 struct LifecycleHintState {
+    /// Last emitted prewarm hint key: `(deck_id, open_gen, current_index)`.
     last_prewarm_hint_key: Option<(usize, u64, i64)>,
+    /// Last emitted auto-advance hint key: `(deck_id, open_gen, seek_epoch, next_idx, item_id)`.
     last_auto_advance_key: Option<(usize, u64, u64, usize, i64)>,
 }
 
+/// Evaluates crossfade completion, standby prewarm readiness, track EOF/auto-advance,
+/// recording errors, and Infinite Mix replenishment on `ply`, pushing discrete events to
+/// `notices` and non-blocking coordinator hints to `hint_tx` using `hint_state` for deduplication.
 fn tick_music_lifecycle(
     ply: &mut MiniaudioPlayer,
     notices: &mut Vec<RtEngineNotice>,
@@ -1004,17 +1117,29 @@ fn tick_music_lifecycle(
 /// Handle to the single-owner `map-engine-clock` audio actor, SFX controller, and wait-free snapshots.
 #[derive(Clone)]
 pub struct EngineActorHandle {
+    /// Wake-capable queue delivering synchronous and asynchronous commands to `map-engine-clock`.
     cmd_queue: Arc<WakeQueue<RtActorMsg>>,
+    /// Lock-free / wait-free UI and telemetry snapshot store published by `map-engine-clock`.
     snapshots: Arc<EngineUiSnapshots>,
+    /// Lock-free SFX control handle bypassing the real-time clock thread.
     effects: EffectsControl,
+    /// Off-RT reaper handle used to drop heavy objects outside the audio clock thread.
     reaper: ReaperHandle,
+    /// Lock-free multi-bus audio tap registry shared with callers and output sinks.
     tap_registry: Arc<crate::core::tap::TapBusRegistry>,
+    /// Flag indicating whether [`EngineActorHandle::shutdown`] has been called.
     disposed: Arc<AtomicBool>,
+    /// Join handle for the `map-engine-clock` thread.
     clock_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl EngineActorHandle {
-    /// Spawns `map-reaper` and `map-engine-clock`, giving the clock thread exclusive ownership of `MiniaudioPlayer`.
+    /// Spawns `map-reaper` and `map-engine-clock`, giving the clock thread exclusive ownership of
+    /// `MiniaudioPlayer`.
+    ///
+    /// Configures the engine with `sample_rate`, `channels`, `period_size`, `max_voices`,
+    /// `max_ram_bytes`, `device_trigger`, `pause_on_device_change`, `visualizer_source`, and
+    /// `initial_outputs`.
     pub fn spawn(
         sample_rate: u32,
         channels: u32,
@@ -1033,6 +1158,15 @@ impl EngineActorHandle {
         ),
         String,
     > {
+        crate::map_log!(
+            3,
+            "[ENGINE_ACTOR] Spawning map-engine-clock (sr={}, ch={}, period={}, max_voices={}, outputs={})",
+            sample_rate,
+            channels,
+            period_size,
+            max_voices,
+            initial_outputs.len()
+        );
         let mut player = MiniaudioPlayer::new(
             sample_rate,
             channels,
@@ -1047,7 +1181,13 @@ impl EngineActorHandle {
         player
             .output_manager
             .set_visualizer_source(crate::api::types::AudioOutputSource::from(visualizer_source));
-        let _ = player.output_manager.set_outputs(initial_outputs);
+        if let Err(e) = player.output_manager.set_outputs(initial_outputs) {
+            crate::map_log!(
+                2,
+                "[ENGINE_ACTOR] Failed to apply initial outputs during spawn: {}",
+                e
+            );
+        }
 
         let reaper = ReaperHandle::spawn();
         player.effects_manager.attach_reaper(&reaper);
@@ -1260,7 +1400,11 @@ impl EngineActorHandle {
                         }
                     }
                 })
-                .map_err(|e| format!("Failed to spawn map-engine-clock: {}", e))?;
+                .map_err(|e| {
+                    let msg = format!("Failed to spawn map-engine-clock: {}", e);
+                    crate::map_log!(1, "[ENGINE_ACTOR] {}", msg);
+                    msg
+                })?;
             Some(jh)
         };
 
@@ -1303,7 +1447,7 @@ impl EngineActorHandle {
         &self.tap_registry
     }
 
-    /// Executes a command synchronously against the single-owner engine actor, waking the clock
+    /// Executes closure `f` synchronously against the single-owner engine actor, waking the clock
     /// thread immediately and publishing updated snapshots before replying.
     pub fn exec<R: Send + 'static>(
         &self,
@@ -1319,17 +1463,21 @@ impl EngineActorHandle {
                 let _ = tx.send(res);
             }))
         }))) {
+            crate::map_log!(2, "[ENGINE_ACTOR] exec rejected: clock actor stopped");
             return Err("AudioEngineDisposed: clock actor stopped".to_string());
         }
         if crate::sync::can_block_current_thread() {
-            rx.recv()
-                .map_err(|_| "AudioEngineDisposed: clock actor dropped reply".to_string())
+            rx.recv().map_err(|_| {
+                crate::map_log!(2, "[ENGINE_ACTOR] exec failed: clock actor dropped reply");
+                "AudioEngineDisposed: clock actor dropped reply".to_string()
+            })
         } else {
             loop {
                 match rx.try_recv() {
                     Ok(v) => return Ok(v),
                     Err(crossbeam_channel::TryRecvError::Empty) => std::hint::spin_loop(),
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        crate::map_log!(2, "[ENGINE_ACTOR] exec failed: clock actor dropped reply");
                         return Err("AudioEngineDisposed: clock actor dropped reply".to_string());
                     }
                 }
@@ -1337,7 +1485,7 @@ impl EngineActorHandle {
         }
     }
 
-    /// Posts an asynchronous fire-and-forget mutation to `map-engine-clock`.
+    /// Posts an asynchronous fire-and-forget mutation `f` to `map-engine-clock`.
     pub fn exec_async(
         &self,
         f: impl FnOnce(&mut MiniaudioPlayer) + Send + 'static,
@@ -1356,6 +1504,7 @@ impl EngineActorHandle {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
+        crate::map_log!(3, "[ENGINE_ACTOR] Shutting down map-engine-clock and map-reaper");
         self.tap_registry.shutdown();
         let ack = Arc::new((Mutex::new(false), Condvar::new()));
         if self.cmd_queue.send(RtActorMsg::Shutdown(ack.clone()))
@@ -1367,6 +1516,10 @@ impl EngineActorHandle {
             while !*done {
                 let now = Instant::now();
                 if now >= deadline {
+                    crate::map_log!(
+                        2,
+                        "[ENGINE_ACTOR] Timed out waiting for map-engine-clock shutdown ack"
+                    );
                     break;
                 }
                 done = wait_timeout_unpoisoned(cvar, done, deadline - now).0;

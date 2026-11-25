@@ -6,25 +6,38 @@ part of 'miniaudio_player.dart';
 /// to Rust via FFI and rely on the native Rust event pipeline as the authoritative source
 /// for state transitions and telemetry.
 class PlayerAction<T> {
+  /// Owning player coordinator instance.
   final MiniaudioPlayer<T> _player;
+
+  /// Underlying native Rust player handle.
   final rust.RustMiniaudioPlayer _rust;
 
   /// Creates a [PlayerAction] command dispatcher for [_player] and [_rust].
   PlayerAction(this._player, this._rust);
 
-  /// Lane 1 (Queue & Track Navigation): FIFO chain serializing playlist mutations
-  /// and foreground cursor transitions (`setQueue`, `append`, `insertNext`,
-  /// `removeAt`, `reorder*`, `clearQueue`, `setLoopMode`, `setShuffle`, `play`,
-  /// `next`, `previous`). Immediate RT controls (`pause`, `stop`, `seek`,
-  /// `setReplayGain`, volume, DSP, SFX) and hardware/catalog ops bypass this
-  /// lane completely so slow HTTP opens never cause head-of-line blocking.
+  /// FIFO future chain serializing Lane 1 playlist mutations and cursor transitions.
+  ///
+  /// Serializes `setQueue`, `append`, `insertNext`, `removeAt`, `reorder`,
+  /// `reorderByIds`, `clearQueue`, `setLoopMode`, `setShuffle`, `play`, `next`,
+  /// and `previous` so slow HTTP opens on immediate RT controls (`pause`,
+  /// `stop`, `seek`, `setReplayGain`, volume, DSP, SFX) never block Lane 1.
   Future<void> _queueTail = Future.value();
+
+  /// In-flight initial queue population future started by the [MiniaudioPlayer] constructor.
   Future<void>? _initialQueueFuture;
+
+  /// Monotonic request epoch used to supersede queued [play] calls preempted by newer transport commands.
   int _activePlayEpoch = 0;
 
+  /// Registers an initial constructor queue [future] so dependent controls can await it.
   void _trackInitialQueue(Future<void> future) {
     late final Future<void> tracked;
-    tracked = future.then<void>((_) {}, onError: (_) {}).whenComplete(() {
+    tracked = future.then<void>(
+      (_) {},
+      onError: (Object e) {
+        MapLogger.warn('Initial queue setup failed: $e');
+      },
+    ).whenComplete(() {
       if (identical(_initialQueueFuture, tracked)) {
         _initialQueueFuture = null;
       }
@@ -32,6 +45,7 @@ class PlayerAction<T> {
     _initialQueueFuture = tracked;
   }
 
+  /// Waits for any pending constructor-triggered initial queue setup to finish.
   Future<void> _awaitInitialQueueIfPending() async {
     final pending = _initialQueueFuture;
     if (pending != null) {
@@ -39,6 +53,7 @@ class PlayerAction<T> {
     }
   }
 
+  /// Serializes a queue mutation [action] onto the Lane 1 FIFO future chain.
   Future<R> _serializeQueue<R>(Future<R> Function() action) {
     final completer = Completer<R>();
     _queueTail = _queueTail.then((_) async {
@@ -46,12 +61,14 @@ class PlayerAction<T> {
         final result = await action();
         completer.complete(result);
       } catch (e, st) {
+        MapLogger.error('Queued action failed: $e');
         completer.completeError(e, st);
       }
     });
     return completer.future;
   }
 
+  /// Converts an [AudioSource] [s] with assigned engine [id] into a Rust FFI source descriptor.
   rust_types.RustAudioSource _toRustSource(
     AudioSource<dynamic> s,
     int id,
@@ -83,6 +100,7 @@ class PlayerAction<T> {
     );
   }
 
+  /// Assigns a unique ID to [s], registers it with [_player], and returns its Rust descriptor.
   (AudioSource<T> retained, rust_types.RustAudioSource rustSource)
       _prepareSource(
     AudioSource<T> s,
@@ -114,18 +132,18 @@ class PlayerAction<T> {
   /// Starts, resumes, skips to a target track, or seeks within the playlist queue.
   ///
   /// ### Resolution Hierarchy
-  /// - If [id] is non-null: [id] takes precedence over [position].
-  /// - If [id] is `null` and [position] is non-null: [position] is used.
+  /// - If [id] is non-`null`: [id] takes precedence over [position].
+  /// - If [id] is `null` and [position] is non-`null`: [position] is used.
   /// - If both are `null`: targets the current item (or index `0` on first play) and starts/resumes playback.
   ///
   /// ### Behavior
   /// - **First playback (`state.currentIndex == null`)**:
-  ///   - When `shuffled == true` and a target ([id] or [position]) is provided, that track is pinned
+  ///   - When [shuffled] is `true` and a target ([id] or [position]) is provided, that track is pinned
   ///     to index `0` of the active queue and all remaining tracks from the original order are shuffled
   ///     behind it. Playback starts on index `0`.
-  ///   - When `shuffled == true` and no target is provided, the entire queue is shuffled and playback
+  ///   - When [shuffled] is `true` and no target is provided, the entire queue is shuffled and playback
   ///     starts on index `0`.
-  ///   - When `shuffled == false` (or omitted), playback begins at the resolved target (or `0`).
+  ///   - When [shuffled] is `false` (or omitted), playback begins at the resolved target (or `0`).
   /// - **Active queue navigation (`state.currentIndex != null`)**:
   ///   - When both [id] and [position] are `null`, resumes playback of the current track (and seeks if
   ///     [seek] is provided). If [shuffled] is provided, updates shuffle mode.
@@ -168,12 +186,15 @@ class PlayerAction<T> {
         seekMs: seekMs != null ? PlatformInt64Util.from(seekMs) : null,
       );
     } catch (e) {
+      MapLogger.error(
+        'play(id: $id, position: $position, shuffled: $shuffled, seekMs: $seekMs) failed: $e',
+      );
       if (e is MiniaudioPlayerException) rethrow;
       throw MiniaudioPlayerException.fromRustError(e);
     }
   }
 
-  /// Pauses audio playback at current position (Immediate RT lane).
+  /// Pauses audio playback at the current position on the immediate RT lane.
   Future<void> pause() async {
     _player._ensureNotDisposed();
     ++_activePlayEpoch;
@@ -186,7 +207,7 @@ class PlayerAction<T> {
     );
   }
 
-  /// Stops playback and rewinds position to zero (Immediate RT lane).
+  /// Stops playback and rewinds the position to zero on the immediate RT lane.
   Future<void> stop() async {
     _player._ensureNotDisposed();
     ++_activePlayEpoch;
@@ -199,7 +220,7 @@ class PlayerAction<T> {
     );
   }
 
-  /// Seeks to specified position in the currently playing track (Immediate RT lane).
+  /// Seeks to [position] in the currently playing track on the immediate RT lane.
   Future<void> seek(Duration position) async {
     _player._ensureNotDisposed();
     final targetPosition =
@@ -220,7 +241,7 @@ class PlayerAction<T> {
   // Playlist Queue Management
   // =========================================================================
 
-  /// Sets or replaces the music playlist queue without starting playback.
+  /// Sets or replaces the music playlist queue with [sources] without starting playback.
   ///
   /// Resets `state.currentIndex` to `null` until [play] is invoked.
   Future<void> setQueue(List<AudioSource<T>> sources) {
@@ -243,6 +264,7 @@ class PlayerAction<T> {
       try {
         await _rust.setQueue(queue: rustSources);
       } catch (e) {
+        MapLogger.error('setQueue() failed in native engine: $e');
         if (e is MiniaudioPlayerException) rethrow;
         throw MiniaudioPlayerException.fromRustError(e);
       }
@@ -250,13 +272,14 @@ class PlayerAction<T> {
     });
   }
 
-  /// Appends tracks to the end of the current playlist queue.
+  /// Appends [sources] to the end of the current playlist queue.
   Future<void> append(List<AudioSource<T>> sources) {
     _player._ensureNotDisposed();
     if (sources.isEmpty) return Future.value();
 
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      MapLogger.debug('append() requested with ${sources.length} items');
       final rustSources = <rust_types.RustAudioSource>[];
       for (final s in sources) {
         final (_, rustSource) = _prepareSource(s);
@@ -268,11 +291,12 @@ class PlayerAction<T> {
     });
   }
 
-  /// Inserts a track immediately after the active playing track.
+  /// Inserts [source] immediately after the active playing track.
   Future<void> insertNext(AudioSource<T> source) {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      MapLogger.debug('insertNext() requested for uri=${source.uri}');
       final (_, rustSource) = _prepareSource(source);
       final seqBefore = _player._queueEventSeq;
       await _rust.insertNext(source: rustSource);
@@ -286,6 +310,7 @@ class PlayerAction<T> {
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
       if (index < 0) return;
+      MapLogger.debug('removeAt($index) requested');
       final seqBefore = _player._queueEventSeq;
       final removed = await _rust.removeAt(index: BigInt.from(index));
       if (removed) {
@@ -304,6 +329,7 @@ class PlayerAction<T> {
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
       if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex) return;
+      MapLogger.debug('reorder($oldIndex -> $newIndex) requested');
       final seqBefore = _player._queueEventSeq;
       final moved = await _rust.reorder(
         oldIndex: BigInt.from(oldIndex),
@@ -320,6 +346,7 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      MapLogger.debug('reorderByIds() requested (${ids.length} ids)');
       final seqBefore = _player._queueEventSeq;
       final changed = await _rust.reorderByIds(ids: Int64List.fromList(ids));
       if (changed) {
@@ -328,11 +355,12 @@ class PlayerAction<T> {
     });
   }
 
-  /// Clears the playlist queue. If [keepCurrent] is true, retains the playing track.
+  /// Clears the playlist queue, optionally preserving the playing track when [keepCurrent] is `true`.
   Future<void> clearQueue({bool keepCurrent = false}) {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      MapLogger.info('clearQueue(keepCurrent: $keepCurrent) requested');
       final seqBefore = _player._queueEventSeq;
       await _rust.clearQueue(keepCurrent: keepCurrent);
       await _player._waitForQueueEventAfter(seqBefore);
@@ -346,11 +374,14 @@ class PlayerAction<T> {
     });
   }
 
-  /// Advances to the next track in the playlist queue.
+  /// Advances to the next track in the playlist queue, optionally overriding [crossfadeDuration].
   Future<void> next({Duration? crossfadeDuration}) async {
     final pendingMutations = _queueTail;
     await pendingMutations;
     _player._ensureNotDisposed();
+    MapLogger.info(
+      'next(crossfadeMs: ${crossfadeDuration?.inMilliseconds}) requested',
+    );
     await _rust.next(
       crossfadeDurationMs: crossfadeDuration != null
           ? BigInt.from(crossfadeDuration.inMilliseconds)
@@ -358,42 +389,51 @@ class PlayerAction<T> {
     );
   }
 
-  /// Skips back to the previous track, or start of current track if > 3s played.
+  /// Skips back to the previous track, or restarts the current track if more than 3 seconds have played.
   Future<void> previous() async {
     final pendingMutations = _queueTail;
     await pendingMutations;
     _player._ensureNotDisposed();
+    MapLogger.info('previous() requested');
     await _rust.previous();
   }
 
-  /// Configures playlist repeat mode ([LoopMode.off], [LoopMode.one], [LoopMode.all]).
+  /// Configures playlist repeat [mode] ([LoopMode.off], [LoopMode.one], or [LoopMode.all]).
   Future<void> setLoopMode(LoopMode mode) {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      MapLogger.debug('setLoopMode(${mode.name}) requested');
       await _rust.setLoopMode(mode: mode.index);
     });
   }
 
-  /// Enables or disables non-destructive shuffle on the playlist queue.
+  /// Enables or disables non-destructive shuffle on the playlist queue via [enabled].
   Future<void> setShuffle(bool enabled) {
     _player._ensureNotDisposed();
     return _serializeQueue(() async {
       _player._ensureNotDisposed();
+      MapLogger.debug('setShuffle($enabled) requested');
       await _rust.setShuffle(enabled: enabled);
     });
   }
 
-  /// Sets the dynamic queue replenishment provider callback for Infinite Mix.
+  /// Sets the dynamic queue replenishment [provider] callback for Infinite Mix.
   ///
   /// Pass `null` to remove the active provider.
   void setInfiniteMixProvider(InfiniteMixProvider<T>? provider) {
+    MapLogger.debug(
+      'setInfiniteMixProvider(${provider == null ? "null" : "installed"})',
+    );
     _player._infiniteMixProvider = provider;
   }
 
-  /// Configures infinite queue replenishment when playback approaches the end of the queue.
+  /// Configures infinite queue replenishment using [config] when playback approaches the end of the queue.
   Future<void> setInfiniteMix(InfiniteMixConfig config) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setInfiniteMix(enabled: ${config.enabled}, threshold: ${config.remainingTracksThreshold})',
+    );
     await _rust.setInfiniteMix(
       config: rust_types.RustInfiniteMixConfig(
         enabled: config.enabled,
@@ -402,9 +442,13 @@ class PlayerAction<T> {
     );
   }
 
-  /// Configures crossfade duration and curve between queue tracks.
+  /// Configures crossfade duration and curve between queue tracks using [config].
   Future<void> setCrossfade(CrossfadeConfig config) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setCrossfade(autoMs: ${config.autoDuration.inMilliseconds}, '
+      'manualMs: ${config.manualDuration.inMilliseconds}, curve: ${config.curve.name})',
+    );
     await _rust.setCrossfade(
       config: rust_types.RustCrossfadeConfig(
         autoDurationMs: BigInt.from(
@@ -426,7 +470,7 @@ class PlayerAction<T> {
   // Audio Modulation & DSP Controls
   // =========================================================================
 
-  /// Modulates master audio volume (`>= 0.0`, unconstrained upper limit).
+  /// Modulates master audio [volume] (`>= 0.0`, unconstrained upper limit).
   Future<void> setVolume(double volume) async {
     _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
@@ -436,39 +480,44 @@ class PlayerAction<T> {
     await _rust.setVolume(volume: volume.toDouble());
   }
 
-  /// Modulates playback rate multiplier preserving pitch (`> 0.0`).
+  /// Modulates playback [rate] multiplier preserving pitch (`> 0.0`).
   Future<void> setRate(double rate) async {
     _player._ensureNotDisposed();
     if (rate.isNaN || rate.isInfinite || rate <= 0.0) {
       throw ArgumentError.value(rate, 'rate', 'Rate must be > 0.0');
     }
+    MapLogger.debug('setRate($rate)');
     await _rust.setRate(rate: rate.toDouble());
   }
 
-  /// Modulates musical pitch multiplier (`> 0.0`).
+  /// Modulates musical [pitch] multiplier (`> 0.0`).
   Future<void> setPitch(double pitch) async {
     _player._ensureNotDisposed();
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Pitch must be > 0.0');
     }
+    MapLogger.debug('setPitch($pitch)');
     await _rust.setPitch(pitch: pitch.toDouble());
   }
 
-  /// Sets stereo balance / pan (`-1.0` left to `+1.0` right).
+  /// Sets stereo [balance] / pan (`-1.0` left to `+1.0` right).
   Future<void> setBalance(double balance) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setBalance($balance)');
     await _rust.setBalance(balance: balance.toDouble());
   }
 
-  /// Toggles monophonic downmixing of stereo channels.
+  /// Toggles monophonic downmixing of stereo channels via [enabled].
   Future<void> setMono(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setMono($enabled)');
     await _rust.setMono(enabled: enabled);
   }
 
-  /// Applies 10-band ISO peaking equalizer configuration.
+  /// Applies the 10-band ISO peaking [equalizer] configuration.
   Future<void> setEqualizer(Equalizer equalizer) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setEqualizer(enabled: ${equalizer.enabled})');
     await _rust.setEqualizer(
       params: rust_types.RustEqualizerParams(
         gains: Float32List.fromList(equalizer.toList()),
@@ -477,9 +526,12 @@ class PlayerAction<T> {
     );
   }
 
-  /// Configures algorithmic studio reverberation.
+  /// Configures algorithmic studio reverberation using [reverb].
   Future<void> setReverb(Reverb reverb) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setReverb(enabled: ${reverb.enabled}, roomSize: ${reverb.roomSize}, wet: ${reverb.wet})',
+    );
     await _rust.setReverb(
       params: rust_types.RustReverbParams(
         roomSize: reverb.roomSize,
@@ -493,18 +545,20 @@ class PlayerAction<T> {
     );
   }
 
-  /// Toggles master True-Peak brickwall limiter protector.
+  /// Toggles the master True-Peak brickwall limiter protector via [enabled].
   Future<void> setLimiter(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setLimiter($enabled)');
     await _rust.setLimiter(enabled: enabled);
   }
 
-  /// Enables or disables real-time 10-band FFT spectrum visualizer calculation in the native engine.
+  /// Enables or disables real-time 10-band FFT spectrum visualizer calculation via [enabled].
   ///
-  /// For events to be emitted across `PlayerStream.visualizer`, this must be set to `true`.
+  /// For events to be emitted across [PlayerStream.visualizer], this must be set to `true`.
   /// Defaults to `false`.
   Future<void> setVisualizerEnabled(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setVisualizerEnabled($enabled)');
     _player.state._visualizerEnabled = enabled;
     if (!enabled) {
       _player.state._visualizer = VisualizerData.empty();
@@ -512,27 +566,32 @@ class PlayerAction<T> {
     await _rust.setVisualizerEnabled(enabled: enabled);
   }
 
-  /// Configures which audio bus feeds the real-time FFT spectrum visualizer.
+  /// Configures which audio bus [source] feeds the real-time FFT spectrum visualizer.
   Future<void> setVisualizerSource(AudioOutputSource source) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setVisualizerSource(${source.name})');
     _player.state._visualizerSource = source;
     await _rust.setVisualizerSource(source: source.value);
   }
 
-  /// Enables or disables metadata dispatch from the native audio engine.
+  /// Enables or disables metadata dispatch from the native audio engine via [enabled].
   ///
-  /// When enabled, [AudioMetadata] events are emitted across `PlayerStream.metadata`
-  /// and stored in `PlayerState.metadata`.
-  ///
-  /// Defaults to `false` to avoid saturating the event bus.
+  /// When `true`, [AudioMetadata] events are emitted across [PlayerStream.metadata]
+  /// and stored in [PlayerState.metadata]. Defaults to `false` to avoid saturating
+  /// the event bus.
   Future<void> setMetadataEnabled(bool enabled) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setMetadataEnabled($enabled)');
     await _rust.setMetadataEnabled(enabled: enabled);
   }
 
-  /// Configures intelligent silence detection and skipping.
+  /// Configures intelligent silence detection and skipping using [config].
   Future<void> setSilenceConfig(SilenceSkipConfig config) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setSilenceConfig(enabled: ${config.enabled}, mode: ${config.mode.name}, '
+      'thresholdDb: ${config.thresholdDb})',
+    );
     await _rust.setSilenceConfig(
       config: rust_types.RustSilenceConfig(
         thresholdDb: config.thresholdDb,
@@ -556,6 +615,9 @@ class PlayerAction<T> {
     _player._ensureNotDisposed();
     await _awaitInitialQueueIfPending();
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setReplayGain(id: $id, position: $position, gainDb: ${config?.gainDb})',
+    );
     await _rust.setReplayGain(
       config: config != null
           ? rust_types.RustReplayGainConfig(
@@ -593,15 +655,20 @@ class PlayerAction<T> {
     }
   }
 
-  /// Sets preamplifier gain in decibels.
+  /// Sets preamplifier gain in decibels via [preampDb].
   Future<void> setPreamp(double preampDb) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setPreamp($preampDb dB)');
     await _rust.setPreamp(preampDb: preampDb.toDouble());
   }
 
-  /// Configures Bauer stereophonic-to-binaural (BS2B) crossfeed filtering.
+  /// Configures Bauer stereophonic-to-binaural (BS2B) [crossfeed] filtering.
   Future<void> setCrossfeed(Crossfeed crossfeed) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setCrossfeed(enabled: ${crossfeed.enabled}, cutoffHz: ${crossfeed.cutoffHz}, '
+      'feedDb: ${crossfeed.feedDb})',
+    );
     await _rust.setCrossfeed(
       config: rust_types.RustCrossfeedConfig(
         enabled: crossfeed.enabled,
@@ -611,32 +678,35 @@ class PlayerAction<T> {
     );
   }
 
-  /// Configures stereo widener spatializer.
+  /// Configures the stereo widener spatializer with [enabled] and [width].
   Future<void> setSpatializer({
     required bool enabled,
     double width = 1.0,
   }) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('setSpatializer(enabled: $enabled, width: $width)');
     await _rust.setSpatializer(enabled: enabled, width: width.toDouble());
   }
 
-  /// Sets default ReplayGain fallback adjustment in dB and peak.
+  /// Sets default ReplayGain fallback adjustment in [gainDb] and [peak].
   Future<void> setDefaultReplayGain(double gainDb, {double peak = 1.0}) async {
     _player._ensureNotDisposed();
     await _awaitInitialQueueIfPending();
     _player._ensureNotDisposed();
+    MapLogger.debug('setDefaultReplayGain(gainDb: $gainDb, peak: $peak)');
     await _rust.setDefaultReplayGain(gainDb: gainDb, peak: peak);
   }
 
-  /// Sets ReplayGain calculation mode.
+  /// Sets the ReplayGain calculation [mode].
   Future<void> setReplayGainMode(ReplayGainMode mode) async {
     _player._ensureNotDisposed();
     await _awaitInitialQueueIfPending();
     _player._ensureNotDisposed();
+    MapLogger.debug('setReplayGainMode(${mode.name})');
     await _rust.setReplayGainMode(mode: mode.index);
   }
 
-  /// Configures resilience behavior when audio playback devices change.
+  /// Configures resilience behavior when audio playback devices change via [enabled].
   Future<void> setPauseOnDeviceChange(bool enabled) async {
     _player._ensureNotDisposed();
     MapLogger.info(
@@ -645,7 +715,7 @@ class PlayerAction<T> {
     await _rust.setPauseOnDeviceChange(enabled: enabled);
   }
 
-  /// Updates playback buffer period size in frames.
+  /// Updates the playback buffer period size to [bufferSizeFrames] frames.
   Future<void> setBufferSize(int bufferSizeFrames) async {
     _player._ensureNotDisposed();
     if (bufferSizeFrames < 0) {
@@ -655,6 +725,7 @@ class PlayerAction<T> {
         'Buffer size must be non-negative',
       );
     }
+    MapLogger.debug('setBufferSize($bufferSizeFrames frames)');
     await _rust.setBufferSize(bufferSizeFrames: bufferSizeFrames);
   }
 
@@ -662,7 +733,7 @@ class PlayerAction<T> {
   // Autonomous Memory-Budgeted Sound Effects Subsystem
   // =========================================================================
 
-  /// Registers or replaces the catalog of sound effects in the native audio engine.
+  /// Registers or replaces the catalog of sound [effects] in the native audio engine.
   ///
   /// Memory-backed effects (`AudioSource(Uint8List)`) are decoded and pinned in RAM
   /// (immune to eviction), while Dart immediately releases its local byte references.
@@ -671,9 +742,14 @@ class PlayerAction<T> {
   /// autonomously by Rust's multi-factor eviction scorer.
   Future<void> setEffects(List<AudioEffect> effects) async {
     _player._ensureNotDisposed();
+    MapLogger.info('setEffects() requested with ${effects.length} effects');
     final rustEffects = <rust_types.RustAudioEffect>[];
     for (final effect in effects) {
       if (effect.source._directErrorCode != null) {
+        MapLogger.warn(
+          'setEffects rejected invalid source for effect "${effect.id}": '
+          '${effect.source._directErrorMessage}',
+        );
         throw MiniaudioPlayerException(
           effect.source._directErrorMessage ??
               'Invalid audio source for effect "${effect.id}".',
@@ -699,7 +775,7 @@ class PlayerAction<T> {
     _player.state._allocatedRamBytes = _rust.getAllocatedRamBytes().toInt();
   }
 
-  /// Triggers playback of a polyphonic sound effect and returns a live [Voice] handle.
+  /// Triggers playback of a polyphonic sound effect identified by [id] and returns a live [Voice] handle.
   ///
   /// If the effect is not currently decoded in RAM, Rust decodes it on demand and
   /// reactively enforces the configured RAM budget using the multi-factor retention score.
@@ -739,6 +815,10 @@ class PlayerAction<T> {
       );
     }
 
+    MapLogger.debug(
+      'playEffect("$id", volume: ${config.volume}, pitch: ${config.pitch}, '
+      'rate: ${config.rate}, looping: ${config.looping})',
+    );
     final voiceId = await _rust.playEffect(
       id: id,
       config: rust_types.RustEffectConfig(
@@ -763,12 +843,15 @@ class PlayerAction<T> {
     return Voice(voiceId, this);
   }
 
-  /// Stops an active polyphonic voice with a linear fade-out.
+  /// Stops an active polyphonic voice [voiceId] with a linear [fadeOut].
   Future<void> _stopVoice(
     int voiceId, {
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      '_stopVoice(voiceId: $voiceId, fadeOutMs: ${fadeOut.inMilliseconds})',
+    );
     await _rust.stopEffect(
       voiceId: voiceId,
       fadeOutMs: BigInt.from(fadeOut.inMilliseconds),
@@ -776,64 +859,85 @@ class PlayerAction<T> {
     _player.state._activeVoicesCount = _rust.getActiveVoicesCount().toInt();
   }
 
-  /// Stops all currently rendering polyphonic effect voices.
+  /// Stops all currently rendering polyphonic effect voices with a linear [fadeOut].
   Future<void> stopAllEffects({
     Duration fadeOut = const Duration(milliseconds: 5),
   }) async {
     _player._ensureNotDisposed();
+    MapLogger.debug('stopAllEffects(fadeOutMs: ${fadeOut.inMilliseconds})');
     await _rust.stopAllEffects(fadeOutMs: BigInt.from(fadeOut.inMilliseconds));
     _player.state._activeVoicesCount = _rust.getActiveVoicesCount().toInt();
   }
 
-  /// Modulates the volume of an active polyphonic voice in real time (`>= 0.0`).
+  /// Modulates the linear [volume] of an active polyphonic [voiceId] in real time (`>= 0.0`).
   Future<void> _setVoiceVolume(int voiceId, double volume) async {
     _player._ensureNotDisposed();
     if (volume.isNaN || volume.isInfinite || volume < 0.0) {
       throw ArgumentError.value(
           volume, 'volume', 'Voice volume must be >= 0.0');
     }
+    if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+      MapLogger.verbose('_setVoiceVolume(voiceId: $voiceId, volume: $volume)');
+    }
     await _rust.setEffectVolume(voiceId: voiceId, volume: volume.toDouble());
   }
 
-  /// Modulates the pitch of an active polyphonic voice in real time (`> 0.0`).
+  /// Modulates the [pitch] multiplier of an active polyphonic [voiceId] in real time (`> 0.0`).
   Future<void> _setVoicePitch(int voiceId, double pitch) async {
     _player._ensureNotDisposed();
     if (pitch.isNaN || pitch.isInfinite || pitch <= 0.0) {
       throw ArgumentError.value(pitch, 'pitch', 'Voice pitch must be > 0.0');
     }
+    if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+      MapLogger.verbose('_setVoicePitch(voiceId: $voiceId, pitch: $pitch)');
+    }
     await _rust.setEffectPitch(voiceId: voiceId, pitch: pitch.toDouble());
   }
 
-  /// Modulates the stereo balance of an active polyphonic voice (`-1.0` to `1.0`).
+  /// Modulates the stereo [balance] of an active polyphonic [voiceId] (`-1.0` to `1.0`).
   Future<void> _setVoiceBalance(int voiceId, double balance) async {
     _player._ensureNotDisposed();
+    if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+      MapLogger.verbose(
+        '_setVoiceBalance(voiceId: $voiceId, balance: $balance)',
+      );
+    }
     await _rust.setEffectBalance(voiceId: voiceId, balance: balance.toDouble());
   }
 
-  /// Updates the 3D position and velocity of an active polyphonic voice.
+  /// Updates the 3D position and velocity [emitter] of an active polyphonic [voiceId].
   Future<void> _setVoiceEmitter(
     int voiceId,
     SpatialEmitter emitter,
   ) async {
     _player._ensureNotDisposed();
+    if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+      MapLogger.verbose('_setVoiceEmitter(voiceId: $voiceId)');
+    }
     await _rust.setEffectEmitter(
       voiceId: voiceId,
       emitter: _toRustEmitter(emitter),
     );
   }
 
-  /// Updates the 3D spatial position, orientation, and velocity of the global listener.
+  /// Updates the 3D spatial position, orientation, and velocity of the global [listener].
   Future<void> setListener(SpatialListener listener) async {
     _player._ensureNotDisposed();
+    if (MapLogger.isEnabled(MiniaudioLogLevel.verbose)) {
+      MapLogger.verbose('setListener()');
+    }
     await _rust.setListener(listener: _toRustListener(listener));
   }
 
-  /// Calibrates the global physics of the 3D Doppler effect.
+  /// Calibrates the global physics of the 3D Doppler effect via [factor] and [speedOfSound].
   Future<void> setDopplerParameters({
     double factor = 1.0,
     double speedOfSound = 343.3,
   }) async {
     _player._ensureNotDisposed();
+    MapLogger.debug(
+      'setDopplerParameters(factor: $factor, speedOfSound: $speedOfSound)',
+    );
     await _rust.setDopplerParameters(
       factor: factor,
       speedOfSound: speedOfSound,
@@ -874,9 +978,12 @@ class PlayerAction<T> {
     );
   }
 
-  /// Adds an output destination to this player's active outputs.
+  /// Adds an [output] destination to this player's active outputs.
   Future<void> addOutput(AudioOutput output) async {
     _player._ensureNotDisposed();
+    MapLogger.info(
+      '[ACTION:ADD_OUTPUT] addOutput(${output.deviceId}, source: ${output.source.name})',
+    );
     await _rust.addOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
@@ -885,9 +992,12 @@ class PlayerAction<T> {
     );
   }
 
-  /// Removes an output destination from this player's active outputs.
+  /// Removes an [output] destination from this player's active outputs.
   Future<void> removeOutput(AudioOutput output) async {
     _player._ensureNotDisposed();
+    MapLogger.info(
+      '[ACTION:REMOVE_OUTPUT] removeOutput(${output.deviceId}, source: ${output.source.name})',
+    );
     await _rust.removeOutput(
       output: rust_types.RustAudioOutput(
         deviceId: output.deviceId,
@@ -917,20 +1027,16 @@ class PlayerAction<T> {
   /// `buffer: MemoryRecordingBuffer()` (or a custom [RecordingByteBuffer]) for a
   /// universal cross-browser in-memory fallback.
   ///
-  /// Parameters:
-  /// - [pathOrBuffer]: Either a local filesystem path / `file://` URI / Android writable
-  ///   `content://` URI / Web OPFS relative or absolute path (`String`), a
-  ///   [RecordingByteBuffer], or `null` when passing [buffer] explicitly.
-  /// - [buffer]: Optional [RecordingByteBuffer] (such as [MemoryRecordingBuffer]).
-  ///   When both a [String] path and [buffer] are supplied, a warning is logged and
-  ///   [buffer] takes precedence.
-  /// - [format]: Container/sample preset (e.g., [AudioFileFormat.wav],
-  ///   [AudioFileFormat.wavFloat32], [AudioFileFormat.rf64], [AudioFileFormat.w64],
-  ///   [AudioFileFormat.aiff], [AudioFileFormat.caf], or [AudioFileFormat.wavPack]).
-  ///   Formats without an active encoder ([AudioFileFormat.mp3], [AudioFileFormat.flac])
-  ///   throw [MiniaudioPlayerException] with [MapResult.errorUnsupported].
-  /// - [source]: Engine audio bus to record.
-  /// - [wavFormat]: Optional bit-depth override (`pcm16` or `float32`) when supported by [format].
+  /// Accepts [pathOrBuffer] (a local filesystem path, `file://` URI, Android writable
+  /// `content://` URI, Web OPFS relative or absolute path [String], [RecordingByteBuffer],
+  /// or `null` when passing [buffer] explicitly). When both a [String] path and [buffer]
+  /// are supplied, a warning is logged and [buffer] takes precedence. Encodes audio using
+  /// [format] (such as [AudioFileFormat.wav], [AudioFileFormat.wavFloat32],
+  /// [AudioFileFormat.rf64], [AudioFileFormat.w64], [AudioFileFormat.aiff],
+  /// [AudioFileFormat.caf], or [AudioFileFormat.wavPack]; formats without an active
+  /// encoder such as [AudioFileFormat.mp3] or [AudioFileFormat.flac] throw
+  /// [MiniaudioPlayerException] with [MapResult.errorUnsupported]) from engine bus [source],
+  /// optionally overriding WAV bit depth with [wavFormat].
   Future<void> startRecording(
     Object? pathOrBuffer, {
     RecordingByteBuffer? buffer,
@@ -991,6 +1097,9 @@ class PlayerAction<T> {
     _player._isStartingRecording = true;
     try {
       if (resolvedBuffer != null) {
+        MapLogger.info(
+          'Starting buffer recording (format=${effectiveEncoding.name}, source=${source.name})',
+        );
         final session = _DartBufferRecordingSession<T>(
           player: _player,
           buffer: resolvedBuffer,
@@ -1037,6 +1146,10 @@ class PlayerAction<T> {
           );
         }
         final canonicalOpfsPath = parsed.canonicalPath!;
+        MapLogger.info(
+          'Starting Web OPFS recording (path="$canonicalOpfsPath", '
+          'format=${effectiveEncoding.name}, source=${source.name})',
+        );
         try {
           await _rust.startRecording(
             path: canonicalOpfsPath,
@@ -1046,6 +1159,7 @@ class PlayerAction<T> {
           _player._activeRecordingFormat = effectiveEncoding;
           _player._activeRecordingIsOpfs = true;
         } catch (e) {
+          MapLogger.error('Failed to start Web OPFS recording: $e');
           throw MiniaudioPlayerException.fromRustError(
             e,
             prefix: 'Failed to start Web OPFS recording',
@@ -1063,6 +1177,10 @@ class PlayerAction<T> {
       }
 
       if (trimmedPath.toLowerCase().startsWith('content://')) {
+        MapLogger.info(
+          'Starting Android content:// recording (uri="$trimmedPath", '
+          'format=${effectiveEncoding.name}, source=${source.name})',
+        );
         final fd = await openWritableAndroidContentFd(trimmedPath);
         try {
           await _rust.startRecordingFd(
@@ -1074,6 +1192,7 @@ class PlayerAction<T> {
           _player._activeRecordingFormat = effectiveEncoding;
           _player._activeRecordingIsOpfs = false;
         } catch (e) {
+          MapLogger.error('Failed to start content:// recording: $e');
           throw MiniaudioPlayerException.fromRustError(
             e,
             prefix: 'Failed to start content:// recording',
@@ -1083,6 +1202,10 @@ class PlayerAction<T> {
         return;
       }
 
+      MapLogger.info(
+        'Starting native file recording (path="$resolvedPath", '
+        'format=${effectiveEncoding.name}, source=${source.name})',
+      );
       try {
         await _rust.startRecording(
           path: resolvedPath,
@@ -1092,6 +1215,7 @@ class PlayerAction<T> {
         _player._activeRecordingFormat = effectiveEncoding;
         _player._activeRecordingIsOpfs = false;
       } catch (e) {
+        MapLogger.error('Failed to start native file recording: $e');
         throw MiniaudioPlayerException.fromRustError(
           e,
           prefix: 'Failed to start recording',
@@ -1103,7 +1227,10 @@ class PlayerAction<T> {
     }
   }
 
-  /// Convenience alias starting live WAV recording directly into a [RecordingByteBuffer].
+  /// Starts live audio recording directly into [buffer].
+  ///
+  /// Configures the recording container using [format], captures from engine bus [source],
+  /// and optionally overrides WAV sample encoding via [wavFormat].
   Future<void> startRecordingToBuffer(
     RecordingByteBuffer buffer, {
     AudioFileFormat format = AudioFileFormat.wav,
@@ -1124,19 +1251,22 @@ class PlayerAction<T> {
   /// When recorded with a relative or absolute path (or optional `opfs://` prefix) on Web,
   /// [RecordingResult.isOpfs] is `true` and [RecordingResult.path] holds the canonical
   /// sanitized OPFS path without any `opfs://` prefix or leading `/` (for example
-  /// `'temporal/sistema/test/1.wav'`), ready for `download()`, `toAudioSource()`,
-  /// `readBytes()`, `delete()`, or `MiniaudioPlayer.analyzeAudio(res.path)`.
+  /// `'temporal/sistema/test/1.wav'`), ready for [RecordingResult.download],
+  /// [RecordingResult.toAudioSource], [RecordingResult.readBytes],
+  /// [RecordingResult.delete], or [MiniaudioPlayer.analyzeAudio].
   Future<RecordingResult> stopRecording() async {
     _player._ensureNotDisposed();
     final dartSession = _player._activeDartRecording;
     if (dartSession != null) {
       _player._activeDartRecording = null;
+      MapLogger.info('Stopping Dart buffer recording session');
       return await dartSession.stop();
     }
 
+    MapLogger.info('Stopping native recording session');
     try {
       final res = await _rust.stopRecording();
-      return RecordingResult(
+      final result = RecordingResult(
         path: res.path,
         duration: Duration(milliseconds: res.durationMs.toInt()),
         bytesWritten: res.bytesWritten.toInt(),
@@ -1145,7 +1275,13 @@ class PlayerAction<T> {
         format: _player._activeRecordingFormat,
         isOpfs: _player._activeRecordingIsOpfs,
       );
+      MapLogger.info(
+        'Recording stopped (path="${result.path}", durationMs=${result.duration.inMilliseconds}, '
+        'bytes=${result.bytesWritten}, droppedFrames=${result.droppedFrames})',
+      );
+      return result;
     } catch (e) {
+      MapLogger.error('Failed to stop recording: $e');
       throw MiniaudioPlayerException.fromRustError(
         e,
         prefix: 'Failed to stop recording',
@@ -1157,9 +1293,9 @@ class PlayerAction<T> {
     }
   }
 
-  /// Subscribes to a lock-free broadcast Push PCM stream for the given audio bus.
+  /// Subscribes to a lock-free broadcast Push PCM stream for [source].
   ///
-  /// Multiple listeners sharing the same `(source, format, frameDuration)` key reuse
+  /// Multiple listeners sharing the same ([source], [format], [frameDuration]) key reuse
   /// a single native dispatcher stream and unmodifiable chunk view without extra copies.
   Stream<AudioPcmChunk> watchAudioBus({
     AudioOutputSource source = AudioOutputSource.all,
@@ -1173,7 +1309,9 @@ class PlayerAction<T> {
     );
   }
 
-  /// Opens a zero-allocation reusable PCM Pull buffer reading directly from an audio bus.
+  /// Opens a zero-allocation reusable PCM Pull buffer reading directly from [source].
+  ///
+  /// Allocates a buffer of [capacityFrames] frames using sample encoding [format].
   Future<AudioTapBuffer> openAudioTapBuffer({
     AudioOutputSource source = AudioOutputSource.all,
     AudioTapFormat format = AudioTapFormat.float32,
@@ -1190,6 +1328,7 @@ class PlayerAction<T> {
   // Input Routing Matrix & Multi-Capture
   // =========================================================================
 
+  /// Validates and converts an [AudioInputConfig] [config] into its Rust FFI struct.
   rust_types.RustAudioInputConfig _toRustInputConfig(AudioInputConfig config) {
     if (config.volume.isNaN ||
         config.volume.isInfinite ||
@@ -1217,6 +1356,7 @@ class PlayerAction<T> {
     );
   }
 
+  /// Converts an [AudioInput] [input] into its Rust FFI struct.
   rust_types.RustAudioInput _toRustInput(AudioInput input) {
     return rust_types.RustAudioInput(
       deviceId: input.deviceId,
@@ -1224,7 +1364,7 @@ class PlayerAction<T> {
     );
   }
 
-  /// Sets the active audio capture inputs, reconciling them in the Rust engine.
+  /// Sets the active audio capture [inputs], reconciling them in the Rust engine.
   ///
   /// If [inputs] is empty (`{}`), all capture nodes are closed.
   ///
@@ -1248,7 +1388,7 @@ class PlayerAction<T> {
     );
   }
 
-  /// Adds an audio input capture node to the player.
+  /// Adds an audio [input] capture node to the player.
   ///
   /// Throws [StateError] if an input with the same device identifier is already active.
   Future<void> addInput(AudioInput input) async {
@@ -1258,18 +1398,20 @@ class PlayerAction<T> {
         'Input with deviceId ${input.deviceId} is already active. Use configureInput to modify it.',
       );
     }
+    MapLogger.info('[ACTION:ADD_INPUT] addInput(${input.deviceId})');
     await _rust.addInput(input: _toRustInput(input));
   }
 
-  /// Removes an audio input capture node from the player.
+  /// Removes an audio [input] capture node from the player.
   Future<void> removeInput(AudioInput input) async {
     _player._ensureNotDisposed();
+    MapLogger.info('[ACTION:REMOVE_INPUT] removeInput(${input.deviceId})');
     await _rust.removeInput(input: _toRustInput(input));
   }
 
-  /// Modulates runtime parameters of an already active audio input capture node without reopening hardware.
+  /// Modulates runtime [config] parameters of an active capture node identified by [deviceId].
   ///
-  /// Throws [StateError] if no active input exists for the target device.
+  /// Throws [StateError] if no active input exists for [deviceId].
   Future<void> configureInput(
     AudioInputConfig config, {
     String deviceId = 'AUTO',
@@ -1280,6 +1422,10 @@ class PlayerAction<T> {
         'Cannot configure input: deviceId $deviceId is not currently active.',
       );
     }
+    MapLogger.debug(
+      'configureInput(deviceId: $deviceId, volume: ${config.volume}, '
+      'monitorDirect: ${config.monitorDirect})',
+    );
     await _rust.configureInput(
       deviceId: deviceId,
       config: _toRustInputConfig(config),
@@ -1290,6 +1436,7 @@ class PlayerAction<T> {
   // Spatial Conversion Helpers
   // =========================================================================
 
+  /// Converts a [SpatialEmitter] [e] into its Rust FFI descriptor.
   static rust_types.RustSpatialEmitter _toRustEmitter(SpatialEmitter e) =>
       rust_types.RustSpatialEmitter(
         position: rust_types.RustVector3(
@@ -1319,6 +1466,7 @@ class PlayerAction<T> {
         distanceModel: rust_types.RustDistanceModel.inverse,
       );
 
+  /// Converts a [SpatialListener] [l] into its Rust FFI descriptor.
   static rust_types.RustSpatialListener _toRustListener(SpatialListener l) =>
       rust_types.RustSpatialListener(
         position: rust_types.RustVector3(

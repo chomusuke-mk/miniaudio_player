@@ -14,6 +14,7 @@ pub enum PlaybackState {
 }
 
 impl PlaybackState {
+    /// Converts a raw integer transport code `v` into a [`PlaybackState`], defaulting unknown values to [`PlaybackState::Stopped`].
     #[inline]
     pub const fn from_i32(v: i32) -> Self {
         match v {
@@ -23,6 +24,7 @@ impl PlaybackState {
         }
     }
 
+    /// Converts this [`PlaybackState`] into its raw `i32` ABI representation.
     #[inline]
     pub const fn as_i32(self) -> i32 {
         self as i32
@@ -43,6 +45,7 @@ pub enum QueueTransition {
 }
 
 impl QueueTransition {
+    /// Converts a raw integer transition code `v` into a [`QueueTransition`], defaulting unknown values to [`QueueTransition::Idle`].
     #[inline]
     pub const fn from_i32(v: i32) -> Self {
         match v {
@@ -52,11 +55,13 @@ impl QueueTransition {
         }
     }
 
+    /// Converts this [`QueueTransition`] into its raw `i32` ABI representation.
     #[inline]
     pub const fn as_i32(self) -> i32 {
         self as i32
     }
 
+    /// Returns `true` when this transition represents an active auto or manual crossfade.
     #[inline]
     pub const fn is_crossfading(self) -> bool {
         matches!(self, Self::AutoCrossfade | Self::ManualCrossfade)

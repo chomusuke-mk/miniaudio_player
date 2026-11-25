@@ -19,7 +19,6 @@ export 'src/api/dsp_config.dart';
 export 'src/api/logger.dart';
 export 'src/api/loop_mode.dart';
 export 'src/api/miniaudio_player.dart';
-export 'src/api/need_more_tracks_event.dart';
 export 'src/api/player_exception.dart';
 export 'src/api/player_models.dart';
 export 'src/api/recording.dart';

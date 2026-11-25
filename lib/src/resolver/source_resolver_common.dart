@@ -1,57 +1,76 @@
+/// Platform-independent audio source URI normalization and OPFS path helpers.
+///
+/// @docImport '../api/miniaudio_player.dart';
+library;
+
 import 'dart:convert' show utf8;
 import 'dart:typed_data';
 
+import '../api/logger.dart';
 import '../api/player_exception.dart';
 import '../loader/custom_byte_provider.dart';
 
-/// Canonical parse outcome for Web OPFS paths (without retaining `opfs://` or leading `/`).
+/// Canonical parse outcome for Web OPFS paths without retaining `opfs://` or
+/// leading `/`.
 class OpfsPathParseResult {
-  /// Canonical OPFS path (e.g. `'temporal/sistema/test/1.wav'` or `'1.wav'`), or `null` on error.
+  /// Canonical OPFS path (for example `'temporal/sistema/test/1.wav'` or
+  /// `'1.wav'`), or `null` when parsing fails.
   final String? canonicalPath;
 
   /// Whether an optional `opfs://` prefix was supplied and stripped.
   final bool hadOpfsPrefix;
 
-  /// Optional [MapResult] error code (`null` on success).
+  /// Optional [MapResult] error code, or `null` on success.
   final int? errorCode;
 
-  /// Human-readable error message (`null` on success).
+  /// Human-readable error message paired with [errorCode], or `null` on
+  /// success.
   final String? errorMessage;
 
+  /// Creates a successful [OpfsPathParseResult] carrying [canonicalPath] and
+  /// whether [hadOpfsPrefix] was present.
   const OpfsPathParseResult.ok(
     this.canonicalPath, {
     required this.hadOpfsPrefix,
   })  : errorCode = null,
         errorMessage = null;
 
+  /// Creates a failed [OpfsPathParseResult] with [errorCode], [errorMessage],
+  /// and whether [hadOpfsPrefix] was present.
   const OpfsPathParseResult.err(
     this.errorCode,
     this.errorMessage, {
     this.hadOpfsPrefix = false,
   }) : canonicalPath = null;
 
+  /// Whether parsing failed and produced an [errorCode].
   bool get hasError => errorCode != null;
 }
 
-/// Represents the synchronous Dart-side normalization of an [AudioSource] input.
+/// Synchronous Dart-side normalization result for an [AudioSource] input.
 class NormalizedAudioSource {
-  /// Clean source string ready for Rust, or the canonical internal key when
-  /// [resolveInDart] is `true`.
+  /// Clean source string ready for the native engine, or the canonical
+  /// internal key when [resolveInDart] is `true`.
   final String normalizedSource;
 
-  /// Whether Rust must delegate resolution back to Dart (`DartResolveRequest`)
-  /// before opening/decoding this source.
+  /// Whether the engine must delegate resolution back to Dart before opening
+  /// or decoding this source.
   final bool resolveInDart;
 
-  /// Optional immediate validation failure code (e.g. [MapResult.errorUnsupported]).
+  /// Optional immediate validation failure code, such as
+  /// [MapResult.errorUnsupported].
   final int? directErrorCode;
 
   /// Optional descriptive message paired with [directErrorCode].
   final String? directErrorMessage;
 
-  /// Whether a redundant Web `opfs://` prefix was stripped during normalization.
+  /// Whether a redundant Web `opfs://` prefix was stripped during
+  /// normalization.
   final bool strippedOpfsPrefix;
 
+  /// Creates a [NormalizedAudioSource] with [normalizedSource], [resolveInDart],
+  /// optional [directErrorCode] and [directErrorMessage], and
+  /// [strippedOpfsPrefix].
   const NormalizedAudioSource({
     required this.normalizedSource,
     required this.resolveInDart,
@@ -60,33 +79,55 @@ class NormalizedAudioSource {
     this.strippedOpfsPrefix = false,
   });
 
+  /// Whether synchronous normalization detected a validation error.
   bool get hasError => directErrorCode != null;
 }
 
-/// Unified resolution outcome produced by Dart for `asset://`, `package:`,
-/// `content://`, `android.resource://`, `ws://`/`wss://`, and Web debug `asset://`.
+/// Unified asynchronous resolution outcome produced by Dart for deferred
+/// schemes such as `asset://`, `package:`, `content://`, `android.resource://`,
+/// `ws://`, and `wss://`.
 sealed class DartResolvedSourceResult {
+  /// Creates a [DartResolvedSourceResult].
   const DartResolvedSourceResult();
 }
 
-/// Resolved to an ordinary filesystem path consumable directly by Rust.
+/// Resolution result pointing to an ordinary filesystem [path] consumable
+/// directly by the native engine.
 final class DartResolvedPath extends DartResolvedSourceResult {
+  /// Resolved local filesystem path.
   final String path;
+
+  /// Creates a [DartResolvedPath] wrapping [path].
   const DartResolvedPath(this.path);
 }
 
-/// Resolved to a network/asset HTTP URL consumable directly by Rust streaming.
+/// Resolution result pointing to an HTTP or asset [url] consumable directly by
+/// native or browser streaming.
 final class DartResolvedUrl extends DartResolvedSourceResult {
+  /// Resolved HTTP or asset URL string.
   final String url;
+
+  /// Creates a [DartResolvedUrl] wrapping [url].
   const DartResolvedUrl(this.url);
 }
 
-/// Resolved to a detached POSIX file descriptor (+ optional bounded slice).
+/// Resolution result carrying a detached POSIX file descriptor [fd] and an
+/// optional bounded slice.
 final class DartResolvedFd extends DartResolvedSourceResult {
+  /// Detached POSIX file descriptor number.
   final int fd;
+
+  /// Starting byte offset within [fd].
   final int offset;
+
+  /// Optional readable byte length from [offset], or `null` when unbounded.
   final int? length;
+
+  /// Optional lowercase container extension hint without a leading dot.
   final String? hintExt;
+
+  /// Creates a [DartResolvedFd] for [fd], starting at [offset] with optional
+  /// [length] and [hintExt].
   const DartResolvedFd({
     required this.fd,
     this.offset = 0,
@@ -95,18 +136,34 @@ final class DartResolvedFd extends DartResolvedSourceResult {
   });
 }
 
-/// Resolved to full in-memory bytes owned once and transferred to Rust.
+/// Resolution result holding full in-memory audio [bytes] owned once and
+/// transferred to the engine.
 final class DartResolvedBytes extends DartResolvedSourceResult {
+  /// Decodable raw audio file bytes.
   final Uint8List bytes;
+
+  /// Optional lowercase container extension hint without a leading dot.
   final String? hintExt;
+
+  /// Creates a [DartResolvedBytes] containing [bytes] and an optional
+  /// [hintExt].
   const DartResolvedBytes(this.bytes, {this.hintExt});
 }
 
-/// Resolved to an internal live [CustomByteProvider] stream (e.g. WebSocket).
+/// Resolution result wrapping a live pull-based [CustomByteProvider] stream,
+/// such as a WebSocket audio stream.
 final class DartResolvedCustomStream extends DartResolvedSourceResult {
+  /// Internal stream identifier registered with the player engine.
   final int streamId;
+
+  /// Optional lowercase container extension hint without a leading dot.
   final String? hintExt;
+
+  /// Active [CustomByteProvider] supplying stream bytes.
   final CustomByteProvider provider;
+
+  /// Creates a [DartResolvedCustomStream] with [streamId], [provider], and an
+  /// optional [hintExt].
   const DartResolvedCustomStream({
     required this.streamId,
     required this.provider,
@@ -114,19 +171,29 @@ final class DartResolvedCustomStream extends DartResolvedSourceResult {
   });
 }
 
-/// Explicit resolution failure carrying a [MapResult] code and clear message.
+/// Explicit resolution failure carrying a [MapResult] error [code] and
+/// human-readable [message].
 final class DartResolvedError extends DartResolvedSourceResult {
+  /// Numeric [MapResult] error code.
   final int code;
+
+  /// Descriptive failure message.
   final String message;
+
+  /// Creates a [DartResolvedError] with [code] and [message].
   const DartResolvedError(this.code, this.message);
 }
 
+/// Network file-transfer URI schemes rejected with
+/// [MapResult.errorUnsupported].
 const Set<String> _unsupportedNetworkSchemes = <String>{
   'ftp',
   'ftps',
   'sftp',
 };
 
+/// Real-time media transport URI schemes rejected with
+/// [MapResult.errorUnsupported].
 const Set<String> _unsupportedStreamingSchemes = <String>{
   'rtsp',
   'rtsps',
@@ -134,13 +201,16 @@ const Set<String> _unsupportedStreamingSchemes = <String>{
   'rtmps',
 };
 
+/// Apple media library URI schemes that require native export before
+/// playback.
 const Set<String> _unsupportedAppleMediaSchemes = <String>{
   'ipod-library',
   'phasset',
 };
 
-/// Returns the lowercase RFC 3986 URI scheme if present, ignoring Windows
-/// drive letters such as `C:\song.mp3` or `C:/song.mp3`.
+/// Returns the lowercase RFC 3986 URI scheme of [raw] if present, or `null`
+/// for plain paths and Windows drive letters such as `C:\song.mp3` or
+/// `C:/song.mp3`.
 String? extractUriScheme(String raw) {
   final input = raw.trimLeft();
   if (input.isEmpty) return null;
@@ -172,24 +242,34 @@ String? extractUriScheme(String raw) {
   return input.substring(0, colonIdx).toLowerCase();
 }
 
+/// Returns whether UTF-16 code unit [c] is an ASCII letter (`A`–`Z` or
+/// `a`–`z`).
 bool _isAsciiAlpha(int c) =>
     (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
 
+/// Returns whether UTF-16 code unit [c] is an ASCII decimal digit (`0`–`9`).
 bool _isAsciiDigit(int c) => c >= 0x30 && c <= 0x39;
 
-/// Strips `scheme://` or `scheme:` prefix and any leading slashes to obtain a
-/// normalized relative key.
+/// Strips the leading `scheme://` or `scheme:` prefix and any leading slashes
+/// from [rawUri] to obtain a normalized relative key.
 String extractRelativeAssetKey(String rawUri) {
   final colonIdx = rawUri.indexOf(':');
   final afterScheme = colonIdx >= 0 ? rawUri.substring(colonIdx + 1) : rawUri;
   return afterScheme.replaceFirst(RegExp(r'^/+'), '');
 }
 
-/// Extracts a lowercase file extension hint without the leading dot, if any.
+/// Extracts a lowercase file extension hint without a leading dot from [raw],
+/// or `null` if none is present.
+///
+/// Strips query strings and fragments for network URLs, and strips query
+/// strings for Android `content://` and `android.resource://` URIs while
+/// preserving `#` in local filenames.
 String? extractExtensionHintFromSource(String raw) {
   final scheme = extractUriScheme(raw);
-  final isNetworkUrl =
-      scheme == 'http' || scheme == 'https' || scheme == 'ws' || scheme == 'wss';
+  final isNetworkUrl = scheme == 'http' ||
+      scheme == 'https' ||
+      scheme == 'ws' ||
+      scheme == 'wss';
   var clean = raw;
   if (isNetworkUrl) {
     clean = clean.split('#').first.split('?').first;
@@ -206,13 +286,12 @@ String? extractExtensionHintFromSource(String raw) {
   return ext.isEmpty ? null : ext;
 }
 
-/// Encodes a Flutter asset key (`assets/...` or `packages/<pkg>/...`) to the
-/// URL served by Flutter Web.
+/// Encodes a Flutter [assetKey] (`assets/...` or `packages/<pkg>/...`) to the
+/// HTTP URL served by Flutter Web relative to [baseUri] (defaulting to
+/// [Uri.base]).
 ///
-/// Built Web bundles (`flutter build web` for profile/release) expect double
-/// URI encoding (`assets/${Uri.encodeFull(Uri(pathSegments: ...).path)}` ->
-/// `Uri.encodeFull('assets/$once')`), whereas `flutter run -d chrome` debug
-/// mode may serve single-encoded asset keys depending on `WebAssetServer`.
+/// Built Web bundles (`flutter build web`) and `flutter run` asset servers
+/// expect double URI encoding when [doubleEncode] is `true`.
 String buildFlutterWebAssetUrl(
   String assetKey, {
   required bool doubleEncode,
@@ -221,15 +300,19 @@ String buildFlutterWebAssetUrl(
   final cleanKey = assetKey.replaceFirst(RegExp(r'^/+'), '');
   final segments = cleanKey.split('/').where((s) => s.isNotEmpty).toList();
   final onceEncoded = Uri(pathSegments: segments).path;
-  final relPath =
-      doubleEncode ? Uri.encodeFull('assets/$onceEncoded') : 'assets/$onceEncoded';
+  final relPath = doubleEncode
+      ? Uri.encodeFull('assets/$onceEncoded')
+      : 'assets/$onceEncoded';
   return (baseUri ?? Uri.base).resolve(relPath).toString();
 }
 
-/// Resolves a `file://` URI into a clean local filesystem path using RFC 8089 rules.
+/// Resolves a `file://` [rawUri] into a clean local filesystem path using
+/// RFC 8089 rules for Windows when [isWindows] is `true` or POSIX otherwise.
 ///
 /// Unencoded `#` characters in naive string concatenations (`'file://' + path`)
 /// are escaped before parsing so filenames containing `#` are not truncated.
+/// Throws a [FormatException] for malformed or empty `file://` URIs, or an
+/// [UnsupportedError] for non-`localhost` authorities on non-Windows targets.
 String resolveFileUriToPath(String rawUri, {required bool isWindows}) {
   final trimmed = rawUri.trim();
   // Preserve literal '#' as part of the filename instead of a URI fragment.
@@ -263,6 +346,7 @@ String resolveFileUriToPath(String rawUri, {required bool isWindows}) {
   return filePath;
 }
 
+/// Windows reserved DOS device names forbidden as OPFS path segment stems.
 const Set<String> _windowsReservedDeviceNames = <String>{
   'CON',
   'PRN',
@@ -288,8 +372,10 @@ const Set<String> _windowsReservedDeviceNames = <String>{
   'LPT9',
 };
 
+/// Maximum UTF-8 byte length allowed for a single OPFS filename segment.
 const int _opfsMaxSegmentUtf8Bytes = 255;
 
+/// Returns whether UTF-16 code unit [c] is disallowed in OPFS path segments.
 bool _isOpfsForbiddenCharCode(int c) {
   if (c < 0x20 || c == 0x7F) return true;
   return c == 0x3C /* '<' */ ||
@@ -302,13 +388,15 @@ bool _isOpfsForbiddenCharCode(int c) {
       c == 0x5C /* '\\' */;
 }
 
+/// Returns whether [segment] matches a Windows reserved device name stem.
 bool _isWindowsReservedSegment(String segment) {
   final dotIdx = segment.indexOf('.');
-  final stem = (dotIdx >= 0 ? segment.substring(0, dotIdx) : segment)
-      .toUpperCase();
+  final stem =
+      (dotIdx >= 0 ? segment.substring(0, dotIdx) : segment).toUpperCase();
   return _windowsReservedDeviceNames.contains(stem);
 }
 
+/// Returns the UTF-8 byte length required to encode Unicode scalar [rune].
 int _runeUtf8ByteLength(int rune) {
   if (rune <= 0x7F) return 1;
   if (rune <= 0x7FF) return 2;
@@ -316,6 +404,8 @@ int _runeUtf8ByteLength(int rune) {
   return 4;
 }
 
+/// Truncates [text] along Unicode rune boundaries so its UTF-8 encoding does
+/// not exceed [maxBytes].
 String _truncateUtf8ToBytes(String text, int maxBytes) {
   if (maxBytes <= 0 || text.isEmpty) return '';
   final sb = StringBuffer();
@@ -329,6 +419,9 @@ String _truncateUtf8ToBytes(String text, int maxBytes) {
   return sb.toString();
 }
 
+/// Sanitizes a single [rawSegment] for OPFS recording creation, preserving the
+/// file extension when [isLeaf] is `true` and truncating within 255 UTF-8
+/// bytes.
 String _sanitizeOpfsSegment(String rawSegment, {required bool isLeaf}) {
   final sb = StringBuffer();
   for (final codeUnit in rawSegment.codeUnits) {
@@ -354,10 +447,13 @@ String _sanitizeOpfsSegment(String rawSegment, {required bool isLeaf}) {
     if (lastDot > 0) {
       final ext = cleaned.substring(lastDot);
       final extBytes = utf8.encode(ext).length;
-      if (extBytes > 1 && extBytes <= 32 && extBytes < _opfsMaxSegmentUtf8Bytes) {
+      if (extBytes > 1 &&
+          extBytes <= 32 &&
+          extBytes < _opfsMaxSegmentUtf8Bytes) {
         final stemBudget = _opfsMaxSegmentUtf8Bytes - extBytes;
-        var stem = _truncateUtf8ToBytes(cleaned.substring(0, lastDot), stemBudget)
-            .replaceFirst(RegExp(r'[. ]+$'), '');
+        var stem =
+            _truncateUtf8ToBytes(cleaned.substring(0, lastDot), stemBudget)
+                .replaceFirst(RegExp(r'[. ]+$'), '');
         if (stem.isEmpty) stem = '_';
         return '$stem$ext';
       }
@@ -368,8 +464,11 @@ String _sanitizeOpfsSegment(String rawSegment, {required bool isLeaf}) {
       .replaceFirst(RegExp(r'[. ]+$'), '');
 }
 
-/// Internal helper extracting the body after an optional `opfs://` prefix.
-/// Returns either a canonical `(body, hadPrefix)` record or an `OpfsPathParseResult.err`.
+/// Extracts the path body of [rawPath] after an optional `opfs://` prefix,
+/// using [contextLabel] in validation error messages.
+///
+/// Returns a record containing the extracted body, whether an `opfs://` prefix
+/// was present, and an optional [OpfsPathParseResult] error when invalid.
 ({String body, bool hadPrefix, OpfsPathParseResult? error}) _extractOpfsBody(
   String rawPath, {
   required String contextLabel,
@@ -400,7 +499,8 @@ String _sanitizeOpfsSegment(String rawSegment, {required bool isLeaf}) {
       ),
     );
   }
-  if (trimmed.length < 7 || trimmed.substring(0, 7).toLowerCase() != 'opfs://') {
+  if (trimmed.length < 7 ||
+      trimmed.substring(0, 7).toLowerCase() != 'opfs://') {
     return (
       body: '',
       hadPrefix: true,
@@ -415,19 +515,27 @@ String _sanitizeOpfsSegment(String rawSegment, {required bool isLeaf}) {
   return (body: trimmed.substring(7), hadPrefix: true, error: null);
 }
 
-/// Strictly validates a Web OPFS path for playback, analysis, and SFX without
-/// silently altering invalid segment names.
+/// Strictly validates a Web OPFS [rawPath] for playback, analysis, and SFX
+/// without silently altering invalid segment names.
 ///
-/// Accepts relative or absolute paths (e.g. `"/temporal/sistema/test/1.wav"`,
-/// `"temporal/sistema/test/1.wav"`, `"1.wav"`) as well as optional `opfs://`
-/// prefixes (stripped from [OpfsPathParseResult.canonicalPath]).
+/// Accepts relative or absolute paths (such as `'/temporal/sistema/test/1.wav'`,
+/// `'temporal/sistema/test/1.wav'`, or `'1.wav'`) as well as optional `opfs://`
+/// prefixes, which are stripped from [OpfsPathParseResult.canonicalPath].
 OpfsPathParseResult parseOpfsPathStrict(String rawPath) {
   final extracted = _extractOpfsBody(rawPath, contextLabel: 'OPFS');
-  if (extracted.error != null) return extracted.error!;
+  if (extracted.error != null) {
+    MapLogger.verbose(
+      'OPFS strict validation failed for "$rawPath": '
+      '${extracted.error!.errorMessage}',
+    );
+    return extracted.error!;
+  }
   final body = extracted.body;
   final hadOpfsPrefix = extracted.hadPrefix;
 
   if (body.contains('\\')) {
+    MapLogger.verbose(
+        'OPFS strict validation rejected backslash in "$rawPath".');
     return OpfsPathParseResult.err(
       MapResult.errorInvalidArgs,
       'Invalid backslash "\\" in OPFS path "$rawPath". Use forward slashes "/".',
@@ -507,14 +615,22 @@ OpfsPathParseResult parseOpfsPathStrict(String rawPath) {
   );
 }
 
-/// Parses and sanitizes a Web OPFS recording path so invalid characters, trailing
-/// dots/spaces, or reserved filenames do not fail with browser `InvalidName` errors.
+/// Parses and sanitizes a Web OPFS recording [rawPath] so invalid characters,
+/// trailing dots or spaces, and reserved filenames do not fail with browser
+/// `InvalidName` errors.
 ///
 /// Rejects empty paths, directory-only trailing slashes, `..` traversal, and
-/// non-OPFS URI schemes. Always returns canonical path without `opfs://` or leading `/`.
+/// non-OPFS URI schemes. Always returns a canonical path without `opfs://` or
+/// leading `/`.
 OpfsPathParseResult sanitizeOpfsRecordingPath(String rawPath) {
   final extracted = _extractOpfsBody(rawPath, contextLabel: 'OPFS recording');
-  if (extracted.error != null) return extracted.error!;
+  if (extracted.error != null) {
+    MapLogger.verbose(
+      'OPFS recording sanitization failed for "$rawPath": '
+      '${extracted.error!.errorMessage}',
+    );
+    return extracted.error!;
+  }
   final body = extracted.body;
   final hadOpfsPrefix = extracted.hadPrefix;
 
@@ -569,8 +685,14 @@ OpfsPathParseResult sanitizeOpfsRecordingPath(String rawPath) {
   );
 }
 
-/// Synchronously normalizes and validates [rawUri] for all platforms without
-/// blocking I/O.
+/// Synchronously normalizes and validates [rawUri] for the target specified by
+/// [isWeb], [isWindows], [isAndroid], [isDebug], and optional [webBaseUri]
+/// without blocking I/O.
+///
+/// The [isDebug] flag is retained for target parity with platform wrappers
+/// (Web and native normalization). Returns a [NormalizedAudioSource] indicating
+/// whether the source can be handed directly to the engine, requires deferred
+/// Dart resolution, or failed synchronous validation.
 NormalizedAudioSource normalizeAudioSourceUri(
   String rawUri, {
   required bool isWeb,
@@ -581,6 +703,7 @@ NormalizedAudioSource normalizeAudioSourceUri(
 }) {
   final trimmed = rawUri.trim();
   if (trimmed.isEmpty) {
+    MapLogger.verbose('Rejected empty audio source URI.');
     return const NormalizedAudioSource(
       normalizedSource: '',
       resolveInDart: true,
@@ -675,7 +798,7 @@ NormalizedAudioSource normalizeAudioSourceUri(
         ? 'data:${trimmed.substring('data://'.length)}'
         : trimmed;
     final commaIdx = normalizedData.indexOf(',');
-    if (commaIdx <= 'data:'.length - 1 || commaIdx < 0) {
+    if (commaIdx < 'data:'.length) {
       return NormalizedAudioSource(
         normalizedSource: normalizedData,
         resolveInDart: true,
@@ -709,6 +832,10 @@ NormalizedAudioSource normalizeAudioSourceUri(
         resolveInDart: false,
       );
     } on UnsupportedError catch (e) {
+      MapLogger.warn(
+        'Unsupported file:// URI authority for "$rawUri": '
+        '${e.message ?? e}',
+      );
       return NormalizedAudioSource(
         normalizedSource: trimmed,
         resolveInDart: true,
@@ -716,12 +843,12 @@ NormalizedAudioSource normalizeAudioSourceUri(
         directErrorMessage: e.message ?? e.toString(),
       );
     } on Object catch (e) {
+      MapLogger.warn('Malformed file:// URI "$rawUri": $e');
       return NormalizedAudioSource(
         normalizedSource: trimmed,
         resolveInDart: true,
         directErrorCode: MapResult.errorInvalidArgs,
-        directErrorMessage:
-            'Invalid file URI "$rawUri": ${e.toString()}',
+        directErrorMessage: 'Invalid file URI "$rawUri": ${e.toString()}',
       );
     }
   }
@@ -734,8 +861,7 @@ NormalizedAudioSource normalizeAudioSourceUri(
         normalizedSource: trimmed,
         resolveInDart: true,
         directErrorCode: MapResult.errorInvalidArgs,
-        directErrorMessage:
-            'Invalid package URI "$rawUri". Expected format '
+        directErrorMessage: 'Invalid package URI "$rawUri". Expected format '
             '"package:<package_name>/<asset_path>".',
       );
     }
@@ -831,6 +957,8 @@ NormalizedAudioSource normalizeAudioSourceUri(
     );
   }
 
+  MapLogger.verbose(
+      'Rejected unsupported URI scheme "$scheme://" in "$rawUri".');
   return NormalizedAudioSource(
     normalizedSource: trimmed,
     resolveInDart: true,
@@ -840,6 +968,9 @@ NormalizedAudioSource normalizeAudioSourceUri(
   );
 }
 
+/// Normalizes a Flutter [assetKey] into either a Web HTTP asset URL (when
+/// [isWeb] is `true`, optionally relative to [webBaseUri]) or a canonical
+/// deferred `asset://` key on native targets.
 NormalizedAudioSource _normalizeAssetKey(
   String assetKey, {
   required bool isWeb,

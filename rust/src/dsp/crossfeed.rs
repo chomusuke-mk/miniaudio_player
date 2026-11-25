@@ -15,6 +15,7 @@ pub struct CrossfeedConfig {
 }
 
 impl Default for CrossfeedConfig {
+    /// Returns a disabled [`CrossfeedConfig`] with 700 Hz cutoff and 4.5 dB feed level.
     fn default() -> Self {
         Self {
             enabled: false,
@@ -36,23 +37,33 @@ impl CrossfeedConfig {
 /// Bauer stereophonic-to-binaural (BS2B) crossfeed processor reducing headphone listening fatigue.
 #[derive(Debug, Clone)]
 pub struct Bs2bCrossfeed {
+    /// Active crossfeed filter parameters.
     config: CrossfeedConfig,
+    /// Clamped operating sample rate in Hz (`2000..=384000`).
     sample_rate: u32,
+    /// Lowpass crossfeed path input coefficient.
     a0_lo: f32,
+    /// Lowpass crossfeed path feedback pole coefficient.
     b1_lo: f32,
+    /// High-boost direct path feedforward coefficient 0.
     a0_hi: f32,
+    /// High-boost direct path feedforward coefficient 1.
     a1_hi: f32,
+    /// High-boost direct path feedback pole coefficient.
     b1_hi: f32,
+    /// Overall normalization gain applied to the crossfed stereo output.
     gain: f32,
 
-    // Filter states for L and R: [0] = left, [1] = right
+    /// Previous raw input sample per channel (`[left, right]`) for the high-boost shelf.
     asis: [f32; 2],
+    /// Lowpass crossfeed filter state per channel (`[left, right]`).
     lo: [f32; 2],
+    /// High-boost filter state per channel (`[left, right]`).
     hi: [f32; 2],
 }
 
 impl Bs2bCrossfeed {
-    /// Constructs a `Bs2bCrossfeed` instance with the given sample rate and crossfeed configuration.
+    /// Constructs a `Bs2bCrossfeed` instance with the given `sample_rate` and crossfeed `config`.
     pub fn new(sample_rate: u32, config: CrossfeedConfig) -> Self {
         let mut cf = Self {
             config,
@@ -71,7 +82,7 @@ impl Bs2bCrossfeed {
         cf
     }
 
-    /// Sets the crossfeed configuration and recalculates filter coefficients.
+    /// Sets the crossfeed `config` and recalculates filter coefficients when changed.
     pub fn set_config(&mut self, config: CrossfeedConfig) {
         if self.config != config {
             self.config = config;
@@ -79,7 +90,7 @@ impl Bs2bCrossfeed {
         }
     }
 
-    /// Updates the sample rate and recalculates filter coefficients.
+    /// Updates the `sample_rate` and recalculates filter coefficients when changed.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         let sr = sample_rate.clamp(2000, 384000);
         if self.sample_rate != sr {
@@ -88,7 +99,7 @@ impl Bs2bCrossfeed {
         }
     }
 
-    /// Processes interleaved stereo samples in-place, applying binaural crossfeed mixing.
+    /// Processes interleaved `samples` across `channels` in-place, applying binaural crossfeed mixing.
     pub fn process_frames(&mut self, samples: &mut [f32], channels: usize) {
         if !self.config.enabled || channels < 2 || samples.is_empty() {
             return;
@@ -155,6 +166,7 @@ impl Bs2bCrossfeed {
         self.asis[1] = asis1;
     }
 
+    /// Recomputes first-order lowpass, high-boost, and normalization coefficients from `config` and `sample_rate`.
     fn recalculate(&mut self) {
         if !self.config.enabled {
             return;

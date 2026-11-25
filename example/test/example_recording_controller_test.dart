@@ -1,11 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
-import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
+import 'package:miniaudio_player_example/features/console/controllers/audio_engine_controller.dart';
+import 'package:miniaudio_player_example/features/playback/widgets/playback_engine_card.dart';
 import 'package:open_file/open_file.dart';
 
 void main() {

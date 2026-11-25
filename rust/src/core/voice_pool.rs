@@ -14,7 +14,7 @@ use crate::dsp::spatial::{SpatialEmitter, SpatialListener, SpatialProcessor};
 pub use crate::dsp::voice_pool::{pseudo_random_jitter, SoundBuffer, VoiceStealingPolicy};
 use crate::net::ureq;
 
-/// Classifies an [`AudioSourceCore`] into its cache retention [`EffectSourceType`].
+/// Classifies an [`AudioSourceCore`] `source` into its cache retention [`EffectSourceType`].
 #[inline]
 pub(crate) fn classify_source_type(source: &AudioSourceCore) -> EffectSourceType {
     let is_memory = source.data_bytes.as_ref().is_some_and(|b| !b.is_empty());
@@ -29,7 +29,7 @@ pub(crate) fn classify_source_type(source: &AudioSourceCore) -> EffectSourceType
     }
 }
 
-/// Computes left/right spatial attenuation gains and Doppler pitch multiplier for a voice.
+/// Computes left/right spatial attenuation gains and Doppler pitch multiplier from `emitter`, `listener`, `speed_of_sound`, and fallback stereo `balance`.
 #[inline]
 pub(crate) fn compute_spatial_and_doppler(
     emitter: Option<&SpatialEmitter>,
@@ -57,15 +57,27 @@ pub(crate) fn compute_spatial_and_doppler(
     }
 }
 
+/// Mutable per-voice playback state borrowed during [`render_voice_buffer`].
 pub(crate) struct VoiceRenderState<'a> {
+    /// Whether the voice slot remains active.
     pub active: &'a mut bool,
+    /// Fractional playback cursor in source frames.
     pub cursor_frame: &'a mut f64,
+    /// Whether the voice is currently ramping down to stop.
     pub stopping: &'a mut bool,
+    /// Remaining fade-out frames when `stopping` is true.
     pub fade_samples_remaining: &'a mut usize,
+    /// Initial fade-out duration in frames used to normalize linear ramp gain.
     pub total_fade_samples: usize,
+    /// Total frames rendered since this voice started.
     pub age_frames: &'a mut u64,
 }
 
+/// Renders up to `frame_count` interleaved frames of `buf` into `target_out` across `channels`
+/// at output `sample_rate`, updating `state` with `volume`, `pitch`, `balance`, `looping`,
+/// optional `emitter`, `listener`, and `speed_of_sound`.
+///
+/// Returns `true` if the voice finished playback or completed its fade-out during this pass.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_voice_buffer(
@@ -236,16 +248,27 @@ impl Default for EffectConfig {
     }
 }
 
+/// Registered sound effect metadata and optional resident PCM buffer.
 pub struct RegisteredEffect {
+    /// Unique identifier for this sound effect.
     pub id: String,
+    /// Underlying source descriptor used for lazy decode or reload after eviction.
     pub source: AudioSourceCore,
+    /// Retention classification governing eviction eligibility and weight.
     pub source_type: EffectSourceType,
+    /// Resident decoded PCM buffer when cached in RAM.
     pub buffer: Option<SoundBuffer>,
+    /// Maximum concurrent voices allowed for this effect.
     pub max_polyphony: usize,
+    /// Whether this effect is pinned in RAM and exempt from LRU eviction.
     pub pinned: bool,
+    /// Byte footprint of `buffer` currently counted against RAM budget.
     pub byte_size: usize,
+    /// Total times this effect has been triggered.
     pub trigger_count: u64,
+    /// Timestamp of the most recent voice trigger or completion.
     pub last_used: Instant,
+    /// Number of non-stopping voices currently playing this effect.
     pub active_voices: usize,
 }
 
@@ -262,7 +285,7 @@ impl RegisteredEffect {
             && self.active_voices == 0
     }
 
-    /// Computes the multi-factor retention score:
+    /// Computes the multi-factor retention score at timestamp `now`:
     /// `Score = SourceWeight * (1 + TriggerFrequency) * (1 / (1 + dt_seconds))`
     #[inline]
     pub fn retention_score(&self, now: Instant) -> f64 {
@@ -276,6 +299,7 @@ impl RegisteredEffect {
     }
 }
 
+/// Applies deterministic proportional jitter of magnitude `jitter_amount` to `base` using `seed` and `salt`.
 #[inline]
 pub fn apply_jitter(base: f32, jitter_amount: f32, seed: u32, salt: u32) -> f32 {
     if jitter_amount <= 0.0 {
@@ -286,6 +310,11 @@ pub fn apply_jitter(base: f32, jitter_amount: f32, seed: u32, salt: u32) -> f32 
     }
 }
 
+/// Fetches raw encoded bytes for network sound effect `id` from `url` with optional HTTP `headers`.
+///
+/// # Errors
+///
+/// Returns an error string if the HTTP request or response body read fails.
 fn fetch_effect_bytes_via_ureq(
     id: &str,
     url: &str,
@@ -304,20 +333,37 @@ fn fetch_effect_bytes_via_ureq(
             req = req.header(&h.key, &h.value);
         }
     }
-    let resp = req
-        .call()
-        .map_err(|e| format!("Failed to fetch network effect '{}' ({}): {}", id, url, e))?;
+    let resp = req.call().map_err(|e| {
+        let msg = format!("Failed to fetch network effect '{}' ({}): {}", id, url, e);
+        crate::map_log!(1, "[VOICE_POOL] {}", msg);
+        msg
+    })?;
     let mut bytes = Vec::new();
     use std::io::Read;
     resp.into_body()
         .into_reader()
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("Failed to read network effect '{}' bytes: {}", id, e))?;
+        .map_err(|e| {
+            let msg = format!("Failed to read network effect '{}' bytes: {}", id, e);
+            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+            msg
+        })?;
+    crate::map_log!(
+        4,
+        "[VOICE_POOL] Fetched network effect '{}' ({} bytes) from {}",
+        id,
+        bytes.len(),
+        url
+    );
     Ok(bytes)
 }
 
-/// Decodes an [`AudioSourceCore`] into a PCM [`SoundBuffer`], resolving `resolve_in_dart`
-/// sources via `dart_resolver` when needed.
+/// Decodes an [`AudioSourceCore`] `source` for effect `id` into a PCM [`SoundBuffer`], resolving
+/// `resolve_in_dart` sources via `dart_resolver` when needed.
+///
+/// # Errors
+///
+/// Returns an error string if Dart resolution, file/network reading, or audio decoding fails.
 pub fn decode_effect_source(
     id: &str,
     source: &AudioSourceCore,
@@ -325,27 +371,52 @@ pub fn decode_effect_source(
 ) -> Result<SoundBuffer, String> {
     if let Some(ref bytes) = source.data_bytes {
         if !bytes.is_empty() {
-            return SoundBuffer::decode_from_bytes(bytes)
-                .map_err(|e| format!("Decoding memory effect '{}' failed: {}", id, e));
+            crate::map_log!(
+                4,
+                "[VOICE_POOL] Decoding memory effect '{}' ({} bytes)",
+                id,
+                bytes.len()
+            );
+            return SoundBuffer::decode_from_bytes(bytes).map_err(|e| {
+                let msg = format!("Decoding memory effect '{}' failed: {}", id, e);
+                crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                msg
+            });
         }
     }
 
     if source.resolve_in_dart {
         let resolver = dart_resolver.ok_or_else(|| {
-            format!(
+            let msg = format!(
                 "Effect '{}' requires Dart resolution for '{}' which is unavailable",
                 id, source.source
-            )
+            );
+            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+            msg
         })?;
+        crate::map_log!(
+            4,
+            "[VOICE_POOL] Resolving effect '{}' via Dart resolver: {}",
+            id,
+            source.source
+        );
         let resolved = resolver
             .resolve(&source.source, source.headers.as_deref(), None)
-            .map_err(|f| format!("Resolving effect '{}' failed: {} (code: {})", id, f.message, f.code))?;
+            .map_err(|f| {
+                let msg = format!("Resolving effect '{}' failed: {} (code: {})", id, f.message, f.code);
+                crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                msg
+            })?;
         return match resolved {
             ResolvedCoreSource::Path(path) => decode_effect_uri_direct(id, &path, source.headers.as_deref()),
             ResolvedCoreSource::Url(url) => decode_effect_uri_direct(id, &url, source.headers.as_deref()),
             ResolvedCoreSource::Bytes { data, hint_ext } => {
                 SoundBuffer::decode_from_owned_bytes(data, hint_ext.as_deref())
-                    .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+                    .map_err(|e| {
+                        let msg = format!("Decoding effect '{}' failed: {}", id, e);
+                        crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                        msg
+                    })
             }
             #[cfg(unix)]
             ResolvedCoreSource::Fd {
@@ -356,13 +427,25 @@ pub fn decode_effect_source(
             } => match ResolvedCoreSource::open_fd_slice(file, offset, length) {
                 Ok(FdOpenOutcome::Seekable(byte_src)) => {
                     SoundBuffer::decode_from_media_source(byte_src, hint_ext.as_deref())
-                        .map_err(|e| format!("Decoding FD effect '{}' failed: {}", id, e))
+                        .map_err(|e| {
+                            let msg = format!("Decoding FD effect '{}' failed: {}", id, e);
+                            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                            msg
+                        })
                 }
                 Ok(FdOpenOutcome::MemoryBytes(bytes)) => {
                     SoundBuffer::decode_from_owned_bytes(bytes, hint_ext.as_deref())
-                        .map_err(|e| format!("Decoding pipe FD effect '{}' failed: {}", id, e))
+                        .map_err(|e| {
+                            let msg = format!("Decoding pipe FD effect '{}' failed: {}", id, e);
+                            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                            msg
+                        })
                 }
-                Err(e) => Err(format!("Opening FD effect '{}' failed: {}", id, e)),
+                Err(e) => {
+                    let msg = format!("Opening FD effect '{}' failed: {}", id, e);
+                    crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                    Err(msg)
+                }
             },
             #[cfg(not(unix))]
             ResolvedCoreSource::Fd { .. } => {
@@ -373,7 +456,9 @@ pub fn decode_effect_source(
                 id
             )),
             ResolvedCoreSource::Error { code, message } => {
-                Err(format!("{} (code: {})", message, code))
+                let msg = format!("{} (code: {})", message, code);
+                crate::map_log!(1, "[VOICE_POOL] Dart resolver error for '{}': {}", id, msg);
+                Err(msg)
             }
         };
     }
@@ -381,6 +466,11 @@ pub fn decode_effect_source(
     decode_effect_uri_direct(id, source.source.trim(), source.headers.as_deref())
 }
 
+/// Decodes effect `id` directly from a normalized URI or filesystem path `trimmed` with optional HTTP `headers`.
+///
+/// # Errors
+///
+/// Returns an error string if the URI scheme is unsupported, I/O fails, or audio decoding fails.
 fn decode_effect_uri_direct(
     id: &str,
     trimmed: &str,
@@ -394,15 +484,20 @@ fn decode_effect_uri_direct(
             || trimmed.starts_with("data:")
         {
             let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
-            return SoundBuffer::decode_from_owned_bytes(bytes, None)
-                .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e));
+            return SoundBuffer::decode_from_owned_bytes(bytes, None).map_err(|e| {
+                let msg = format!("Decoding effect '{}' failed: {}", id, e);
+                crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                msg
+            });
         }
         if let Some(scheme) = crate::opfs::extract_uri_scheme(trimmed) {
             if !scheme.eq_ignore_ascii_case("opfs") {
-                return Err(format!(
+                let msg = format!(
                     "Unsupported URI scheme '{}://' for Web effect '{}' (code: -10)",
                     scheme, id
-                ));
+                );
+                crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                return Err(msg);
             }
         }
         let parsed = crate::opfs::parse_opfs_path_strict(trimmed)
@@ -410,17 +505,23 @@ fn decode_effect_uri_direct(
         if parsed.had_opfs_prefix {
             crate::map_log!(
                 3,
-                "The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
+                "[VOICE_POOL] The 'opfs://' prefix in '{}' is unnecessary on Web: relative and \
                  absolute paths resolve automatically to OPFS ('{}')",
                 trimmed,
                 parsed.canonical
             );
         }
         let ext_hint = crate::decoder::StreamClassifier::extract_extension_hint(&parsed.canonical);
-        let opfs_src = crate::opfs::OpfsByteSource::open(&parsed.canonical)
-            .map_err(|(code, msg)| format!("{} (code: {})", msg, code))?;
-        SoundBuffer::decode_from_media_source(opfs_src, ext_hint)
-            .map_err(|e| format!("Decoding OPFS effect '{}' failed: {}", id, e))
+        let opfs_src = crate::opfs::OpfsByteSource::open(&parsed.canonical).map_err(|(code, msg)| {
+            let err = format!("{} (code: {})", msg, code);
+            crate::map_log!(1, "[VOICE_POOL] Failed opening OPFS effect '{}': {}", id, err);
+            err
+        })?;
+        SoundBuffer::decode_from_media_source(opfs_src, ext_hint).map_err(|e| {
+            let msg = format!("Decoding OPFS effect '{}' failed: {}", id, e);
+            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+            msg
+        })
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -428,21 +529,33 @@ fn decode_effect_uri_direct(
         if crate::opfs::extract_uri_scheme(trimmed)
             .is_some_and(|s| s.eq_ignore_ascii_case("opfs"))
         {
-            return Err(format!(
+            let msg = format!(
                 "URI scheme 'opfs://' ('{}') for effect '{}' is only supported on Web (code: -10)",
                 trimmed, id
-            ));
+            );
+            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+            return Err(msg);
         }
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             let bytes = fetch_effect_bytes_via_ureq(id, trimmed, headers)?;
-            return SoundBuffer::decode_from_owned_bytes(bytes, None)
-                .map_err(|e| format!("Decoding network effect '{}' failed: {}", id, e));
+            return SoundBuffer::decode_from_owned_bytes(bytes, None).map_err(|e| {
+                let msg = format!("Decoding network effect '{}' failed: {}", id, e);
+                crate::map_log!(1, "[VOICE_POOL] {}", msg);
+                msg
+            });
         }
 
-        let bytes = std::fs::read(trimmed)
-            .map_err(|e| format!("Failed to read effect file '{}' for '{}': {}", trimmed, id, e))?;
-        SoundBuffer::decode_from_owned_bytes(bytes, None)
-            .map_err(|e| format!("Decoding effect '{}' failed: {}", id, e))
+        crate::map_log!(4, "[VOICE_POOL] Reading local effect '{}' from '{}'", id, trimmed);
+        let bytes = std::fs::read(trimmed).map_err(|e| {
+            let msg = format!("Failed to read effect file '{}' for '{}': {}", trimmed, id, e);
+            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+            msg
+        })?;
+        SoundBuffer::decode_from_owned_bytes(bytes, None).map_err(|e| {
+            let msg = format!("Decoding effect '{}' failed: {}", id, e);
+            crate::map_log!(1, "[VOICE_POOL] {}", msg);
+            msg
+        })
     }
 }
 
@@ -452,11 +565,14 @@ fn decode_effect_uri_direct(
 
 /// Wait-free atomic telemetry counters shared between [`EffectCatalog`] and [`VoicePoolRt`].
 pub struct SharedVoiceMetrics {
+    /// Monotonic command sequence counter assigned to cold-path state mutations.
     cmd_seq: AtomicU64,
     /// Packed `(seq: u48 << 16) | (active_count: u16)` allowing wait-free reads consistent with
     /// synchronous command issuance before the RT thread drains the command ring.
     packed_active: AtomicU64,
+    /// Flag raised by the RT thread when completion notifications await draining.
     pending_done: AtomicBool,
+    /// Total decoded sound effect PCM bytes currently resident in RAM.
     allocated_ram_bytes: AtomicUsize,
 }
 
@@ -477,17 +593,20 @@ impl SharedVoiceMetrics {
         }
     }
 
+    /// Atomically allocates and returns the next monotonic command sequence number.
     #[inline]
     pub fn next_seq(&self) -> u64 {
         self.cmd_seq.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    /// Publishes an optimistic active voice `count` tagged with sequence `seq` from the cold path.
     #[inline]
     pub fn publish_cold_count(&self, seq: u64, count: u16) {
         let packed = (seq << 16) | (count as u64);
         self.packed_active.store(packed, Ordering::Release);
     }
 
+    /// Reconciles `live_count` from the RT thread only when no newer `last_rt_seq` command is in flight.
     #[inline]
     pub fn reconcile_rt_count(&self, last_rt_seq: u64, live_count: u16) {
         let cur = self.packed_active.load(Ordering::Acquire);
@@ -502,31 +621,37 @@ impl SharedVoiceMetrics {
         }
     }
 
+    /// Returns the currently visible count of active non-stopping voices.
     #[inline]
     pub fn active_voices_count(&self) -> u32 {
         (self.packed_active.load(Ordering::Acquire) & 0xFFFF) as u32
     }
 
+    /// Returns the total bytes of decoded PCM buffers resident in RAM.
     #[inline]
     pub fn allocated_ram_bytes(&self) -> usize {
         self.allocated_ram_bytes.load(Ordering::Acquire)
     }
 
+    /// Updates the tracked resident PCM RAM usage in `bytes`.
     #[inline]
     pub fn set_allocated_ram_bytes(&self, bytes: usize) {
         self.allocated_ram_bytes.store(bytes, Ordering::Release);
     }
 
+    /// Marks that one or more [`RtVoiceDone`] events have been pushed to the completion ring.
     #[inline]
     pub fn mark_pending_done(&self) {
         self.pending_done.store(true, Ordering::Release);
     }
 
+    /// Returns `true` when RT voice completion events may be waiting in the ring buffer.
     #[inline]
     pub fn has_pending_done(&self) -> bool {
         self.pending_done.load(Ordering::Acquire)
     }
 
+    /// Clears the pending completion notification flag prior to draining `done_rx`.
     #[inline]
     pub fn clear_pending_done(&self) {
         self.pending_done.store(false, Ordering::Release);
@@ -546,64 +671,121 @@ pub struct RtVoiceDone {
 pub enum RtVoiceCmd {
     /// Starts rendering a voice using an owned `Arc<[f32]>` [`SoundBuffer`] handle.
     Start {
+        /// Monotonic sequence number for metrics reconciliation.
         seq: u64,
+        /// Unique voice instance identifier.
         voice_id: u32,
+        /// Stable catalog entry key owning `buffer`.
         effect_key: u64,
+        /// Pre-decoded PCM sound buffer.
         buffer: SoundBuffer,
+        /// Linear playback volume multiplier.
         volume: f32,
+        /// Pitch multiplier.
         pitch: f32,
+        /// Stereo pan balance (`-1.0` to `1.0`).
         balance: f32,
+        /// Voice stealing priority (`0..=255`).
         priority: u8,
+        /// Whether playback loops indefinitely.
         looping: bool,
+        /// Target DSP mixing bus routing.
         dsp_routing: DspRouting,
+        /// Optional 3D spatial emitter configuration.
         emitter: Option<SpatialEmitter>,
     },
     /// Stops an active voice immediately (`fade_out_samples == 0`) or with a linear ramp.
     StopVoice {
+        /// Monotonic sequence number for metrics reconciliation.
         seq: u64,
+        /// Identifier of the voice to stop.
         voice_id: u32,
+        /// Linear fade-out duration in frames (`0` for immediate stop).
         fade_out_samples: usize,
     },
     /// Stops all active voices immediately (`fade_out_samples == 0`) or with a linear ramp.
     StopAll {
+        /// Monotonic sequence number for metrics reconciliation.
         seq: u64,
+        /// Linear fade-out duration in frames (`0` for immediate stop).
         fade_out_samples: usize,
     },
     /// Updates playback volume on a live voice.
-    SetVolume { voice_id: u32, volume: f32 },
+    SetVolume {
+        /// Target active voice identifier.
+        voice_id: u32,
+        /// New linear volume multiplier.
+        volume: f32,
+    },
     /// Updates pitch multiplier on a live voice.
-    SetPitch { voice_id: u32, pitch: f32 },
+    SetPitch {
+        /// Target active voice identifier.
+        voice_id: u32,
+        /// New pitch multiplier (`> 0.0`).
+        pitch: f32,
+    },
     /// Updates stereo pan balance on a live voice.
-    SetBalance { voice_id: u32, balance: f32 },
+    SetBalance {
+        /// Target active voice identifier.
+        voice_id: u32,
+        /// New stereo pan balance (`-1.0` to `1.0`).
+        balance: f32,
+    },
     /// Updates 3D emitter parameters on a live voice.
     SetEmitter {
+        /// Target active voice identifier.
         voice_id: u32,
+        /// Updated 3D spatial emitter parameters, or `None` to disable spatialization.
         emitter: Option<SpatialEmitter>,
     },
     /// Updates 3D spatial listener pose.
-    SetListener { listener: SpatialListener },
+    SetListener {
+        /// Updated 3D spatial listener pose and velocity.
+        listener: SpatialListener,
+    },
     /// Updates Doppler parameters.
-    SetDoppler { factor: f32, speed_of_sound: f32 },
+    SetDoppler {
+        /// Global Doppler scaling factor (carried in command wire format).
+        factor: f32,
+        /// Speed of sound in meters per second.
+        speed_of_sound: f32,
+    },
 }
 
 /// Fixed real-time voice slot owning its `SoundBuffer` handle independently of cold catalog reloads.
 #[derive(Clone, Default)]
 pub struct RtVoiceSlot {
+    /// Active voice identifier assigned by [`EffectCatalog`].
     pub voice_id: u32,
+    /// Stable catalog entry key owning this voice.
     pub effect_key: u64,
+    /// Whether this slot is currently rendering audio.
     pub active: bool,
+    /// Owned decoded PCM buffer rendered by this voice.
     pub buffer: Option<SoundBuffer>,
+    /// Fractional playback cursor position in source frames.
     pub cursor_frame: f64,
+    /// Linear playback volume multiplier.
     pub volume: f32,
+    /// Pitch shift multiplier.
     pub pitch: f32,
+    /// Stereo pan balance (`-1.0` to `1.0`).
     pub balance: f32,
+    /// Voice stealing priority (`0..=255`).
     pub priority: u8,
+    /// Whether this voice loops continuously.
     pub looping: bool,
+    /// Output bus DSP routing policy.
     pub dsp_routing: DspRouting,
+    /// Optional 3D spatial emitter configuration.
     pub emitter: Option<SpatialEmitter>,
+    /// Whether this voice is currently fading out to stop.
     pub stopping: bool,
+    /// Remaining fade-out frames when `stopping` is `true`.
     pub fade_samples_remaining: usize,
+    /// Total fade-out frames configured when stopping began.
     pub total_fade_samples: usize,
+    /// Age of this voice in rendered output frames.
     pub age_frames: u64,
 }
 
@@ -618,25 +800,37 @@ pub type SoundBufferReaperFn = Box<dyn FnMut(SoundBuffer) + Send>;
 
 /// Lock-free real-time polyphonic voice renderer driven strictly by [`RtVoiceCmd`] messages.
 pub struct VoicePoolRt {
+    /// Maximum concurrent voices allowed in `voices`.
     max_voices: usize,
+    /// Pre-allocated fixed array of voice slots.
     voices: [RtVoiceSlot; MAX_VOICES],
+    /// Current 3D spatial listener pose.
     listener: SpatialListener,
+    /// Speed of sound in meters per second used for Doppler evaluation.
     speed_of_sound: f32,
-    doppler_factor: f32,
+    /// Policy selecting a victim slot when all `max_voices` slots are occupied.
     stealing_policy: VoiceStealingPolicy,
+    /// Output device sample rate in Hertz.
     sample_rate: u32,
+    /// Output device channel count.
     channels: usize,
+    /// Highest command sequence number processed by the RT thread.
     last_seq: u64,
+    /// Lock-free command receiver fed by [`EffectCatalog`] and [`EffectsControl`].
     cmd_rx: crossbeam_channel::Receiver<RtVoiceCmd>,
+    /// Wait-free SPSC producer emitting [`RtVoiceDone`] events back to [`EffectCatalog`].
     done_tx: rtrb::Producer<RtVoiceDone>,
+    /// Shared atomic metrics for lock-free active voice telemetry.
     metrics: std::sync::Arc<SharedVoiceMetrics>,
+    /// Optional off-RT reaper callback deferring `SoundBuffer` drops off the audio thread.
     reaper_fn: Option<SoundBufferReaperFn>,
 }
 
 unsafe impl Send for VoicePoolRt {}
 
 impl VoicePoolRt {
-    /// Creates a new [`VoicePoolRt`] paired with its lock-free channels and shared atomic metrics.
+    /// Creates a new [`VoicePoolRt`] with `max_voices`, `sample_rate`, `channels`, paired with
+    /// `cmd_rx`, `done_tx`, and shared atomic `metrics`.
     pub fn new(
         max_voices: usize,
         sample_rate: u32,
@@ -650,7 +844,6 @@ impl VoicePoolRt {
             voices: std::array::from_fn(|_| RtVoiceSlot::default()),
             listener: SpatialListener::default(),
             speed_of_sound: 343.3,
-            doppler_factor: 1.0,
             stealing_policy: VoiceStealingPolicy::LowestPriority,
             sample_rate: sample_rate.max(8000),
             channels: channels.max(1),
@@ -662,11 +855,12 @@ impl VoicePoolRt {
         }
     }
 
-    /// Attaches an off-RT reaper sink receiving retired `SoundBuffer`s when slots deactivate.
+    /// Attaches an off-RT `reaper` sink receiving retired `SoundBuffer` instances when slots deactivate.
     pub fn set_reaper(&mut self, reaper: SoundBufferReaperFn) {
         self.reaper_fn = Some(reaper);
     }
 
+    /// Takes the buffer from voice slot `slot_idx` and forwards it to `reaper_fn` if installed.
     #[inline]
     fn retire_buffer(&mut self, slot_idx: usize) {
         if let Some(buf) = self.voices[slot_idx].buffer.take() {
@@ -676,6 +870,7 @@ impl VoicePoolRt {
         }
     }
 
+    /// Emits a non-blocking [`RtVoiceDone`] notification for `voice_id` and `effect_key`.
     #[inline]
     fn push_done(&mut self, voice_id: u32, effect_key: u64) {
         if self
@@ -690,6 +885,7 @@ impl VoicePoolRt {
         }
     }
 
+    /// Returns the index of an inactive slot, or steals an active slot according to `stealing_policy`.
     fn find_or_steal_slot(&mut self) -> usize {
         for (i, v) in self.voices[..self.max_voices].iter().enumerate() {
             if !v.active {
@@ -758,6 +954,7 @@ impl VoicePoolRt {
         target
     }
 
+    /// Drains all currently queued [`RtVoiceCmd`] messages without blocking.
     fn drain_commands(&mut self) {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd {
@@ -884,18 +1081,18 @@ impl VoicePoolRt {
                     self.listener = listener;
                 }
                 RtVoiceCmd::SetDoppler {
-                    factor,
+                    factor: _,
                     speed_of_sound,
                 } => {
-                    self.doppler_factor = factor;
                     self.speed_of_sound = speed_of_sound;
                 }
             }
         }
     }
 
-    /// Wait-free real-time render pass: drains pending commands, mixes all active slots
-    /// without touching cold catalog locks, and reconciles active voice telemetry.
+    /// Wait-free real-time render pass: drains pending commands, mixes `frame_count` frames of
+    /// all active slots into `inherit_buf`, `isolate_buf`, and `bypass_buf` without touching cold
+    /// catalog locks, and reconciles active voice telemetry.
     pub fn render(
         &mut self,
         inherit_buf: &mut [f32],
@@ -968,38 +1165,64 @@ impl VoicePoolRt {
     }
 }
 
-/// Cold-side catalog entry adding a stable [`effect_key`] for lock-free RT decoupling.
+/// Cold-side catalog entry adding a stable `effect_key` for lock-free RT decoupling.
 pub struct CatalogEntry {
+    /// Monotonic catalog-unique key identifying this effect version across reloads.
     pub effect_key: u64,
+    /// Effect metadata and optional cached PCM buffer.
     pub inner: RegisteredEffect,
 }
 
+/// Cold-side mirror of an active RT voice used for polyphony accounting and victim selection.
 #[derive(Clone, Copy)]
 struct ShadowVoice {
+    /// Voice identifier dispatched to [`VoicePoolRt`].
     voice_id: u32,
+    /// Catalog key of the effect owned by this voice.
     effect_key: u64,
+    /// Voice stealing priority (`0..=255`).
     priority: u8,
+    /// Monotonic spawn sequence used as an age tie-breaker.
     spawn_order: u64,
+    /// Effective linear playback volume after jitter.
     volume: f32,
+    /// Optional 3D spatial emitter configuration.
     emitter: Option<SpatialEmitter>,
+    /// Whether a fade-out stop command has already been issued for this voice.
     stopping: bool,
 }
 
 /// Pre-decoded memory batch produced outside [`EffectCatalog`] locks.
 pub struct PreparedCatalogItem {
+    /// Unique identifier for the sound effect.
     pub id: String,
+    /// Underlying audio source descriptor (memory bytes stripped after pre-decode).
     pub source: AudioSourceCore,
+    /// Retention classification for LRU eviction.
     pub source_type: EffectSourceType,
+    /// Pre-decoded PCM buffer for memory-backed effects.
     pub predecoded: Option<SoundBuffer>,
+    /// Maximum concurrent voices allowed for this effect.
     pub max_polyphony: usize,
+    /// Whether this effect is pinned in RAM.
     pub pinned: bool,
 }
 
-/// Decodes memory-backed catalog entries outside any mutex.
+/// Decodes memory-backed `effects` outside any mutex, using `dart_resolver` if needed,
+/// and returns [`PreparedCatalogItem`] descriptors ready for [`EffectCatalog::apply_prepared_effects`].
+///
+/// # Errors
+///
+/// Returns an error string if decoding any memory-backed effect fails.
 pub fn prepare_catalog_items(
     effects: Vec<EffectCatalogItem>,
     dart_resolver: Option<&Arc<DartResolveRegistry>>,
 ) -> Result<Vec<PreparedCatalogItem>, String> {
+    crate::map_log!(
+        4,
+        "[VOICE_POOL] Preparing {} sound effect catalog items",
+        effects.len()
+    );
     let mut prepared = Vec::with_capacity(effects.len());
     for mut item in effects {
         let source_type = classify_source_type(&item.source);
@@ -1024,27 +1247,43 @@ pub fn prepare_catalog_items(
 
 /// Cold-path sound effect catalog, LRU cache, and command producer for [`VoicePoolRt`].
 pub struct EffectCatalog {
+    /// Maximum concurrent voices allowed across the pool.
     pub max_voices: usize,
+    /// Optional maximum RAM budget in bytes for cached PCM buffers.
     pub max_ram_bytes: Option<usize>,
+    /// Total PCM buffer bytes currently cached across `entries`.
     pub allocated_ram_bytes: usize,
+    /// Registered catalog entries indexed by `id_to_index`.
     pub entries: Vec<CatalogEntry>,
+    /// Fast lookup map from effect `id` string to index in `entries`.
     pub id_to_index: HashMap<String, usize>,
+    /// Next monotonic `effect_key` assigned to newly created catalog entries.
     next_effect_key: u64,
+    /// Next monotonic non-zero `voice_id` assigned to triggered voices.
     next_voice_id: u32,
+    /// Next monotonic spawn order counter for voice stealing age comparisons.
     next_spawn_order: u64,
+    /// Cold-side shadow map of voices expected to be active on [`VoicePoolRt`].
     shadow_voices: HashMap<u32, ShadowVoice>,
+    /// Cached 3D listener pose used for `Farthest` victim selection.
     pub listener: SpatialListener,
+    /// Cached speed of sound in meters per second.
     pub speed_of_sound: f32,
+    /// Active voice stealing policy when voice capacity is saturated.
     pub stealing_policy: VoiceStealingPolicy,
+    /// Command sender dispatching [`RtVoiceCmd`] messages to [`VoicePoolRt`].
     cmd_tx: crossbeam_channel::Sender<RtVoiceCmd>,
+    /// Completion ring consumer receiving [`RtVoiceDone`] messages from [`VoicePoolRt`].
     done_rx: rtrb::Consumer<RtVoiceDone>,
+    /// Shared atomic telemetry counters mirrored with [`VoicePoolRt`].
     metrics: std::sync::Arc<SharedVoiceMetrics>,
 }
 
 unsafe impl Send for EffectCatalog {}
 
 impl EffectCatalog {
-    /// Creates a cold catalog connected to its paired [`VoicePoolRt`].
+    /// Creates a cold catalog configured with `max_voices` and optional `max_ram_bytes`,
+    /// connected via `cmd_tx`, `done_rx`, and `metrics` to its paired [`VoicePoolRt`].
     pub fn new(
         max_voices: usize,
         max_ram_bytes: Option<usize>,
@@ -1071,7 +1310,7 @@ impl EffectCatalog {
         }
     }
 
-    /// Returns currently resident PCM effect IDs.
+    /// Returns identifiers of all sound effects currently resident in RAM.
     pub fn loaded_effect_ids(&self) -> Vec<String> {
         self.entries
             .iter()
@@ -1080,16 +1319,19 @@ impl EffectCatalog {
             .collect()
     }
 
+    /// Publishes `allocated_ram_bytes` to [`SharedVoiceMetrics`].
     fn sync_metrics_ram(&self) {
         self.metrics.set_allocated_ram_bytes(self.allocated_ram_bytes);
     }
 
+    /// Finds the index in `entries` matching `effect_key`, if still present.
     #[inline]
     fn find_index_by_key(&self, effect_key: u64) -> Option<usize> {
         self.entries.iter().position(|e| e.effect_key == effect_key)
     }
 
-    /// Drains RT voice completions into cold accounting without touching RT state.
+    /// Drains RT voice completions into cold accounting without touching RT state,
+    /// returning `(completed_voice_ids, evicted_any)`.
     pub fn drain_completed(&mut self) -> (Vec<u32>, bool) {
         let mut completed_ids = Vec::new();
         let mut evicted = false;
@@ -1113,8 +1355,9 @@ impl EffectCatalog {
         (completed_ids, evicted)
     }
 
-    /// Applies pre-decoded catalog items without blocking on memory decode or interrupting RT audio.
-    /// Returns displaced buffers so the caller can drop them after releasing the catalog lock.
+    /// Applies pre-decoded `prepared` catalog items without blocking on memory decode or
+    /// interrupting RT audio, returning displaced buffers for the caller to drop after
+    /// releasing the catalog lock.
     pub fn apply_prepared_effects(
         &mut self,
         prepared: Vec<PreparedCatalogItem>,
@@ -1233,9 +1476,19 @@ impl EffectCatalog {
         let (_, mut evicted_bufs) = self.evict_if_over_budget(None);
         displaced_buffers.append(&mut evicted_bufs);
         self.sync_metrics_ram();
+        crate::map_log!(
+            3,
+            "[VOICE_POOL] Applied effect catalog (entries={} ram_bytes={} displaced={})",
+            self.entries.len(),
+            self.allocated_ram_bytes,
+            displaced_buffers.len()
+        );
         displaced_buffers
     }
 
+    /// Evicts lowest-scoring evictable entries (skipping `exclude_idx`) until
+    /// `allocated_ram_bytes <= target_bytes` or no evictable buffers remain, returning
+    /// `(evicted_any, evicted_buffers)`.
     pub fn evict_lowest_scoring_until(
         &mut self,
         target_bytes: usize,
@@ -1277,10 +1530,19 @@ impl EffectCatalog {
 
         if evicted_any {
             self.sync_metrics_ram();
+            crate::map_log!(
+                4,
+                "[VOICE_POOL] LRU evicted {} buffer(s); ram_bytes={} target={}",
+                evicted_buffers.len(),
+                self.allocated_ram_bytes,
+                target_bytes
+            );
         }
         (evicted_any, evicted_buffers)
     }
 
+    /// Evicts cached buffers if `allocated_ram_bytes` exceeds `max_ram_bytes`, skipping
+    /// `exclude_idx`, and returns `(evicted_any, evicted_buffers)`.
     #[inline]
     pub fn evict_if_over_budget(&mut self, exclude_idx: Option<usize>) -> (bool, Vec<SoundBuffer>) {
         if let Some(limit) = self.max_ram_bytes {
@@ -1291,7 +1553,12 @@ impl EffectCatalog {
         (false, Vec::new())
     }
 
-    /// Returns cached lookup info or `(effect_key, source)` if decoding is required outside the lock.
+    /// Looks up effect `id` and returns `Ok(None)` if already cached in RAM, or
+    /// `Ok(Some((effect_key, source)))` if decoding is required outside the lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `id` is not registered in the catalog.
     pub fn lookup_decode_target(&self, id: &str) -> Result<Option<(u64, AudioSourceCore)>, String> {
         let idx = match self.id_to_index.get(id) {
             Some(&i) => i,
@@ -1310,7 +1577,8 @@ impl EffectCatalog {
         }
     }
 
-    /// Inserts a decoded PCM buffer into the matching catalog entry, enforcing RAM budget LRU.
+    /// Inserts a `decoded` PCM buffer for `id` (verifying `expected_key`), enforcing the RAM
+    /// budget via LRU eviction, and returns `(installed, buffers_to_drop)`.
     pub fn install_decoded_buffer(
         &mut self,
         id: &str,
@@ -1347,9 +1615,18 @@ impl EffectCatalog {
         eff.byte_size = byte_size;
         self.allocated_ram_bytes += byte_size;
         self.sync_metrics_ram();
+        crate::map_log!(
+            4,
+            "[VOICE_POOL] Installed buffer for '{}' (bytes={} total_ram={})",
+            id,
+            byte_size,
+            self.allocated_ram_bytes
+        );
         (true, displaced)
     }
 
+    /// Selects and removes a shadow voice victim belonging to `effect_key` when per-effect
+    /// polyphony is saturated.
     fn steal_shadow_victim_for_effect(&mut self, effect_key: u64) -> Option<u32> {
         let victim = self
             .shadow_voices
@@ -1361,6 +1638,7 @@ impl EffectCatalog {
         Some(victim)
     }
 
+    /// Selects and removes a global shadow voice victim according to `stealing_policy`.
     fn steal_global_shadow_victim(&mut self) -> Option<u32> {
         let victim = match self.stealing_policy {
             VoiceStealingPolicy::LowestPriority => self
@@ -1408,6 +1686,7 @@ impl EffectCatalog {
         Some(victim)
     }
 
+    /// Removes `voice_id` from `shadow_voices` and decrements its catalog entry's active count.
     fn remove_shadow_voice(&mut self, voice_id: u32) {
         if let Some(sv) = self.shadow_voices.remove(&voice_id) {
             if let Some(idx) = self.find_index_by_key(sv.effect_key) {
@@ -1418,12 +1697,19 @@ impl EffectCatalog {
         }
     }
 
+    /// Returns the number of non-stopping voices tracked in `shadow_voices`.
     #[inline]
     fn live_shadow_count(&self) -> u16 {
         self.shadow_voices.values().filter(|v| !v.stopping).count() as u16
     }
 
-    /// Triggers an already cached sound effect by ID via lock-free command dispatch to [`VoicePoolRt`].
+    /// Triggers an already cached sound effect `id` with `config` via lock-free command dispatch
+    /// to [`VoicePoolRt`], returning the assigned `voice_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if `id` is unregistered, its buffer is not loaded, or the RT
+    /// command channel is full.
     pub fn play_cached_effect(&mut self, id: &str, config: EffectConfig) -> Result<u32, String> {
         let _ = self.drain_completed();
         let idx = *self
@@ -1493,6 +1779,13 @@ impl EffectCatalog {
         );
 
         for victim_id in stolen_victims {
+            crate::map_log!(
+                4,
+                "[VOICE_POOL] Stole voice_id={} to spawn '{}' (new_voice_id={})",
+                victim_id,
+                id,
+                voice_id
+            );
             let s = self.metrics.next_seq();
             let _ = self.cmd_tx.try_send(RtVoiceCmd::StopVoice {
                 seq: s,
@@ -1519,12 +1812,23 @@ impl EffectCatalog {
                 dsp_routing: config.dsp_routing,
                 emitter: config.spatial,
             })
-            .map_err(|_| "VoicePoolRt command channel full".to_string())?;
+            .map_err(|_| {
+                crate::map_log!(1, "[VOICE_POOL] VoicePoolRt command channel full");
+                "VoicePoolRt command channel full".to_string()
+            })?;
 
+        crate::map_log!(
+            5,
+            "[VOICE_POOL] Dispatched Start id='{}' voice_id={} active={}",
+            id,
+            voice_id,
+            count
+        );
         Ok(voice_id)
     }
 
-    /// Stops a single voice, updating shadow count synchronously and sending the command to RT.
+    /// Stops `voice_id` over `fade_out_samples` frames (`0` for immediate), updating shadow count
+    /// synchronously and sending the command to RT. Returns `true` if LRU eviction occurred.
     pub fn stop_voice(&mut self, voice_id: u32, fade_out_samples: usize) -> bool {
         let (_, mut evicted) = self.drain_completed();
         if fade_out_samples == 0 {
@@ -1559,7 +1863,8 @@ impl EffectCatalog {
         evicted
     }
 
-    /// Stops all active voices, updating shadow counts synchronously and sending the command to RT.
+    /// Stops all active voices over `fade_out_samples` frames (`0` for immediate), updating
+    /// shadow counts synchronously and sending the command to RT. Returns `true` if LRU eviction occurred.
     pub fn stop_all(&mut self, fade_out_samples: usize) -> bool {
         let (_, mut evicted) = self.drain_completed();
         if fade_out_samples == 0 {
@@ -1585,6 +1890,11 @@ impl EffectCatalog {
             seq,
             fade_out_samples,
         });
+        crate::map_log!(
+            4,
+            "[VOICE_POOL] Dispatched StopAll (fade_out_samples={})",
+            fade_out_samples
+        );
         evicted
     }
 }

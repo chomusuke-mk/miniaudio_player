@@ -1,31 +1,39 @@
-/// Immutable studio-grade algorithmic reverberation configuration for miniaudio_player.
+import 'api/logger.dart';
+
+/// Immutable studio-grade algorithmic reverberation configuration for `miniaudio_player`.
 ///
-/// Models an acoustic space utilizing a physical Freeverb network with 8 parallel
-/// low-pass feedback comb filters and 4 cascaded allpass filters per channel.
+/// Models an acoustic space utilizing a physical Freeverb network with `8`
+/// parallel low-pass feedback comb filters and `4` cascaded allpass filters
+/// per channel.
 class Reverb {
   /// Whether the reverb effect is actively processing audio.
   final bool enabled;
 
-  /// Normalized room size factor (0.0 to 1.0), determining reflection decay time.
+  /// Normalized room size factor (`0.0` to `1.0`) determining reflection decay time.
   final double roomSize;
 
-  /// High-frequency absorption / damping factor (0.0 to 1.0).
+  /// High-frequency absorption and damping factor (`0.0` to `1.0`).
   ///
-  /// Higher values result in darker, warmer room reflections as high frequencies decay faster.
+  /// Higher values result in darker, warmer room reflections as high
+  /// frequencies decay faster.
   final double damping;
 
-  /// Stereo width / spread of the reverberation reflections (0.0 to 1.0).
+  /// Stereo width and spread of the reverberation reflections (`0.0` to `1.0`).
   ///
-  /// 0.0 results in mono reverberation, while 1.0 produces maximum stereophonic space.
+  /// A value of `0.0` produces mono reverberation, while `1.0` produces maximum
+  /// stereophonic space.
   final double width;
 
-  /// Wet signal mix level (0.0 to 2.0, default 0.33).
+  /// Wet signal mix level (`0.0` to `2.0`, defaults to `0.33`).
   final double wet;
 
-  /// Dry (unprocessed direct sound) mix level (0.0 to 2.0, default 1.0).
+  /// Dry (unprocessed direct sound) mix level (`0.0` to `2.0`, defaults to `1.0`).
   final double dry;
 
   /// Creates an immutable [Reverb] configuration.
+  ///
+  /// Configures whether processing is [enabled], along with [roomSize],
+  /// [damping], [width], [wet], and [dry] mix levels.
   const Reverb({
     this.enabled = false,
     this.roomSize = 0.5,
@@ -42,7 +50,7 @@ class Reverb {
         assert(wet >= 0.0 && wet <= 2.0, 'wet must be between 0.0 and 2.0'),
         assert(dry >= 0.0 && dry <= 2.0, 'dry must be between 0.0 and 2.0');
 
-  /// Completely disabled/bypassed reverb effect.
+  /// Completely disabled and bypassed reverb effect.
   static const Reverb off = Reverb(
     enabled: false,
     roomSize: 0.0,
@@ -52,8 +60,10 @@ class Reverb {
     dry: 1.0,
   );
 
-  /// Small Room: tight, intimate space with fast decay.
-  /// Ideal for dry vocal enhancement and subtle acoustic dimension without washing out transients.
+  /// Tight, intimate small-room preset with fast decay.
+  ///
+  /// Ideal for dry vocal enhancement and subtle acoustic dimension without
+  /// washing out transients.
   static const Reverb smallRoom = Reverb(
     enabled: true,
     roomSize: 0.25,
@@ -63,8 +73,9 @@ class Reverb {
     dry: 1.0,
   );
 
-  /// Medium Room / Studio: balanced natural studio ambience.
-  /// Excellent for drums, acoustic guitars, and pop/rock tracks.
+  /// Balanced natural medium-room studio ambience preset.
+  ///
+  /// Well suited for drums, acoustic guitars, and pop or rock tracks.
   static const Reverb studio = Reverb(
     enabled: true,
     roomSize: 0.50,
@@ -74,7 +85,8 @@ class Reverb {
     dry: 1.0,
   );
 
-  /// Large Concert Hall: expansive acoustic stage with lush reflection density.
+  /// Expansive large concert hall preset with lush reflection density.
+  ///
   /// Designed for orchestral recordings, symphonies, and live venue emulation.
   static const Reverb concertHall = Reverb(
     enabled: true,
@@ -85,7 +97,7 @@ class Reverb {
     dry: 0.95,
   );
 
-  /// Cathedral: massive sacred space with lengthy decay and shimmering upper harmonics.
+  /// Massive cathedral preset with lengthy decay and shimmering upper harmonics.
   static const Reverb cathedral = Reverb(
     enabled: true,
     roomSize: 0.94,
@@ -95,7 +107,7 @@ class Reverb {
     dry: 0.85,
   );
 
-  /// Plate: dense, bright and metallic reflections modeled after vintage EMT studio plate units.
+  /// Dense, bright metallic plate preset modeled after vintage EMT studio plates.
   static const Reverb plate = Reverb(
     enabled: true,
     roomSize: 0.65,
@@ -105,7 +117,7 @@ class Reverb {
     dry: 0.95,
   );
 
-  /// Ambient / Ethereal: expansive, dreamy wash with extended tail and high wet ratio.
+  /// Expansive, dreamy ambient preset with extended tail and high wet ratio.
   static const Reverb ambient = Reverb(
     enabled: true,
     roomSize: 0.92,
@@ -115,7 +127,7 @@ class Reverb {
     dry: 0.70,
   );
 
-  /// Convenient map of all standard reverb presets by display name.
+  /// Convenient map of all standard reverb presets keyed by display name.
   static const Map<String, Reverb> presets = {
     'Off': off,
     'Small Room': smallRoom,
@@ -127,6 +139,9 @@ class Reverb {
   };
 
   /// Returns a copy of this [Reverb] with modified properties.
+  ///
+  /// Overrides [enabled], [roomSize], [damping], [width], [wet], and [dry]
+  /// when non-`null`.
   Reverb copyWith({
     bool? enabled,
     double? roomSize,
@@ -147,17 +162,41 @@ class Reverb {
 
   /// Returns a deterministic [Reverb] configuration with all acoustic parameters
   /// clamped to their valid DSP domain ranges.
+  ///
+  /// Clamps [roomSize], [damping], and [width] to `[0.0, 1.0]` and [wet] and
+  /// [dry] to `[0.0, 2.0]`.
   Reverb validated() {
+    final clampedRoomSize = roomSize.clamp(0.0, 1.0);
+    final clampedDamping = damping.clamp(0.0, 1.0);
+    final clampedWidth = width.clamp(0.0, 1.0);
+    final clampedWet = wet.clamp(0.0, 2.0);
+    final clampedDry = dry.clamp(0.0, 2.0);
+    if (clampedRoomSize != roomSize ||
+        clampedDamping != damping ||
+        clampedWidth != width ||
+        clampedWet != wet ||
+        clampedDry != dry) {
+      MapLogger.debug(
+        'Reverb.validated() clamped parameters: '
+        'roomSize=$roomSize->$clampedRoomSize, '
+        'damping=$damping->$clampedDamping, '
+        'width=$width->$clampedWidth, '
+        'wet=$wet->$clampedWet, '
+        'dry=$dry->$clampedDry',
+      );
+    }
     return Reverb(
       enabled: enabled,
-      roomSize: roomSize.clamp(0.0, 1.0),
-      damping: damping.clamp(0.0, 1.0),
-      width: width.clamp(0.0, 1.0),
-      wet: wet.clamp(0.0, 2.0),
-      dry: dry.clamp(0.0, 2.0),
+      roomSize: clampedRoomSize,
+      damping: clampedDamping,
+      width: clampedWidth,
+      wet: clampedWet,
+      dry: clampedDry,
     );
   }
 
+  /// Returns `true` if [other] is a [Reverb] with matching enabled state and
+  /// parameters within `1e-4`.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -170,6 +209,8 @@ class Reverb {
           (wet - other.wet).abs() < 1e-4 &&
           (dry - other.dry).abs() < 1e-4;
 
+  /// Returns a hash code derived from [enabled], [roomSize], [damping],
+  /// [width], [wet], and [dry].
   @override
   int get hashCode => Object.hash(
         enabled,
@@ -180,6 +221,7 @@ class Reverb {
         dry,
       );
 
+  /// Returns a human-readable string representation of this [Reverb].
   @override
   String toString() {
     return 'Reverb(enabled: $enabled, roomSize: $roomSize, damping: $damping, '

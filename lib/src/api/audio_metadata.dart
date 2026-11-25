@@ -67,7 +67,7 @@ enum PictureType {
   /// Publisher /studio logotype (`20`).
   publisherLogo;
 
-  /// Converts a native [rust_types.RustPictureType] into a [PictureType].
+  /// Converts a native `RustPictureType` [type] into a [PictureType].
   static PictureType fromRust(rust_types.RustPictureType type) =>
       switch (type) {
         rust_types.RustPictureType.other => PictureType.other,
@@ -120,11 +120,13 @@ enum MimeType {
   /// Unrecognized or arbitrary binary MIME type (`application/octet-stream`).
   unknown('application/octet-stream');
 
-  /// Standard IANA MIME string representation (e.g. `"image/jpeg"`).
+  /// Standard IANA MIME string representation (for example, `"image/jpeg"`).
   final String value;
+
+  /// Creates a [MimeType] enum value backed by its standard IANA MIME [value].
   const MimeType(this.value);
 
-  /// Converts a native [rust_types.RustMimeType] into a [MimeType].
+  /// Converts a native `RustMimeType` [type] into a [MimeType].
   static MimeType fromRust(rust_types.RustMimeType type) => switch (type) {
         rust_types.RustMimeType.png => MimeType.png,
         rust_types.RustMimeType.jpeg => MimeType.jpeg,
@@ -152,7 +154,7 @@ class AudioPicture {
   /// Raw encoded image bytes (PNG, JPEG, WebP, GIF, BMP, TIFF) ready for `Image.memory(picture.bytes)`.
   final Uint8List bytes;
 
-  /// Creates an immutable [AudioPicture].
+  /// Creates an immutable [AudioPicture] with [pictureType], [bytes], and optional [mimeType] and [description].
   const AudioPicture({
     required this.pictureType,
     this.mimeType,
@@ -160,7 +162,7 @@ class AudioPicture {
     required this.bytes,
   });
 
-  /// Creates an [AudioPicture] from a native [rust_types.RustAudioPicture] struct.
+  /// Creates an [AudioPicture] from a native `RustAudioPicture` struct [r].
   factory AudioPicture.fromRust(rust_types.RustAudioPicture r) => AudioPicture(
         pictureType: PictureType.fromRust(r.pictureType),
         mimeType: r.mimeType != null ? MimeType.fromRust(r.mimeType!) : null,
@@ -168,6 +170,7 @@ class AudioPicture {
         bytes: r.bytes,
       );
 
+  /// Compares this [AudioPicture] with [other] for value and byte-level equality.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -178,6 +181,7 @@ class AudioPicture {
           description == other.description &&
           AudioMetadata._bytesEquals(bytes, other.bytes);
 
+  /// Returns a hash code combining [pictureType], [mimeType], [description], and [bytes].
   @override
   int get hashCode => Object.hash(
         pictureType,
@@ -186,6 +190,7 @@ class AudioPicture {
         Object.hashAll(bytes),
       );
 
+  /// Returns a concise string summary of this [AudioPicture].
   @override
   String toString() =>
       'AudioPicture(type: ${pictureType.name}, mime: ${mimeType?.value}, '
@@ -204,7 +209,7 @@ class AudioChapter {
   /// Chapter end timestamp in milliseconds.
   final int endMs;
 
-  /// Creates an immutable [AudioChapter].
+  /// Creates an immutable [AudioChapter] with [title], [startMs], and [endMs].
   const AudioChapter({
     required this.title,
     required this.startMs,
@@ -221,13 +226,14 @@ class AudioChapter {
   Duration get duration =>
       Duration(milliseconds: endMs >= startMs ? endMs - startMs : 0);
 
-  /// Creates an [AudioChapter] from a native [rust_types.RustAudioChapter] struct.
+  /// Creates an [AudioChapter] from a native `RustAudioChapter` struct [r].
   factory AudioChapter.fromRust(rust_types.RustAudioChapter r) => AudioChapter(
         title: r.title,
         startMs: r.startMs.toInt(),
         endMs: r.endMs.toInt(),
       );
 
+  /// Compares this [AudioChapter] with [other] for value equality.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -237,9 +243,11 @@ class AudioChapter {
           startMs == other.startMs &&
           endMs == other.endMs;
 
+  /// Returns a hash code derived from [title], [startMs], and [endMs].
   @override
   int get hashCode => Object.hash(title, startMs, endMs);
 
+  /// Returns a readable string representation of this [AudioChapter].
   @override
   String toString() =>
       'AudioChapter(title: "$title", startMs: $startMs, endMs: $endMs)';
@@ -256,7 +264,7 @@ enum Id3v2Version {
   /// ID3v2.4 (4-character frame identifiers, UTF-8 text support, `TDRC` timestamps).
   v4;
 
-  /// Converts a native [rust_types.RustId3v2Version] into an [Id3v2Version].
+  /// Converts a native `RustId3v2Version` [v] into an [Id3v2Version].
   static Id3v2Version fromRust(rust_types.RustId3v2Version v) => switch (v) {
         rust_types.RustId3v2Version.v2 => Id3v2Version.v2,
         rust_types.RustId3v2Version.v3 => Id3v2Version.v3,
@@ -285,6 +293,9 @@ class IcyMetadata {
   final int? bitrateKbps;
 
   /// Creates an immutable [IcyMetadata] instance.
+  ///
+  /// All fields ([streamTitle], [streamUrl], [stationName], [stationGenre],
+  /// [stationUrl], and [bitrateKbps]) are optional and default to `null`.
   const IcyMetadata({
     this.streamTitle,
     this.streamUrl,
@@ -294,7 +305,7 @@ class IcyMetadata {
     this.bitrateKbps,
   });
 
-  /// Creates an [IcyMetadata] from a native [rust_types.RustIcyMetadata] struct.
+  /// Creates an [IcyMetadata] from a native `RustIcyMetadata` struct [r].
   factory IcyMetadata.fromRust(rust_types.RustIcyMetadata r) => IcyMetadata(
         streamTitle: r.streamTitle,
         streamUrl: r.streamUrl,
@@ -304,6 +315,7 @@ class IcyMetadata {
         bitrateKbps: r.bitrateKbps,
       );
 
+  /// Compares this [IcyMetadata] with [other] for value equality.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -316,6 +328,7 @@ class IcyMetadata {
           stationUrl == other.stationUrl &&
           bitrateKbps == other.bitrateKbps;
 
+  /// Returns a hash code combining all ICY stream metadata fields.
   @override
   int get hashCode => Object.hash(
         streamTitle,
@@ -326,6 +339,7 @@ class IcyMetadata {
         bitrateKbps,
       );
 
+  /// Returns a concise string representation of this [IcyMetadata].
   @override
   String toString() =>
       'IcyMetadata(streamTitle: $streamTitle, stationName: $stationName, '
@@ -526,6 +540,22 @@ class ExtendedMetadata {
   static const ExtendedMetadata empty = ExtendedMetadata();
 
   /// Creates an immutable [ExtendedMetadata] container.
+  ///
+  /// All 63 optional fields ([musicBrainzRecordingId], [musicBrainzTrackId],
+  /// [musicBrainzReleaseId], [musicBrainzReleaseGroupId], [musicBrainzArtistId],
+  /// [musicBrainzReleaseArtistId], [musicBrainzWorkId], [musicBrainzReleaseType],
+  /// [acoustId], [acoustIdFingerprint], [isrc], [barcode], [catalogNumber],
+  /// [arranger], [conductor], [director], [engineer], [lyricist], [mixDj],
+  /// [mixEngineer], [performer], [producer], [publisher], [label], [remixer],
+  /// [writer], [composer], [originalLyricist], [recordingDate], [releaseDate],
+  /// [originalReleaseDate], [initialKey], [color], [mood], [audioFileUrl],
+  /// [audioSourceUrl], [commercialInformationUrl], [copyrightUrl], [trackArtistUrl],
+  /// [radioStationUrl], [paymentUrl], [publisherUrl], [copyrightMessage], [license],
+  /// [podcastDescription], [podcastSeriesCategory], [podcastUrl],
+  /// [podcastGlobalUniqueId], [podcastKeywords], [setSubtitle], [showName],
+  /// [contentGroup], [trackSubtitle], [language], [script], [parentalAdvisory],
+  /// [fileOwner], [originalFileName], [originalMediaType], [encodedBy],
+  /// [encoderSoftware], and [encoderSettings]) default to `null`.
   const ExtendedMetadata({
     this.musicBrainzRecordingId,
     this.musicBrainzTrackId,
@@ -591,7 +621,7 @@ class ExtendedMetadata {
     this.encoderSettings,
   });
 
-  /// Creates an [ExtendedMetadata] from a native [rust_types.RustExtendedMetadata] struct.
+  /// Creates an [ExtendedMetadata] from a native `RustExtendedMetadata` struct [r].
   factory ExtendedMetadata.fromRust(rust_types.RustExtendedMetadata r) =>
       ExtendedMetadata(
         musicBrainzRecordingId: r.musicBrainzRecordingId,
@@ -730,7 +760,9 @@ class ExtendedMetadata {
     return map;
   }
 
-  /// Looks up an extended metadata field by camelCase or case-insensitive key name.
+  /// Looks up an extended metadata field by camelCase or case-insensitive [key] name.
+  ///
+  /// Returns `null` if no matching populated field exists.
   String? operator [](String key) {
     final map = toMap();
     if (map.containsKey(key)) return map[key];
@@ -749,6 +781,7 @@ class ExtendedMetadata {
   /// Whether at least one extended metadata field is non-null.
   bool get isNotEmpty => !isEmpty;
 
+  /// Compares this [ExtendedMetadata] with [other] across all 63 fields.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -817,10 +850,12 @@ class ExtendedMetadata {
           encoderSoftware == other.encoderSoftware &&
           encoderSettings == other.encoderSettings;
 
+  /// Returns a hash code computed from all non-null extended metadata fields.
   @override
   int get hashCode =>
       Object.hashAll(toMap().entries.map((e) => Object.hash(e.key, e.value)));
 
+  /// Returns a string representation of all populated [ExtendedMetadata] fields.
   @override
   String toString() => 'ExtendedMetadata(${toMap()})';
 }
@@ -933,9 +968,16 @@ class AudioMetadata {
   /// Raw synthesized metadata container bytes (ID3v2, Vorbis Comments, `moov` atom, etc.).
   final Uint8List bytes;
 
+  /// Shared empty byte buffer reused when [bytes] is omitted.
   static final Uint8List _emptyBytes = Uint8List(0);
 
   /// Creates an immutable [AudioMetadata] container.
+  ///
+  /// Accepts optional core tag fields ([title], [trackArtist], [album], [albumArtist],
+  /// [year], [genre], [trackNumber], [trackTotal], [discNumber], [discTotal], [lyrics],
+  /// [comment], [bpm], [replayGainTrackGain], [replayGainTrackPeak], [replayGainAlbumGain],
+  /// and [replayGainAlbumPeak]) along with [pictures], [extended], [chapters], [customTags],
+  /// [tagFormats], [id3v2Version], [icy], and raw container [bytes].
   AudioMetadata({
     this.title,
     this.trackArtist,
@@ -964,7 +1006,7 @@ class AudioMetadata {
     Uint8List? bytes,
   }) : bytes = bytes ?? _emptyBytes;
 
-  /// Creates an [AudioMetadata] from a native [rust_types.RustAudioMetadata] struct.
+  /// Creates an [AudioMetadata] from a native `RustAudioMetadata` struct [r].
   factory AudioMetadata.fromRust(rust_types.RustAudioMetadata r) {
     final customMap = <String, String>{
       for (final f in r.customTags) f.key: f.value,
@@ -1000,7 +1042,7 @@ class AudioMetadata {
     );
   }
 
-  /// Converts a native [rust_types.RustAudioMetadata] into an [AudioMetadata],
+  /// Converts a native `RustAudioMetadata` struct [r] into an [AudioMetadata],
   /// returning `null` if both [bytes] and all parsed metadata fields are empty.
   static AudioMetadata? fromRustNullable(rust_types.RustAudioMetadata r) {
     final parsed = AudioMetadata.fromRust(r);
@@ -1044,6 +1086,7 @@ class AudioMetadata {
   /// Whether either the raw metadata byte buffer or any parsed metadata field is non-empty.
   bool get isNotEmpty => !isEmpty;
 
+  /// Compares this [AudioMetadata] with [other] across all tags, pictures, chapters, and bytes.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1075,6 +1118,7 @@ class AudioMetadata {
           icy == other.icy &&
           _bytesEquals(bytes, other.bytes);
 
+  /// Returns a hash code combining all parsed metadata fields and raw [bytes].
   @override
   int get hashCode => Object.hash(
         title,
@@ -1107,6 +1151,7 @@ class AudioMetadata {
         ),
       );
 
+  /// Returns a concise summary string of this [AudioMetadata].
   @override
   String toString() =>
       'AudioMetadata(title: $title, artist: $trackArtist, album: $album, '
@@ -1115,6 +1160,7 @@ class AudioMetadata {
       'tagFormats: $tagFormats, id3v2Version: ${id3v2Version?.name}, '
       '${bytes.length} bytes)';
 
+  /// Returns `true` if byte buffers [a] and [b] contain identical bytes.
   static bool _bytesEquals(Uint8List a, Uint8List b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
@@ -1124,6 +1170,7 @@ class AudioMetadata {
     return true;
   }
 
+  /// Returns `true` if lists [a] and [b] contain equal elements in the same order.
   static bool _listEquals<E>(List<E> a, List<E> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
@@ -1133,6 +1180,7 @@ class AudioMetadata {
     return true;
   }
 
+  /// Returns `true` if maps [a] and [b] contain identical key-value pairs.
   static bool _mapEquals<K, V>(Map<K, V> a, Map<K, V> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;

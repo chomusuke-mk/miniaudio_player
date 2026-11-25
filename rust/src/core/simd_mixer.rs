@@ -1,26 +1,26 @@
-//! Vectorized SIMD Audio Mixer with AVX2 / ARM NEON support and Soft-Knee Headroom Saturation.
+//! Vectorized SIMD audio mixer with AVX2/FMA and ARM NEON support.
 //!
-//! Provides lock-free, zero-allocation summing, crossfading, gain modulation, and soft-knee
-//! peak saturation to prevent digital harshness before the True-Peak limiter.
+//! Provides lock-free, zero-allocation slice accumulation and gain-scaled mixing
+//! with scalar fallbacks for targets without SIMD intrinsics.
 
-/// SIMD-accelerated audio sample mixer with AVX2/NEON and scalar fallback routines.
+/// SIMD-accelerated audio sample mixer with AVX2/FMA, ARM NEON, and scalar fallback routines.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SimdMixer {}
 
 impl SimdMixer {
-    /// Creates a new `SimdMixer` instance.
+    /// Creates a new [`SimdMixer`] instance.
     #[inline]
     pub fn new() -> Self {
         Self {}
     }
 
-    /// Vectorized accumulation: `dst[i] += src[i]`.
+    /// Accumulates `src` samples into `dst` with unity gain (`dst[i] += src[i]`).
     #[inline]
     pub fn accumulate(&self, dst: &mut [f32], src: &[f32]) {
         Self::mix_add(dst, src, 1.0);
     }
 
-    /// Vectorized accumulation with gain: `dst[i] += src[i] * gain`.
+    /// Accumulates `src` samples scaled by `gain` into `dst` (`dst[i] += src[i] * gain`).
     #[inline]
     pub fn mix_add(dst: &mut [f32], src: &[f32], gain: f32) {
         if (gain - 0.0).abs() < f32::EPSILON {
@@ -52,6 +52,7 @@ impl SimdMixer {
         Self::mix_add_scalar(dst_slice, src_slice, gain);
     }
 
+    /// Scalar fallback loop accumulating `src` scaled by `gain` into `dst`.
     #[inline(always)]
     fn mix_add_scalar(dst: &mut [f32], src: &[f32], gain: f32) {
         for (d, s) in dst.iter_mut().zip(src.iter()) {
@@ -59,6 +60,12 @@ impl SimdMixer {
         }
     }
 
+    /// AVX2 + FMA vectorized loop accumulating `src` scaled by `gain` into `dst`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the current CPU supports both `avx2` and `fma` target features,
+    /// and `dst` and `src` must have equal lengths (`dst.len() == src.len()`).
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2", enable = "fma")]
     unsafe fn mix_add_avx2(dst: &mut [f32], src: &[f32], gain: f32) {
@@ -88,6 +95,12 @@ impl SimdMixer {
         }
     }
 
+    /// ARM NEON vectorized loop accumulating `src` scaled by `gain` into `dst`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the current CPU supports the `neon` target feature,
+    /// and `dst` and `src` must have equal lengths (`dst.len() == src.len()`).
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
     unsafe fn mix_add_neon(dst: &mut [f32], src: &[f32], gain: f32) {

@@ -15,6 +15,7 @@ pub enum SilenceMode {
 }
 
 impl Default for SilenceMode {
+    /// Returns [`SilenceMode::Disabled`].
     fn default() -> Self {
         SilenceMode::Disabled
     }
@@ -37,6 +38,7 @@ pub struct SilenceConfig {
 }
 
 impl Default for SilenceConfig {
+    /// Returns a disabled [`SilenceConfig`] with `-45.0 dBFS` threshold, `300 ms` min silence, and `50 ms` padding.
     fn default() -> Self {
         Self {
             enabled: false,
@@ -61,31 +63,47 @@ pub enum SilenceState {
 
 /// Dynamic silence detector and skipper with 5ms smooth crossfade and cumulative saved time tracking.
 pub struct SilenceDetector {
+    /// Number of interleaved channels per frame.
     channels: usize,
+    /// Active audio sample rate in Hz.
     sample_rate: u32,
+    /// Active silence skipping configuration.
     config: SilenceConfig,
+    /// Current state of the silence detection FSM.
     state: SilenceState,
 
+    /// Linear peak threshold below which frames are considered silent.
     threshold_amp_linear: f32,
+    /// Hysteresis linear peak threshold (+2 dB) required to exit `Skipping` state.
     threshold_amp_exit: f32,
 
+    /// Minimum consecutive silent frames required before entering `Skipping`.
     min_silence_frames: usize,
+    /// Number of leading/trailing padding frames preserved around skipped silence.
     padding_frames: usize,
 
+    /// Whether initial lead-in silence trimming is currently active.
     lead_in_active: bool,
+    /// Cumulative number of audio frames skipped across the stream.
     silence_saved_frames: u64,
 
+    /// Pre-allocated circular/linear staging buffer holding potential-silence frames.
     hold_buffer: Vec<f32>,
+    /// Total valid frames currently stored in `hold_buffer`.
     hold_frames_count: usize,
+    /// Read cursor inside `hold_buffer` while draining held frames to output.
     hold_frames_read_pos: usize,
 
+    /// Last emitted sample per channel (up to 8 channels) used for crossfade smoothing.
     last_sample: [f32; 8],
+    /// Crossfade duration in frames (~5 ms).
     crossfade_length: usize,
+    /// Remaining crossfade frames after resuming from silence.
     crossfade_remaining: usize,
 }
 
 impl SilenceDetector {
-    /// Constructs a `SilenceDetector` calibrated for the specified channel count and sample rate.
+    /// Constructs a `SilenceDetector` calibrated for `channels` and `sample_rate`.
     pub fn new(channels: usize, sample_rate: u32) -> Self {
         let ch = channels.max(1);
         let mut det = Self {
@@ -111,11 +129,23 @@ impl SilenceDetector {
         det
     }
 
-    /// Reconfigures silence detection thresholds, mode, and padding durations.
+    /// Reconfigures silence detection thresholds, mode, and padding durations from `config`.
     pub fn set_config(&mut self, config: SilenceConfig) {
         let prev_mode = self.config.mode;
         let prev_enabled = self.config.enabled;
+        let changed = self.config != config;
         self.config = config;
+        if changed {
+            crate::map_log!(
+                4,
+                "[SILENCE] Config updated: enabled={} mode={:?} thresh_db={:.1} min_ms={} pad_ms={}",
+                config.enabled,
+                config.mode,
+                config.threshold_db,
+                config.min_silence_duration_ms,
+                config.padding_ms
+            );
+        }
         self.update_params();
         if !config.enabled {
             self.reset(true);
@@ -137,19 +167,26 @@ impl SilenceDetector {
         self.sample_rate
     }
 
-    /// Updates the channel count and resets internal buffers.
+    /// Updates `channels` and resets internal buffers when changed.
     pub fn set_channels(&mut self, channels: usize) {
         let ch = channels.max(1);
         if self.channels != ch {
+            crate::map_log!(4, "[SILENCE] Channels changed: {} -> {}", self.channels, ch);
             self.channels = ch;
             self.update_params();
             self.reset(true);
         }
     }
 
-    /// Updates the sample rate and recalculates time-based frame thresholds.
+    /// Updates `sample_rate` and recalculates time-based frame thresholds when changed.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if self.sample_rate != sample_rate && sample_rate > 0 {
+            crate::map_log!(
+                4,
+                "[SILENCE] Sample rate changed: {} -> {}",
+                self.sample_rate,
+                sample_rate
+            );
             self.sample_rate = sample_rate;
             self.update_params();
         }
@@ -285,6 +322,7 @@ impl SilenceDetector {
         (out_pos, in_pos)
     }
 
+    /// Computes the maximum absolute sample amplitude across all channels in `frame`.
     #[inline]
     fn frame_peak(frame: &[f32]) -> f32 {
         let mut peak: f32 = 0.0;
@@ -297,6 +335,8 @@ impl SilenceDetector {
         peak
     }
 
+    /// Drains previously held potential-silence frames from `hold_buffer` into `output`,
+    /// advancing `out_pos` up to `output_frames_cap`, and returns `true` if draining is active.
     fn drain_held_frames(
         &mut self,
         output: &mut [f32],
@@ -336,6 +376,8 @@ impl SilenceDetector {
         true
     }
 
+    /// Writes a single voice `frame` into `output` at `out_pos`, applying a 5 ms linear
+    /// crossfade from `last_sample` when resuming after skipped silence.
     #[inline]
     fn emit_voice_frame(&mut self, frame: &[f32], output: &mut [f32], out_pos: &mut usize) {
         let dst_start = *out_pos * self.channels;
@@ -355,6 +397,7 @@ impl SilenceDetector {
         *out_pos += 1;
     }
 
+    /// Appends a single `frame` to `hold_buffer` if pre-allocated capacity allows.
     fn append_hold_frame(&mut self, frame: &[f32]) {
         let capacity_frames = self.hold_buffer.len() / self.channels;
         if self.hold_frames_count < capacity_frames {
@@ -364,6 +407,8 @@ impl SilenceDetector {
         }
     }
 
+    /// Recomputes linear amplitude thresholds, frame durations, crossfade length,
+    /// and pre-allocated `hold_buffer` capacity from `config`, `sample_rate`, and `channels`.
     fn update_params(&mut self) {
         self.threshold_amp_linear = 10.0f32.powf(self.config.threshold_db / 20.0);
         self.threshold_amp_exit = 10.0f32.powf((self.config.threshold_db + 2.0) / 20.0);

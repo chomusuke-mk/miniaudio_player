@@ -73,7 +73,7 @@ pub enum EventType {
 }
 
 impl EventType {
-    /// Constructs an `EventType` from an integer code.
+    /// Constructs an [`EventType`] from an integer discriminant `code`.
     #[inline]
     pub fn from_i32(code: i32) -> Self {
         match code {
@@ -137,6 +137,7 @@ pub struct DeviceInfo {
 }
 
 impl Default for DeviceInfo {
+    /// Returns a default [`DeviceInfo`] representing automatic OS default routing.
     fn default() -> Self {
         Self {
             id: [0; 516],
@@ -161,36 +162,64 @@ pub struct SpatializerData {
 /// Strongly-typed, deterministic telemetry events.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TelemetryEvent {
+    /// No-op sentinel event.
     None,
+    /// Playback state integer change.
     State(i32),
+    /// Playback position in milliseconds.
     Position(i64),
+    /// Track duration in milliseconds.
     Duration(i64),
+    /// Whether playback is currently active.
     IsPlaying(bool),
+    /// Whether the stream is currently buffering.
     IsBuffering(bool),
+    /// Master output volume multiplier.
     Volume(f32),
+    /// Playback speed rate multiplier.
     Rate(f32),
+    /// Pitch shift multiplier.
     Pitch(f32),
+    /// Active stream bitrate in kbps.
     Bitrate(u32),
+    /// Output buffer capacity in frames/samples.
     BufferSize(u32),
+    /// Active audio output device metadata.
     Device(Box<DeviceInfo>),
+    /// Snapshot of real-time visualizer spectrum/waveform data.
     Visualizer(VisualizerData),
+    /// Whether the audio visualizer is enabled.
     VisualizerEnabled(bool),
+    /// Network stream buffered time boundaries.
     BufferedRange(BufferedRange),
+    /// Silence trimming configuration update.
     SilenceConfig(SilenceConfig),
+    /// Cumulative silence duration saved in milliseconds.
     SilenceSaved(i64),
+    /// 10-band equalizer parameters update.
     Equalizer(EqualizerParams),
+    /// Preamp amplification in decibels.
     Preamp(f32),
+    /// ReplayGain normalization configuration.
     ReplayGain(ReplayGainConfig),
+    /// Stereo balance pan position in `[-1.0, 1.0]`.
     Balance(f32),
+    /// Whether mono downmixing is enabled.
     Mono(bool),
+    /// Headphone crossfeed filter configuration.
     Crossfeed(CrossfeedConfig),
+    /// Stereo spatializer widening configuration.
     Spatializer(SpatializerData),
+    /// Algorithmic reverb configuration.
     Reverb(ReverbConfig),
+    /// Whether the lookahead soft limiter is enabled.
     Limiter(bool),
+    /// Engine error code notification.
     Error(i32),
 }
 
 impl TelemetryEvent {
+    /// Converts a raw `event_type` discriminant and C-compatible union `data` into a typed [`TelemetryEvent`].
     pub fn from_raw(event_type: EventType, data: &MapEventData) -> Self {
         unsafe {
             match event_type {
@@ -299,16 +328,19 @@ pub type MonotonicInstant = web_time::Instant;
 /// Encapsulates registered telemetry callbacks with single-responsibility notification methods.
 #[derive(Default)]
 struct CallbackRegistry {
+    /// Optional strongly-typed callback invoked from the telemetry worker thread.
     typed_callback: RwLock<Option<TypedEventCallback>>,
 }
 
 impl CallbackRegistry {
+    /// Replaces or clears the registered typed event callback `cb`.
     fn set_typed(&self, cb: Option<TypedEventCallback>) {
         if let Ok(mut guard) = self.typed_callback.write() {
             *guard = cb;
         }
     }
 
+    /// Dispatches a `batch` of telemetry events, deduplicating consecutive identical `Position` values via `last_position`.
     fn notify_typed_batch(&self, batch: &[TelemetryEvent], last_position: &mut i64) {
         if let Ok(guard) = self.typed_callback.read() {
             if let Some(cb) = guard.as_ref() {
@@ -328,20 +360,25 @@ impl CallbackRegistry {
 
 /// Central telemetry dispatcher broadcasting real-time engine events to listeners.
 pub struct TelemetryDispatcher {
+    /// Atomic lifecycle flag indicating whether the dispatcher is active.
     is_running: Arc<AtomicBool>,
+    /// Thread-safe callback holder shared with the background worker thread.
     callbacks: Arc<CallbackRegistry>,
+    /// Cross-platform wakeup queue carrying pending [`TelemetryEvent`] batches.
     queue: Arc<crate::sync::WakeQueue<TelemetryEvent>>,
+    /// Join handle for the background `map-telemetry` worker thread.
     worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl Default for TelemetryDispatcher {
+    /// Creates and starts a new [`TelemetryDispatcher`].
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl TelemetryDispatcher {
-    /// Creates a new `TelemetryDispatcher` initializing worker threads.
+    /// Creates a new [`TelemetryDispatcher`] initializing its background worker thread.
     pub fn new() -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let callbacks = Arc::new(CallbackRegistry::default());
@@ -358,14 +395,16 @@ impl TelemetryDispatcher {
         }
     }
 
+    /// Spawns the `map-telemetry` worker thread draining `queue` into `callbacks` while `is_running` is `true`.
     fn spawn_worker(
         is_running: Arc<AtomicBool>,
         callbacks: Arc<CallbackRegistry>,
         queue: Arc<crate::sync::WakeQueue<TelemetryEvent>>,
     ) -> Option<thread::JoinHandle<()>> {
-        thread::Builder::new()
+        match thread::Builder::new()
             .name("map-telemetry".to_string())
             .spawn(move || {
+                crate::map_log!(4, "[TELEMETRY] map-telemetry worker thread started");
                 let mut last_position: i64 = -1;
                 let mut batch: Vec<TelemetryEvent> = Vec::with_capacity(16);
                 while is_running.load(Ordering::Relaxed) {
@@ -378,16 +417,32 @@ impl TelemetryDispatcher {
                         break;
                     }
                 }
-            })
-            .ok()
+                crate::map_log!(4, "[TELEMETRY] map-telemetry worker thread exiting");
+            }) {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                crate::map_log!(
+                    2,
+                    "[TELEMETRY] Failed to spawn map-telemetry worker thread: {}",
+                    e
+                );
+                None
+            }
+        }
     }
 
-    /// Sets or clears the strongly-typed batch event callback closure.
+    /// Sets or clears the strongly-typed batch event `callback` closure.
     pub fn set_typed_callback(&self, callback: Option<TypedEventCallback>) {
+        let is_set = callback.is_some();
         self.callbacks.set_typed(callback);
+        crate::map_log!(
+            4,
+            "[TELEMETRY] Typed telemetry callback {}",
+            if is_set { "registered" } else { "cleared" }
+        );
     }
 
-    /// Primary deterministic telemetry dispatch entry point.
+    /// Primary deterministic telemetry dispatch entry point for `event`.
     pub fn post(&self, event: TelemetryEvent) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
@@ -403,7 +458,10 @@ impl TelemetryDispatcher {
 
     /// Signals the dispatcher to stop all threads and release callbacks.
     pub fn stop(&self) {
-        self.is_running.store(false, Ordering::SeqCst);
+        let was_running = self.is_running.swap(false, Ordering::SeqCst);
+        if was_running {
+            crate::map_log!(4, "[TELEMETRY] Stopping telemetry dispatcher");
+        }
         self.queue.close();
         self.callbacks.set_typed(None);
         if let Ok(mut handle_guard) = self.worker_handle.lock() {
@@ -415,6 +473,7 @@ impl TelemetryDispatcher {
 }
 
 impl Drop for TelemetryDispatcher {
+    /// Stops the telemetry dispatcher and joins its worker thread on drop.
     fn drop(&mut self) {
         self.stop();
     }

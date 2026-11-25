@@ -1,16 +1,16 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
-import 'package:miniaudio_player_example/app.dart';
-import 'package:miniaudio_player_example/controllers/audio_analyzer_controller.dart';
-import 'package:miniaudio_player_example/controllers/audio_engine_controller.dart';
-import 'package:miniaudio_player_example/models/audio_track.dart';
-import 'package:miniaudio_player_example/theme/studio_colors.dart';
-import 'package:miniaudio_player_example/widgets/cards/audio_analyzer_card.dart';
-import 'package:miniaudio_player_example/widgets/cards/playback_engine_card.dart';
-import 'package:miniaudio_player_example/widgets/common/metadata_inspector_modal.dart';
+import 'package:miniaudio_player_example/app/miniaudio_example_app.dart';
+import 'package:miniaudio_player_example/core/models/audio_track.dart';
+import 'package:miniaudio_player_example/core/theme/studio_colors.dart';
+import 'package:miniaudio_player_example/features/analyzer/controllers/audio_analyzer_controller.dart';
+import 'package:miniaudio_player_example/features/analyzer/widgets/audio_analyzer_card.dart';
+import 'package:miniaudio_player_example/features/console/controllers/audio_engine_controller.dart';
+import 'package:miniaudio_player_example/features/metadata/widgets/metadata_inspector_modal.dart';
+import 'package:miniaudio_player_example/features/playback/widgets/playback_engine_card.dart';
 
 AudioAnalysisResult _makeTestAnalysis({double gainDb = -3.5}) {
   return AudioAnalysisResult(

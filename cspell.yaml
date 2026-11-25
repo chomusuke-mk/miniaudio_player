@@ -379,6 +379,7 @@ words:
   - libvorbis
   - libvorbisfile
   - lieff
+  - lifecycles
   - Lifetimeable
   - lipo
   - livestream
@@ -603,6 +604,7 @@ words:
   - rolloff
   - routeable
   - rpath
+  - Rpcs
   - rsplit
   - rtrb
   - rustfft

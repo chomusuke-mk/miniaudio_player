@@ -15,8 +15,11 @@ use super::stream_buffer::{BufferError, StreamBuffer, StreamSession};
 
 /// Virtual composite `Read + Seek + MediaSource` reader over a [`StreamSession`] (`Head` + `Body`).
 pub struct DemuxedStreamReader {
+    /// Underlying dual-region stream session backing reads and seeks.
     session: StreamSession,
+    /// Logical read cursor relative to `base_offset`.
     cursor: u64,
+    /// Physical stream byte offset mapped to virtual offset `0`.
     base_offset: u64,
 }
 
@@ -24,13 +27,18 @@ impl DemuxedStreamReader {
     /// Read timeout duration when waiting for asynchronous stream chunk delivery.
     pub const READ_WAIT_TIMEOUT: Duration = Duration::from_millis(5000);
 
-    /// Creates a new `DemuxedStreamReader` over the given `StreamSession`.
+    /// Creates a new [`DemuxedStreamReader`] over the given `session` starting at physical offset `0`.
     pub fn new(session: StreamSession) -> Self {
         Self::new_at(session, 0)
     }
 
-    /// Creates a `DemuxedStreamReader` whose virtual offset `0` maps to physical `base_offset`.
+    /// Creates a [`DemuxedStreamReader`] over `session` whose virtual offset `0` maps to physical `base_offset`.
     pub fn new_at(session: StreamSession, base_offset: u64) -> Self {
+        crate::map_log!(
+            4,
+            "[BUFFER] DemuxedStreamReader::new_at base_offset={}",
+            base_offset
+        );
         Self {
             session,
             cursor: 0,
@@ -38,6 +46,7 @@ impl DemuxedStreamReader {
         }
     }
 
+    /// Updates either the probe read high-water mark or the settled decode read cursor up to `new_phys` depending on `probe_mode`.
     #[inline]
     fn record_read_progress(&self, probe_mode: bool, new_phys: u64) {
         if probe_mode {
@@ -50,6 +59,11 @@ impl DemuxedStreamReader {
         }
     }
 
+    /// Resolves a relative or absolute [`SeekFrom`] `pos` into a virtual cursor offset relative to `base_offset`.
+    ///
+    /// # Errors
+    /// Returns [`ErrorKind::InvalidInput`] if the resolved target is negative, or
+    /// [`ErrorKind::Unsupported`] when seeking from the end on a live stream without a known length.
     fn resolve_seek_target(&self, pos: SeekFrom) -> IoResult<u64> {
         match pos {
             SeekFrom::Start(offset) => Ok(offset),
@@ -89,6 +103,10 @@ impl DemuxedStreamReader {
 }
 
 impl Read for DemuxedStreamReader {
+    /// Reads buffered or asynchronously fetched stream bytes into `buf` and advances the virtual cursor.
+    ///
+    /// # Errors
+    /// Propagates stream abortion, seek preemption, read timeout, or underlying buffer errors as `std::io::Error`.
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -105,6 +123,12 @@ impl Read for DemuxedStreamReader {
                 Ok(bytes_read)
             }
             Err(BufferError::Aborted) => {
+                crate::map_log!(
+                    2,
+                    "[BUFFER] DemuxedStreamReader::read aborted at cursor={} (phys={})",
+                    self.cursor,
+                    phys_cursor
+                );
                 Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
             }
             Err(BufferError::WouldBlock) => {
@@ -119,12 +143,32 @@ impl Read for DemuxedStreamReader {
                                 Ok(n)
                             }
                             Err(BufferError::Aborted) => {
+                                crate::map_log!(
+                                    2,
+                                    "[BUFFER] DemuxedStreamReader::read probe aborted at cursor={} (phys={})",
+                                    self.cursor,
+                                    phys_cursor
+                                );
                                 Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
                             }
                             Err(BufferError::SeekInterrupted) => {
+                                crate::map_log!(
+                                    4,
+                                    "[BUFFER] DemuxedStreamReader::read probe seek-preempted at cursor={} (phys={})",
+                                    self.cursor,
+                                    phys_cursor
+                                );
                                 Err(IoError::new(ErrorKind::TimedOut, "seek preempted"))
                             }
-                            Err(_) => Err(IoError::new(ErrorKind::Other, "probe read error")),
+                            Err(_) => {
+                                crate::map_log!(
+                                    1,
+                                    "[BUFFER] DemuxedStreamReader::read probe error at cursor={} (phys={})",
+                                    self.cursor,
+                                    phys_cursor
+                                );
+                                Err(IoError::new(ErrorKind::Other, "probe read error"))
+                            }
                         };
                     }
                 }
@@ -144,37 +188,86 @@ impl Read for DemuxedStreamReader {
                     }
                     Err(BufferError::Eof) => Ok(0),
                     Err(BufferError::Aborted) => {
+                        crate::map_log!(
+                            2,
+                            "[BUFFER] DemuxedStreamReader::read blocking aborted at cursor={} (phys={})",
+                            self.cursor,
+                            phys_cursor
+                        );
                         Err(IoError::new(ErrorKind::ConnectionAborted, "stream aborted"))
                     }
                     Err(BufferError::SeekInterrupted) => {
+                        crate::map_log!(
+                            4,
+                            "[BUFFER] DemuxedStreamReader::read blocking seek-preempted at cursor={} (phys={})",
+                            self.cursor,
+                            phys_cursor
+                        );
                         Err(IoError::new(ErrorKind::TimedOut, "seek preempted"))
                     }
                     Err(BufferError::WouldBlock) => {
                         crate::map_log!(
                             1,
-                            "DemuxedStreamReader::read WOULD_BLOCK at cursor={} (phys={}, buf_len={})",
+                            "[BUFFER] DemuxedStreamReader::read WOULD_BLOCK at cursor={} (phys={}, buf_len={})",
                             self.cursor,
                             phys_cursor,
                             buf.len()
                         );
                         Err(IoError::new(ErrorKind::WouldBlock, "buffer starving"))
                     }
-                    Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
+                    Err(_) => {
+                        crate::map_log!(
+                            1,
+                            "[BUFFER] DemuxedStreamReader::read blocking error at cursor={} (phys={})",
+                            self.cursor,
+                            phys_cursor
+                        );
+                        Err(IoError::new(ErrorKind::Other, "buffer read error"))
+                    }
                 }
             }
             Err(BufferError::Eof) => Ok(0),
             Err(BufferError::SeekInterrupted) => {
+                crate::map_log!(
+                    4,
+                    "[BUFFER] DemuxedStreamReader::read seek-preempted at cursor={} (phys={})",
+                    self.cursor,
+                    phys_cursor
+                );
                 Err(IoError::new(ErrorKind::TimedOut, "seek preempted"))
             }
-            Err(_) => Err(IoError::new(ErrorKind::Other, "buffer read error")),
+            Err(_) => {
+                crate::map_log!(
+                    1,
+                    "[BUFFER] DemuxedStreamReader::read error at cursor={} (phys={})",
+                    self.cursor,
+                    phys_cursor
+                );
+                Err(IoError::new(ErrorKind::Other, "buffer read error"))
+            }
         }
     }
 }
 
 impl Seek for DemuxedStreamReader {
+    /// Updates the virtual read cursor to `pos` and notifies probe mode when jumping non-sequentially.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if `pos` resolves to a negative offset or seeks from end on a live stream.
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
         let prev_cursor = self.cursor;
-        let new_cursor = self.resolve_seek_target(pos)?;
+        let new_cursor = match self.resolve_seek_target(pos) {
+            Ok(target) => target,
+            Err(err) => {
+                crate::map_log!(
+                    2,
+                    "[BUFFER] DemuxedStreamReader::seek failed for {:?}: {}",
+                    pos,
+                    err
+                );
+                return Err(err);
+            }
+        };
         if self.session.in_probe_mode()
             && (matches!(pos, SeekFrom::Start(_)) || new_cursor.abs_diff(prev_cursor) > 1024)
         {
@@ -187,6 +280,7 @@ impl Seek for DemuxedStreamReader {
 }
 
 impl MediaSource for DemuxedStreamReader {
+    /// Returns `true` when the underlying stream supports random-access seeking.
     fn is_seekable(&self) -> bool {
         if self.session.is_live() {
             return false;
@@ -200,6 +294,7 @@ impl MediaSource for DemuxedStreamReader {
                 || self.session.is_fully_buffered())
     }
 
+    /// Returns the remaining seekable byte length relative to `base_offset`, or `None` for unseekable/live streams.
     fn byte_len(&self) -> Option<u64> {
         if self.session.is_live() || !self.is_seekable() {
             None
@@ -214,18 +309,25 @@ impl MediaSource for DemuxedStreamReader {
 
 /// Seekable reader adapter over a `Sparse` [`StreamBuffer`] for universal metadata extraction.
 pub struct MetadataStreamReader {
+    /// Sparse [`StreamBuffer`] storing metadata header/tail byte ranges.
     buffer: Arc<StreamBuffer>,
+    /// Current logical byte cursor within `buffer`.
     cursor: u64,
 }
 
 impl MetadataStreamReader {
-    /// Creates a new `MetadataStreamReader` positioned at byte `0`.
+    /// Creates a new [`MetadataStreamReader`] backed by `buffer` and positioned at byte `0`.
     pub fn new(buffer: Arc<StreamBuffer>) -> Self {
         Self { buffer, cursor: 0 }
     }
 }
 
 impl Read for MetadataStreamReader {
+    /// Reads sparse-buffered metadata bytes into `buf` and advances the cursor.
+    ///
+    /// # Errors
+    /// Returns [`ErrorKind::UnexpectedEof`] when the requested offset is unbuffered,
+    /// [`ErrorKind::ConnectionAborted`] if aborted, or [`ErrorKind::Other`] on other buffer errors.
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -236,26 +338,57 @@ impl Read for MetadataStreamReader {
                 Ok(n)
             }
             Err(BufferError::Eof) => Ok(0),
-            Err(BufferError::WouldBlock) => Err(IoError::new(
-                ErrorKind::UnexpectedEof,
-                "requested metadata offset is not buffered",
-            )),
-            Err(BufferError::Aborted) => Err(IoError::new(
-                ErrorKind::ConnectionAborted,
-                "metadata read aborted",
-            )),
-            Err(_) => Err(IoError::new(ErrorKind::Other, "metadata buffer read error")),
+            Err(BufferError::WouldBlock) => {
+                crate::map_log!(
+                    4,
+                    "[BUFFER] MetadataStreamReader::read unbuffered offset={} len={}",
+                    self.cursor,
+                    buf.len()
+                );
+                Err(IoError::new(
+                    ErrorKind::UnexpectedEof,
+                    "requested metadata offset is not buffered",
+                ))
+            }
+            Err(BufferError::Aborted) => {
+                crate::map_log!(
+                    2,
+                    "[BUFFER] MetadataStreamReader::read aborted at offset={}",
+                    self.cursor
+                );
+                Err(IoError::new(
+                    ErrorKind::ConnectionAborted,
+                    "metadata read aborted",
+                ))
+            }
+            Err(_) => {
+                crate::map_log!(
+                    1,
+                    "[BUFFER] MetadataStreamReader::read error at offset={}",
+                    self.cursor
+                );
+                Err(IoError::new(ErrorKind::Other, "metadata buffer read error"))
+            }
         }
     }
 }
 
 impl Seek for MetadataStreamReader {
+    /// Seeks the metadata cursor to `pos` and updates the sparse buffer cursor hint.
+    ///
+    /// # Errors
+    /// Returns [`ErrorKind::Unsupported`] when seeking from end without a known virtual size, or
+    /// [`ErrorKind::InvalidInput`] if the resulting offset is negative.
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
         let target = match pos {
             SeekFrom::Start(offset) => offset as i64,
             SeekFrom::Current(delta) => (self.cursor as i64) + delta,
             SeekFrom::End(delta) => {
                 let Some(vsize) = self.buffer.virtual_size() else {
+                    crate::map_log!(
+                        2,
+                        "[BUFFER] MetadataStreamReader::seek SeekFrom::End unsupported without virtual_size"
+                    );
                     return Err(IoError::new(
                         ErrorKind::Unsupported,
                         "virtual size unknown for metadata buffer",
@@ -265,6 +398,11 @@ impl Seek for MetadataStreamReader {
             }
         };
         if target < 0 {
+            crate::map_log!(
+                2,
+                "[BUFFER] MetadataStreamReader::seek negative target={}",
+                target
+            );
             return Err(IoError::new(
                 ErrorKind::InvalidInput,
                 "negative metadata seek offset",

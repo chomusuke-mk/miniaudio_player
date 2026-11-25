@@ -1,7 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:miniaudio_player_example/theme/studio_theme.dart';
-import 'package:miniaudio_player_example/views/ingest_matrix_view.dart';
+import 'package:miniaudio_player_example/core/theme/studio_theme.dart';
+import 'package:miniaudio_player_example/features/ingest/views/ingest_matrix_view.dart';
 
 void main() {
   group('IngestMatrixView v4.0.0 Architecture & Responsive Tests', () {

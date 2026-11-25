@@ -1,23 +1,33 @@
-//! Deterministic Extended PCM Container Reader (`RF64`, `RIFX`, `W64`) & Sample Normalizer.
+//! Deterministic Extended PCM Container Reader (`RF64`, `RIFX`, `W64`, `CAF`) & Sample Normalizer.
 
 use std::io::{Read, Seek, SeekFrom};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::io::MediaSource;
 
+/// Sony Wave64 top-level RIFF chunk GUID.
 const W64_RIFF_GUID: [u8; 16] = [
     0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00, 0x00,
 ];
+/// Sony Wave64 WAVE form-type GUID.
 const W64_WAVE_GUID: [u8; 16] = [
     0x77, 0x61, 0x76, 0x65, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
 ];
+/// 4-byte ASCII prefix (`"fmt "`) of the Wave64 format chunk GUID.
 const W64_FMT_PREFIX: [u8; 4] = [0x66, 0x6d, 0x74, 0x20];
+/// 4-byte ASCII prefix (`"data"`) of the Wave64 data chunk GUID.
 const W64_DATA_PREFIX: [u8; 4] = [0x64, 0x61, 0x74, 0x61];
 
 /// Deterministic black-box PCM byte-to-f32 sample converter supporting 8/16/24/32-bit int and float.
 pub struct PcmSampleNormalizer;
 
 impl PcmSampleNormalizer {
-    /// Decodes raw PCM bytes of the specified bit depth and endianness into normalized `f32` samples (-1.0 to +1.0).
+    /// Decodes raw PCM bytes in `buf` using `bits_per_sample`, `is_float`, and `is_big_endian`
+    /// into normalized `f32` samples (`-1.0..=1.0`) appended to `out_pcm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::Unsupported`] if the `(bits_per_sample, is_float)` combination is
+    /// not supported.
     pub fn decode_bytes(
         buf: &[u8],
         bits_per_sample: u16,
@@ -25,14 +35,21 @@ impl PcmSampleNormalizer {
         is_big_endian: bool,
         out_pcm: &mut Vec<f32>,
     ) -> Result<(), SymphoniaError> {
+        /// Normalization divisor reciprocal for unsigned 8-bit PCM samples.
+        const INV_128: f32 = 1.0 / 128.0;
+        /// Normalization divisor reciprocal for signed 16-bit PCM samples.
+        const INV_32768: f32 = 1.0 / 32768.0;
+        /// Normalization divisor reciprocal for signed 24-bit PCM samples.
+        const INV_8M: f32 = 1.0 / 8388608.0;
+        /// Normalization divisor reciprocal for signed 32-bit PCM samples.
+        const INV_2G: f32 = 1.0 / 2147483648.0;
+
         match (bits_per_sample, is_float, is_big_endian) {
             (8, false, _) => {
-                const INV_128: f32 = 1.0 / 128.0;
                 out_pcm.reserve(buf.len());
                 out_pcm.extend(buf.iter().map(|&b| (b as f32 - 128.0) * INV_128));
             }
             (16, false, false) => {
-                const INV_32768: f32 = 1.0 / 32768.0;
                 out_pcm.reserve(buf.len() / 2);
                 out_pcm.extend(
                     buf.chunks_exact(2)
@@ -40,7 +57,6 @@ impl PcmSampleNormalizer {
                 );
             }
             (16, false, true) => {
-                const INV_32768: f32 = 1.0 / 32768.0;
                 out_pcm.reserve(buf.len() / 2);
                 out_pcm.extend(
                     buf.chunks_exact(2)
@@ -48,7 +64,6 @@ impl PcmSampleNormalizer {
                 );
             }
             (24, false, false) => {
-                const INV_8M: f32 = 1.0 / 8388608.0;
                 out_pcm.reserve(buf.len() / 3);
                 out_pcm.extend(buf.chunks_exact(3).map(|c| {
                     let sign = if (c[2] & 0x80) != 0 { 0xFF } else { 0x00 };
@@ -56,14 +71,12 @@ impl PcmSampleNormalizer {
                 }));
             }
             (24, false, true) => {
-                const INV_8M: f32 = 1.0 / 8388608.0;
                 out_pcm.reserve(buf.len() / 3);
                 out_pcm.extend(buf.chunks_exact(3).map(|c| {
                     (i32::from_be_bytes([c[0], c[1], c[2], 0]) >> 8) as f32 * INV_8M
                 }));
             }
             (32, false, false) => {
-                const INV_2G: f32 = 1.0 / 2147483648.0;
                 out_pcm.reserve(buf.len() / 4);
                 out_pcm.extend(
                     buf.chunks_exact(4)
@@ -71,7 +84,6 @@ impl PcmSampleNormalizer {
                 );
             }
             (32, false, true) => {
-                const INV_2G: f32 = 1.0 / 2147483648.0;
                 out_pcm.reserve(buf.len() / 4);
                 out_pcm.extend(
                     buf.chunks_exact(4)
@@ -92,23 +104,40 @@ impl PcmSampleNormalizer {
                         .map(|c| f32::from_be_bytes([c[0], c[1], c[2], c[3]])),
                 );
             }
-            _ => return Err(SymphoniaError::Unsupported("unsupported PCM bit depth")),
+            _ => {
+                crate::map_log!(
+                    1,
+                    "[EXT_PCM] Unsupported PCM bit depth/encoding: bps={}, float={}, be={}",
+                    bits_per_sample,
+                    is_float,
+                    is_big_endian
+                );
+                return Err(SymphoniaError::Unsupported("unsupported PCM bit depth"));
+            }
         }
         Ok(())
     }
 }
 
+/// Parsed PCM stream format specification extracted from a `fmt ` or CAF `desc` chunk.
 #[derive(Default)]
 struct WaveFmtSpec {
+    /// Number of audio channels.
     channels: u16,
+    /// Sample rate in Hz.
     sample_rate: u32,
+    /// Bytes per multi-channel sample frame.
     block_align: u16,
+    /// Bits per sample per channel.
     bits_per_sample: u16,
+    /// `true` when samples are IEEE 754 floating-point values.
     is_float: bool,
+    /// `true` when all required dimensions (`channels`, `sample_rate`, `block_align`, `bits_per_sample`) are non-zero.
     valid: bool,
 }
 
 impl WaveFmtSpec {
+    /// Parses a 16-byte WAVE `fmt ` header `fmt_buf` using `is_big_endian` byte ordering.
     fn parse(fmt_buf: &[u8; 16], is_big_endian: bool) -> Self {
         let u16_fn = if is_big_endian {
             u16::from_be_bytes
@@ -138,7 +167,7 @@ impl WaveFmtSpec {
     }
 }
 
-/// Result of probing a media source for extended PCM formats (`RF64`, `RIFX`, `W64`).
+/// Result of probing a media source for extended PCM formats (`RF64`, `RIFX`, `W64`, `CAF`).
 pub enum ExtendedPcmProbe {
     /// Source matched an extended PCM format and initialized an `ExtendedPcmReader`.
     Matched(ExtendedPcmReader),
@@ -146,20 +175,33 @@ pub enum ExtendedPcmProbe {
     NotMatched(Box<dyn MediaSource>),
 }
 
-/// Decoder reader parsing and decoding extended PCM containers (`RF64`, `RIFX`, `W64`).
+/// Decoder reader parsing and decoding extended PCM containers (`RF64`, `RIFX`, `W64`, `CAF`).
 pub struct ExtendedPcmReader {
+    /// Underlying seekable media source positioned within the audio data chunk.
     source: Box<dyn MediaSource>,
+    /// Audio sample rate in Hz.
     sample_rate: u32,
+    /// Number of audio channels.
     channels: u32,
+    /// Bits per sample per channel.
     bits_per_sample: u16,
+    /// Byte stride of a single interleaved sample frame.
     block_align: u16,
+    /// `true` if multi-byte samples are big-endian.
     is_big_endian: bool,
+    /// `true` if samples are IEEE 754 floating-point values.
     is_float: bool,
+    /// Canonical container name (`"RF64"`, `"RIFX"`, `"W64"`, or `"CAF"`).
     container_format: &'static str,
+    /// Byte offset where the raw PCM data payload begins.
     data_start: u64,
+    /// Zero-based index of the next PCM frame to read.
     current_frame: u64,
+    /// Total number of PCM frames in the audio data payload.
     total_frames: u64,
+    /// Total stream duration in milliseconds.
     duration_ms: u64,
+    /// Reusable raw byte buffer sized to `FRAMES_PER_BLOCK * block_align`.
     read_buf: Vec<u8>,
 }
 
@@ -167,7 +209,12 @@ impl ExtendedPcmReader {
     /// Number of audio frames read in each I/O batch.
     pub const FRAMES_PER_BLOCK: usize = 1024;
 
-    /// Attempts to identify container signatures and initialize an `ExtendedPcmReader`.
+    /// Attempts to identify container signatures from `source` and initialize an [`ExtendedPcmReader`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] only on unrecoverable internal errors; unrecognized or
+    /// non-matching sources are rewound to offset `0` and returned via [`ExtendedPcmProbe::NotMatched`].
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<ExtendedPcmProbe, SymphoniaError> {
         if source.seek(SeekFrom::Start(0)).is_err() {
             return Ok(ExtendedPcmProbe::NotMatched(source));
@@ -193,6 +240,8 @@ impl ExtendedPcmReader {
         }
     }
 
+    /// Finalizes an [`ExtendedPcmReader`] from `source`, `fmt`, `is_big_endian`,
+    /// `container_format`, `data_start`, and `data_size`, or rewinds `source` if invalid.
     fn build_from_spec(
         mut source: Box<dyn MediaSource>,
         fmt: WaveFmtSpec,
@@ -202,12 +251,32 @@ impl ExtendedPcmReader {
         data_size: u64,
     ) -> Result<ExtendedPcmProbe, SymphoniaError> {
         if !fmt.valid || data_start == 0 || source.seek(SeekFrom::Start(data_start)).is_err() {
+            crate::map_log!(
+                2,
+                "[EXT_PCM] Rejecting {} candidate: valid_fmt={}, data_start={}",
+                container_format,
+                fmt.valid,
+                data_start
+            );
             let _ = source.seek(SeekFrom::Start(0));
             return Ok(ExtendedPcmProbe::NotMatched(source));
         }
 
         let total_frames = data_size / fmt.block_align as u64;
         let duration_ms = (total_frames * 1000) / fmt.sample_rate as u64;
+
+        crate::map_log!(
+            3,
+            "[EXT_PCM] Opened {} stream: sr={}Hz, ch={}, bps={}, float={}, be={}, frames={}, dur_ms={}",
+            container_format,
+            fmt.sample_rate,
+            fmt.channels,
+            fmt.bits_per_sample,
+            fmt.is_float,
+            is_big_endian,
+            total_frames,
+            duration_ms
+        );
 
         Ok(ExtendedPcmProbe::Matched(Self {
             source,
@@ -226,6 +295,8 @@ impl ExtendedPcmReader {
         }))
     }
 
+    /// Parses RIFF-family chunks (`RF64` or `RIFX`) from `source` using `is_big_endian` chunk
+    /// sizes and records `container_format`.
     fn parse_riff_variant(
         mut source: Box<dyn MediaSource>,
         is_big_endian: bool,
@@ -288,6 +359,7 @@ impl ExtendedPcmReader {
         )
     }
 
+    /// Parses Sony Wave64 GUID chunks from `source` to locate the format and data regions.
     fn parse_w64(mut source: Box<dyn MediaSource>) -> Result<ExtendedPcmProbe, SymphoniaError> {
         let mut p = 40u64;
         let mut fmt = WaveFmtSpec::default();
@@ -326,6 +398,7 @@ impl ExtendedPcmReader {
         Self::build_from_spec(source, fmt, false, "W64", data_start, data_size)
     }
 
+    /// Parses Apple Core Audio Format (`caff`) chunks from `source` for uncompressed `lpcm` audio.
     fn parse_caf(mut source: Box<dyn MediaSource>) -> Result<ExtendedPcmProbe, SymphoniaError> {
         let mut p = 8u64;
         let mut fmt = WaveFmtSpec::default();
@@ -359,6 +432,11 @@ impl ExtendedPcmReader {
                 let bits_per_channel = u32::from_be_bytes(desc[28..32].try_into().unwrap());
 
                 if format_id != b"lpcm" {
+                    crate::map_log!(
+                        4,
+                        "[EXT_PCM] CAF codec {:?} is not uncompressed lpcm; delegating to Symphonia",
+                        format_id
+                    );
                     let _ = source.seek(SeekFrom::Start(0));
                     return Ok(ExtendedPcmProbe::NotMatched(source));
                 }
@@ -456,7 +534,7 @@ impl ExtendedPcmReader {
         self.bits_per_sample as u32
     }
 
-    /// Returns the canonical container format string (`"RF64"`, `"RIFX"`, or `"W64"`).
+    /// Returns the canonical container format string (`"RF64"`, `"RIFX"`, `"W64"`, or `"CAF"`).
     #[inline]
     pub fn container_format(&self) -> &'static str {
         self.container_format
@@ -468,13 +546,21 @@ impl ExtendedPcmReader {
         Some(self.duration_ms)
     }
 
-    /// Decodes the next block of PCM audio frames into the output buffer.
+    /// Decodes the next block of PCM audio frames into `out_pcm` after clearing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] on non-EOF stream seek/read errors or unsupported PCM format.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
         self.decode_next_frame_append(out_pcm)
     }
 
     /// Decodes the next block of PCM audio frames, appending directly to `out_pcm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] on non-EOF stream seek/read errors or unsupported PCM format.
     pub fn decode_next_frame_append(
         &mut self,
         out_pcm: &mut Vec<f32>,
@@ -494,13 +580,28 @@ impl ExtendedPcmReader {
         let expected_pos = self.data_start + self.current_frame * self.block_align as u64;
         self.source
             .seek(SeekFrom::Start(expected_pos))
-            .map_err(SymphoniaError::IoError)?;
+            .map_err(|e| {
+                crate::map_log!(
+                    1,
+                    "[EXT_PCM] Seek to expected byte {} failed: {}",
+                    expected_pos,
+                    e
+                );
+                SymphoniaError::IoError(e)
+            })?;
 
         let buf_slice = &mut self.read_buf[..bytes_to_read];
         match super::read_exact_resilient(&mut *self.source, buf_slice) {
             Ok(()) => {}
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
             Err(e) => {
+                crate::map_log!(
+                    1,
+                    "[EXT_PCM] Read error at frame {} (byte {}): {}",
+                    self.current_frame,
+                    expected_pos,
+                    e
+                );
                 let _ = self.source.seek(SeekFrom::Start(expected_pos));
                 return Err(SymphoniaError::IoError(e));
             }
@@ -519,7 +620,11 @@ impl ExtendedPcmReader {
         Ok(true)
     }
 
-    /// Seeks to the specified position in milliseconds within the audio data chunk.
+    /// Seeks to the specified `position_ms` in milliseconds within the audio data chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::IoError`] if seeking the underlying source fails.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_frame = ((position_ms as u128 * self.sample_rate as u128) / 1000) as u64;
         let clamped_frame = target_frame.min(self.total_frames);
@@ -527,9 +632,19 @@ impl ExtendedPcmReader {
 
         self.source
             .seek(SeekFrom::Start(target_byte))
-            .map_err(SymphoniaError::IoError)?;
+            .map_err(|e| {
+                crate::map_log!(1, "[EXT_PCM] Seek to {}ms (byte {}) failed: {}", position_ms, target_byte, e);
+                SymphoniaError::IoError(e)
+            })?;
 
         self.current_frame = clamped_frame;
+        crate::map_log!(
+            4,
+            "[EXT_PCM] Seek to {}ms -> frame={}, byte={}",
+            position_ms,
+            clamped_frame,
+            target_byte
+        );
         Ok(())
     }
 }

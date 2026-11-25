@@ -4,9 +4,11 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub use ::ureq;
 
+/// Shared-memory SPSC protocol and header wire codec for `wasm32` HTTP streaming.
 #[doc(hidden)]
 pub mod wasm_ureq_protocol;
 
+/// `wasm32` Web Worker `fetch` + `ReadableStream` HTTP client shim compatible with `ureq`.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_ureq;
 

@@ -2,16 +2,15 @@ import 'dart:js_interop';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import '../api/logger.dart';
 import '../rust/frb_generated.dart';
 
-/// Candidate prefixes where `miniaudio_player.js` and `miniaudio_player_bg.wasm`
-/// may be served from on Web:
-/// 1. `assets/packages/miniaudio_player/assets/web/` — served automatically by
-///    Flutter Web (`flutter build web` and `flutter run -d chrome`) via the
-///    `flutter: assets:` declaration in `pubspec.yaml`.
-/// 2. `packages/miniaudio_player/assets/web/` — Dart DWDS dev server package route.
-/// 3. `assets/web/` — local app `web/assets/web/` bundle override.
-/// 4. `pkg/` — custom manual `web/pkg/` deployment fallback.
+/// Candidate URL prefixes probed when loading `miniaudio_player.js` and
+/// `miniaudio_player_bg.wasm` on Web.
+///
+/// Covers Flutter Web asset bundles (`assets/packages/...`), Dart DWDS dev
+/// servers (`packages/...`), local `assets/web/` overrides, and custom `pkg/`
+/// deployments.
 const _candidateWebPrefixes = <String>[
   'assets/packages/miniaudio_player/assets/web/',
   'packages/miniaudio_player/assets/web/',
@@ -20,11 +19,18 @@ const _candidateWebPrefixes = <String>[
 ];
 
 /// Resolves and loads the WebAssembly `miniaudio_player` bundle across Flutter
-/// Web (`assets/packages/...`), DWDS (`packages/...`), `assets/web/`, and `pkg/`.
+/// Web, DWDS, `assets/web/`, and `pkg/` candidate URLs.
+///
+/// The [customLibraryPath] parameter is accepted for cross-platform signature
+/// parity and ignored on Web. Throws [StateError] when Cross-Origin Isolation
+/// is inactive or when no candidate URL serves the JavaScript glue module.
 Future<ExternalLibrary?> resolvePlatformExternalLibrary({
   String? customLibraryPath,
 }) async {
   if (!_isCrossOriginIsolated()) {
+    MapLogger.error(
+      'WebAssembly multi-threading blocked: crossOriginIsolated is false.',
+    );
     throw StateError(
       '[miniaudio_player] WebAssembly multi-threading requires Cross-Origin '
       'Isolation (`SharedArrayBuffer`). Serve your application with HTTP headers:\n'
@@ -43,6 +49,7 @@ Future<ExternalLibrary?> resolvePlatformExternalLibrary({
   for (final prefix in _candidateWebPrefixes) {
     final jsPath = '$prefix$stem.js';
     if (await _isWasmJsServed(jsPath)) {
+      MapLogger.debug('Loading WebAssembly bundle from prefix "$prefix".');
       final library = await loadExternalLibrary(
         ExternalLibraryLoaderConfig(
           stem: stem,
@@ -56,6 +63,9 @@ Future<ExternalLibrary?> resolvePlatformExternalLibrary({
     }
   }
 
+  MapLogger.error(
+    'WebAssembly module ($stem.js) could not be loaded from any candidate URL.',
+  );
   throw StateError(
     '[miniaudio_player] WebAssembly module ($stem.js / ${stem}_bg.wasm) could '
     'not be loaded from any candidate URL:\n'
@@ -65,32 +75,54 @@ Future<ExternalLibrary?> resolvePlatformExternalLibrary({
   );
 }
 
-/// Checks via `fetch` whether [url] exists and is served as JavaScript (and not
-/// an SPA `index.html` fallback).
+/// Checks via `fetch` whether [url] exists and is served as JavaScript rather
+/// than an SPA `index.html` fallback.
 Future<bool> _isWasmJsServed(String url) async {
   try {
     final response = await _jsFetch(url.toJS).toDart;
-    if (!response.ok) return false;
+    if (!response.ok) {
+      MapLogger.debug(
+        'WASM JS probe for "$url" returned HTTP ${response.status}.',
+      );
+      return false;
+    }
     final contentType =
         response.headers.get('content-type'.toJS)?.toDart.toLowerCase() ?? '';
-    if (contentType.contains('text/html')) return false;
+    if (contentType.contains('text/html')) {
+      MapLogger.debug(
+        'WASM JS probe for "$url" returned HTML fallback ($contentType).',
+      );
+      return false;
+    }
     return true;
-  } catch (_) {
+  } catch (e) {
+    MapLogger.debug('WASM JS probe failed for "$url": $e');
     return false;
   }
 }
 
-/// No-op on Web (Dart isolates do not share native finalizers in WASM).
+/// Registers the current isolate with [library] on native targets.
+///
+/// This is a no-op on Web because WebAssembly workers do not share native FFI
+/// finalizers.
 void registerIsolateWithLibrary(ExternalLibrary library) {}
 
+/// Guard flag ensuring the Web Audio bootstrap script is injected at most once.
 bool _webAudioOutputStarted = false;
 
+/// Injects the Web Audio output and microphone capture bridge for
+/// [wasmBindgenName] if it has not already been initialized.
 void _ensureWebAudioOutputBridge(String wasmBindgenName) {
   if (_webAudioOutputStarted) return;
   _webAudioOutputStarted = true;
+  MapLogger.debug(
+    'Bootstrapping Web Audio output/capture bridge for "$wasmBindgenName".',
+  );
   _jsEval(_buildWebAudioBootstrapJs(wasmBindgenName).toJS);
 }
 
+/// Builds the self-contained JavaScript bootstrap snippet targeting global
+/// [wasmBindgenName] for AudioWorklet playback and microphone capture.
 String _buildWebAudioBootstrapJs(String wasmBindgenName) => '''
 (function() {
   if (window.__miniaudioWebAudioStarted) return;
@@ -740,29 +772,43 @@ String _buildWebAudioBootstrapJs(String wasmBindgenName) => '''
 })();
 ''';
 
+/// Returns `true` when the browser window is Cross-Origin Isolated and
+/// exposes `SharedArrayBuffer` for WebAssembly worker threads.
 bool _isCrossOriginIsolated() {
   try {
     return _jsCrossOriginIsolated ?? false;
-  } catch (_) {
+  } catch (e) {
+    MapLogger.warn('Failed to read window.crossOriginIsolated: $e');
     return false;
   }
 }
 
+/// Global `window.crossOriginIsolated` flag exposed by the browser.
 @JS('crossOriginIsolated')
 external bool? get _jsCrossOriginIsolated;
 
+/// Evaluates JavaScript [code] in the global browser scope.
 @JS('eval')
 external JSAny? _jsEval(JSString code);
 
+/// Issues an HTTP request to [url] via the browser `fetch` API.
 @JS('fetch')
 external JSPromise<_FetchResponse> _jsFetch(JSString url);
 
+/// Minimal JS interop view over a browser `Response` object.
 extension type _FetchResponse._(JSObject _) implements JSObject {
+  /// Whether the HTTP response status code indicates success (`200..299`).
   external bool get ok;
+
+  /// Returns the numeric HTTP status code of the response.
   external int get status;
+
+  /// Returns the response headers collection.
   external _FetchHeaders get headers;
 }
 
+/// Minimal JS interop view over a browser `Headers` object.
 extension type _FetchHeaders._(JSObject _) implements JSObject {
+  /// Returns the value of the header named [name], or `null` if absent.
   external JSString? get(JSString name);
 }

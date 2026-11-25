@@ -29,35 +29,6 @@ enum WavFormat {
   }
 }
 
-/// Source routing mode for the secondary DJ Cue / headphone pre-listening device.
-enum CueMode {
-  /// Route Deck A audio directly to Cue output.
-  deckA(0),
-
-  /// Route Deck B audio directly to Cue output.
-  deckB(1),
-
-  /// Route composite Master mix to Cue output.
-  master(2);
-
-  /// The raw native integer representation.
-  final int value;
-  const CueMode(this.value);
-
-  /// Resolves a [CueMode] from its raw integer [value].
-  static CueMode fromValue(int value) {
-    switch (value) {
-      case 0:
-        return CueMode.deckA;
-      case 1:
-        return CueMode.deckB;
-      case 2:
-      default:
-        return CueMode.master;
-    }
-  }
-}
-
 /// Configuration for microphone auto-ducking / sidechain compression.
 class DuckingConfig {
   /// Whether auto-ducking is enabled when voice activity is detected.
@@ -79,6 +50,9 @@ class DuckingConfig {
   final double releaseMs;
 
   /// Creates a [DuckingConfig] with sidechain compression parameters.
+  ///
+  /// Configures [enabled], attenuation [duckingDb], trigger [thresholdDb],
+  /// [attackMs] ramp-down, [holdMs] sustain, and [releaseMs] recovery times.
   const DuckingConfig({
     this.enabled = true,
     this.duckingDb = -14.0,
@@ -109,6 +83,7 @@ class DuckingConfig {
         releaseMs: rust.releaseMs,
       );
 
+  /// Returns `true` when [other] is a [DuckingConfig] with identical parameters.
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -121,6 +96,7 @@ class DuckingConfig {
           holdMs == other.holdMs &&
           releaseMs == other.releaseMs;
 
+  /// Returns a hash code combining all sidechain compression parameters.
   @override
   int get hashCode =>
       enabled.hashCode ^
@@ -129,57 +105,4 @@ class DuckingConfig {
       attackMs.hashCode ^
       holdMs.hashCode ^
       releaseMs.hashCode;
-}
-
-/// Configuration for the secondary DJ cue / headphone pre-listening output device.
-class CueConfig {
-  /// Whether cue output is currently active.
-  final bool enabled;
-
-  /// Optional hardware device ID (null for default device).
-  final String? deviceId;
-
-  /// Cue headphone monitor volume (0.0 to 2.0).
-  final double volume;
-
-  /// Source routing mode (Deck A, Deck B, or Master).
-  final CueMode mode;
-
-  /// Creates a [CueConfig] with output routing settings.
-  const CueConfig({
-    this.enabled = false,
-    this.deviceId,
-    this.volume = 1.0,
-    this.mode = CueMode.deckA,
-  });
-
-  /// Converts this configuration to its native [rust_types.RustCueConfig] representation.
-  rust_types.RustCueConfig toRust() => rust_types.RustCueConfig(
-        enabled: enabled,
-        deviceId: deviceId,
-        volume: volume,
-        mode: mode.value,
-      );
-
-  /// Resolves a [CueConfig] from its native [rust_types.RustCueConfig].
-  static CueConfig fromRust(rust_types.RustCueConfig rust) => CueConfig(
-        enabled: rust.enabled,
-        deviceId: rust.deviceId,
-        volume: rust.volume,
-        mode: CueMode.fromValue(rust.mode),
-      );
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CueConfig &&
-          runtimeType == other.runtimeType &&
-          enabled == other.enabled &&
-          deviceId == other.deviceId &&
-          volume == other.volume &&
-          mode == other.mode;
-
-  @override
-  int get hashCode =>
-      enabled.hashCode ^ deviceId.hashCode ^ volume.hashCode ^ mode.hashCode;
 }

@@ -4,6 +4,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 /// Producer endpoint of a lock-free SPSC audio sample ring buffer.
 pub struct AudioProducer {
+    /// Underlying `rtrb` SPSC sample producer.
     producer: Producer<f32>,
 }
 
@@ -34,6 +35,7 @@ impl AudioProducer {
 
 /// Consumer endpoint of a lock-free SPSC audio sample ring buffer.
 pub struct AudioConsumer {
+    /// Underlying `rtrb` SPSC sample consumer.
     consumer: Consumer<f32>,
 }
 
@@ -77,7 +79,7 @@ impl AudioConsumer {
 pub struct AudioRingBuffer;
 
 impl AudioRingBuffer {
-    /// Allocates an SPSC ring buffer with the given capacity in samples (minimum 1024).
+    /// Allocates an SPSC ring buffer with at least `capacity_samples` samples (minimum `1024`).
     pub fn create(capacity_samples: usize) -> (AudioProducer, AudioConsumer) {
         let cap = capacity_samples.max(1024);
         let (producer, consumer) = RingBuffer::new(cap);

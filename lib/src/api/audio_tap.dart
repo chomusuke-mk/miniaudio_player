@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../loader/tap_buffer.dart';
+import 'logger.dart';
 import 'player_models.dart';
 
 /// Sample encoding format emitted by an audio bus tap.
@@ -17,19 +18,23 @@ enum AudioTapFormat {
   /// Byte size per single sample in this encoding.
   final int bytesPerSample;
 
+  /// Creates an [AudioTapFormat] entry with wire [value] and [bytesPerSample].
   const AudioTapFormat(this.value, this.bytesPerSample);
 
-  /// Resolves [AudioTapFormat] from its wire code (`0`: float32, `1`: pcm16).
+  /// Resolves [AudioTapFormat] from its wire code [value] (`0`: float32, `1`: pcm16).
+  ///
+  /// Throws [ArgumentError] when [value] does not match a known encoding.
   static AudioTapFormat fromValue(int value) {
     return switch (value) {
       0 => AudioTapFormat.float32,
       1 => AudioTapFormat.pcm16,
-      _ => throw ArgumentError.value(value, 'value', 'Invalid AudioTapFormat wire code'),
+      _ => throw ArgumentError.value(
+          value, 'value', 'Invalid AudioTapFormat wire code'),
     };
   }
 }
 
-/// Immutable PCM audio batch pushed by [MiniaudioPlayer.watchAudioBus].
+/// Immutable PCM audio batch pushed by `MiniaudioPlayer.watchAudioBus`.
 ///
 /// Exposed views ([bytes], [samplesF32], [samplesI16]) are unmodifiable so concurrent
 /// subscribers sharing the same `(source, format, frameDuration)` stream cannot mutate
@@ -41,10 +46,10 @@ class AudioPcmChunk {
   /// PCM sample encoding format of this batch.
   final AudioTapFormat format;
 
-  /// Audio sample rate in Hertz (for example `48000`).
+  /// Audio sample rate in Hertz (for example, `48000`).
   final int sampleRate;
 
-  /// Interleaved channel count (for example `2`).
+  /// Interleaved channel count (for example, `2`).
   final int channels;
 
   /// Number of PCM frames represented in this chunk.
@@ -53,11 +58,20 @@ class AudioPcmChunk {
   /// Cumulative frames dropped since the tap opened due to downstream backpressure.
   final int droppedFrames;
 
+  /// Backing immutable raw byte payload before view caching.
   final Uint8List _rawBytes;
+
+  /// Cached unmodifiable byte view of [_rawBytes].
   Uint8List? _bytesView;
+
+  /// Cached unmodifiable `float32` sample view when [format] is [AudioTapFormat.float32].
   Float32List? _f32View;
+
+  /// Cached unmodifiable `int16` sample view when [format] is [AudioTapFormat.pcm16].
   Int16List? _i16View;
 
+  /// Creates an immutable [AudioPcmChunk] from [source], [format], [sampleRate],
+  /// [channels], [frameCount], [droppedFrames], and raw interleaved [bytes].
   AudioPcmChunk({
     required this.source,
     required this.format,
@@ -95,6 +109,7 @@ class AudioPcmChunk {
     return _i16View ??= _extractI16(_rawBytes).asUnmodifiableView();
   }
 
+  /// Extracts a little-endian `float32` sample view from [raw] bytes, handling unaligned offsets and endianness.
   static Float32List _extractF32(Uint8List raw) {
     final len = raw.lengthInBytes ~/ 4;
     if (len == 0) return Float32List(0);
@@ -113,6 +128,7 @@ class AudioPcmChunk {
     return out;
   }
 
+  /// Extracts a little-endian `int16` sample view from [raw] bytes, handling unaligned offsets and endianness.
   static Int16List _extractI16(Uint8List raw) {
     final len = raw.lengthInBytes ~/ 2;
     if (len == 0) return Int16List(0);
@@ -134,7 +150,7 @@ class AudioPcmChunk {
 
 /// Zero-allocation reusable PCM Pull buffer reading directly from an engine output bus.
 ///
-/// Ideal for real-time audio sends (for example WebRTC frames, live UDP/WebSocket
+/// Ideal for real-time audio sends (for example, WebRTC frames, live UDP/WebSocket
 /// streaming, or custom visualization loops) where calling [poll] inside a periodic
 /// loop must avoid per-frame garbage collection allocations.
 class AudioTapBuffer {
@@ -153,12 +169,20 @@ class AudioTapBuffer {
   /// Maximum number of frames held by the reusable buffer per [poll] call.
   final int capacityFrames;
 
+  /// Platform-specific ring/pull buffer implementation.
   final PlatformTapBuffer _platform;
+
+  /// Optional callback invoked when [close] explicitly releases this tap.
   final void Function(int tapId)? _onExplicitClose;
 
+  /// Whether [close] has already been invoked on this handle.
   bool _closed = false;
+
+  /// Number of frames read during the latest [poll] call.
   int _lastFramesRead = 0;
 
+  /// Creates an [AudioTapBuffer] bound to native [tapId], [source], [format],
+  /// [sampleRate], [channels], and [capacityFrames], with an optional [onExplicitClose] hook.
   AudioTapBuffer({
     required int tapId,
     required this.source,
@@ -172,7 +196,13 @@ class AudioTapBuffer {
           bytesPerFrame: channels * format.bytesPerSample,
           capacityFrames: capacityFrames,
         ),
-        _onExplicitClose = onExplicitClose;
+        _onExplicitClose = onExplicitClose {
+    MapLogger.debug(
+      'AudioTapBuffer opened: tapId=$tapId, source=${source.name}, '
+      'format=${format.name}, sampleRate=$sampleRate, channels=$channels, '
+      'capacityFrames=$capacityFrames',
+    );
+  }
 
   /// Native handle ID assigned by the engine for this Pull tap.
   int get tapId => _platform.tapId;
@@ -240,6 +270,10 @@ class AudioTapBuffer {
     _closed = true;
     _lastFramesRead = 0;
     _platform.close();
+    MapLogger.debug(
+      'AudioTapBuffer closed: tapId=${_platform.tapId}, '
+      'droppedFrames=${_platform.lastKnownDropped}',
+    );
     _onExplicitClose?.call(_platform.tapId);
   }
 }

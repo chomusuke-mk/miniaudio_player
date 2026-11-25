@@ -3,7 +3,9 @@
 //! Includes M3U8 manifest parsing (master playlists and media playlists)
 //! and MPEG-TS container demuxing.
 
+/// M3U8 master and media playlist parser and live reload tracker.
 pub mod m3u8_parser;
+/// MPEG-2 Transport Stream (`.ts`) demuxer for HLS segments.
 pub mod mpegts;
 
 pub use m3u8_parser::{

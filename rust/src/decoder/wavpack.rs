@@ -6,10 +6,17 @@ use symphonia::core::io::MediaSource;
 use wavicle::block::{BlockHeader, HEADER_LEN};
 use wavicle::decode::decode_stream;
 
+/// Internal helper utilities for WavPack sample normalization and trailing tag detection.
 struct WavpackStreamParser;
 
 impl WavpackStreamParser {
-    /// Deterministically normalizes decoded WavPack samples into `[-1.0, 1.0]` `f32` PCM.
+    /// Deterministically normalizes decoded WavPack `samples` according to `bits_per_sample`
+    /// and `is_float` into `[-1.0, 1.0]` `f32` PCM.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::Unsupported`] if `bits_per_sample` is not `8`, `16`, `24`, or
+    /// `32` for integer streams.
     fn normalize_samples(
         samples: &[i32],
         bits_per_sample: u32,
@@ -28,7 +35,14 @@ impl WavpackStreamParser {
             16 => 32768.0f32,
             24 => 8388608.0f32,
             32 => 2147483648.0f32,
-            _ => return Err(SymphoniaError::Unsupported("unsupported WavPack bit depth")),
+            _ => {
+                crate::map_log!(
+                    1,
+                    "[WAVPACK] Unsupported sample bit depth: {}",
+                    bits_per_sample
+                );
+                return Err(SymphoniaError::Unsupported("unsupported WavPack bit depth"));
+            }
         };
 
         for &s in samples {
@@ -37,6 +51,8 @@ impl WavpackStreamParser {
         Ok(out)
     }
 
+    /// Returns `true` when `hdr` begins with a recognized trailing metadata tag signature
+    /// (`APETAGEX`, `TAG`, `ID3`, or `LYRICS`).
     fn is_trailing_tag_magic(hdr: &[u8]) -> bool {
         hdr.starts_with(b"APETAGEX")
             || hdr.starts_with(b"TAG")
@@ -56,30 +72,51 @@ pub enum WavpackProbe {
 /// Streaming block-by-block WavPack (`.wv`) decoder implementing incremental decode and seeking
 /// without buffering the entire compressed file in memory.
 pub struct WavpackReader {
+    /// Underlying seekable WavPack media source.
     source: Box<dyn MediaSource>,
+    /// Byte offset of the first audio `"wvpk"` block after any leading ID3v2 tags.
     audio_start: u64,
+    /// Exclusive byte offset of the audio stream end if known.
     audio_end: Option<u64>,
+    /// Audio sample rate in Hz.
     sample_rate: u32,
+    /// Number of interleaved audio channels.
     channels: u32,
+    /// Sample bit depth (`8`, `16`, `24`, or `32`).
     bits_per_sample: u32,
+    /// Total number of per-channel PCM frames in the stream if declared by the header.
     total_frames: Option<u64>,
+    /// Total stream duration in milliseconds if known.
     duration_ms: Option<u64>,
+    /// Current per-channel PCM frame position.
     current_frame: u64,
+    /// Inclusive-start / exclusive-end frame range `(start_frame, end_frame)` of `pending_pcm`.
     current_block_range: (u64, u64),
+    /// Interleaved normalized float PCM samples decoded from the active block.
     pending_pcm: Vec<f32>,
+    /// Current sample index offset within `pending_pcm`.
     pending_offset: usize,
+    /// Reusable raw `"wvpk"` block read scratch buffer.
     block_buf: Vec<u8>,
+    /// Sorted sparse `(sample_index, byte_offset)` checkpoints used to accelerate seeks.
     checkpoints: Vec<(u64, u64)>,
 }
 
 impl WavpackReader {
     /// Default number of stereo/mono frames emitted per `decode_next_frame` call.
     pub const FRAMES_PER_CHUNK: usize = 1024;
+    /// Maximum byte window scanned forward when searching for a verified `"wvpk"` block during seek.
     const MAX_SYNC_SCAN_BYTES: usize = 256 * 1024;
+    /// Maximum number of sparse `(sample_index, byte_offset)` seek checkpoints retained in RAM.
     const MAX_CHECKPOINTS: usize = 2048;
 
-    /// Probes the source for a `"wvpk"` signature (skipping optional leading ID3v2) and decodes only
+    /// Probes `source` for a `"wvpk"` signature (skipping optional leading ID3v2) and decodes only
     /// the opening block so streams open immediately in O(1) memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if a `"wvpk"` header was detected after initial offset probing
+    /// and subsequent header parsing, I/O, or block decoding failed (except `WouldBlock`).
     pub fn try_new(mut source: Box<dyn MediaSource>) -> Result<WavpackProbe, SymphoniaError> {
         if source.seek(SeekFrom::Start(0)).is_err() {
             return Ok(WavpackProbe::NotMatched(source));
@@ -130,6 +167,7 @@ impl WavpackReader {
             match Self::read_block_header_raw(&mut *source, &mut hdr_bytes) {
                 Ok(true) => {}
                 Ok(false) => {
+                    crate::map_log!(1, "[WAVPACK] Empty WavPack stream at offset {}", cursor);
                     return Err(SymphoniaError::Unsupported("empty WavPack stream"));
                 }
                 Err(e) => {
@@ -142,14 +180,18 @@ impl WavpackReader {
                         let _ = source.seek(SeekFrom::Start(0));
                         return Ok(WavpackProbe::NotMatched(source));
                     }
+                    crate::map_log!(1, "[WAVPACK] Probe header read error at {}: {:?}", cursor, e);
                     return Err(e);
                 }
             }
 
-            let hdr = BlockHeader::parse(&hdr_bytes)
-                .map_err(|_| SymphoniaError::Unsupported("malformed WavPack block header"))?;
+            let hdr = BlockHeader::parse(&hdr_bytes).map_err(|_| {
+                crate::map_log!(1, "[WAVPACK] Malformed block header at offset {}", cursor);
+                SymphoniaError::Unsupported("malformed WavPack block header")
+            })?;
             let blen = hdr.block_len();
             if blen < HEADER_LEN {
+                crate::map_log!(1, "[WAVPACK] Invalid block size {} at offset {}", blen, cursor);
                 return Err(SymphoniaError::Unsupported("invalid WavPack block size"));
             }
 
@@ -167,11 +209,22 @@ impl WavpackReader {
             }
             block_buf[..HEADER_LEN].copy_from_slice(&hdr_bytes);
             super::read_exact_resilient(&mut *source, &mut block_buf[HEADER_LEN..blen])
-                .map_err(SymphoniaError::IoError)?;
+                .map_err(|e| {
+                    crate::map_log!(1, "[WAVPACK] Initial block read error at {}: {}", cursor, e);
+                    SymphoniaError::IoError(e)
+                })?;
 
-            let decoded = decode_stream(&block_buf[..blen])
-                .map_err(|_| SymphoniaError::Unsupported("malformed WavPack stream"))?;
+            let decoded = decode_stream(&block_buf[..blen]).map_err(|err| {
+                crate::map_log!(1, "[WAVPACK] Malformed initial block at {}: {:?}", cursor, err);
+                SymphoniaError::Unsupported("malformed WavPack stream")
+            })?;
             if decoded.channels == 0 || decoded.sample_rate == 0 {
+                crate::map_log!(
+                    1,
+                    "[WAVPACK] Invalid stream parameters: ch={}, sr={}",
+                    decoded.channels,
+                    decoded.sample_rate
+                );
                 return Err(SymphoniaError::Unsupported(
                     "invalid WavPack stream parameters",
                 ));
@@ -190,6 +243,17 @@ impl WavpackReader {
             let mut checkpoints = Vec::with_capacity(64);
             checkpoints.push((hdr.block_index, cursor));
             checkpoints.push((hdr.block_index + hdr.block_samples as u64, next_off));
+
+            crate::map_log!(
+                3,
+                "[WAVPACK] Opened stream: sr={}Hz, ch={}, bps={}, frames={:?}, dur_ms={:?}, audio_start={}",
+                decoded.sample_rate,
+                decoded.channels,
+                decoded.bits_per_sample,
+                total_frames,
+                duration_ms,
+                cursor
+            );
 
             return Ok(WavpackProbe::Matched(Self {
                 source,
@@ -210,8 +274,13 @@ impl WavpackReader {
         }
     }
 
-    /// Reads 32-byte block header, distinguishing clean stream boundary / trailing metadata EOF (`Ok(false)`)
-    /// from genuine I/O or decode errors (`Err(...)`).
+    /// Reads a 32-byte block header from `source` into `hdr_out`, distinguishing clean stream
+    /// boundary / trailing metadata EOF (`Ok(false)`) from genuine I/O or decode errors (`Err(...)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymphoniaError::IoError`] on non-`Interrupted` I/O failures or
+    /// [`SymphoniaError::DecodeError`] if non-tag garbage bytes appear instead of `"wvpk"`.
     fn read_block_header_raw(
         source: &mut dyn MediaSource,
         hdr_out: &mut [u8; HEADER_LEN],
@@ -227,16 +296,10 @@ impl WavpackReader {
             }
         }
 
-        // Read at least up to 8 bytes to detect short trailing tags (ID3v1 is 128B, APE is >=32B, custom >=4B).
         let mut filled = 1usize;
         while filled < HEADER_LEN {
             match source.read(&mut hdr_out[filled..]) {
-                Ok(0) => {
-                    if filled >= 3 && WavpackStreamParser::is_trailing_tag_magic(&hdr_out[..filled]) {
-                        return Ok(false);
-                    }
-                    return Ok(false);
-                }
+                Ok(0) => return Ok(false),
                 Ok(n) => filled += n,
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(e) => return Err(SymphoniaError::IoError(e)),
@@ -253,6 +316,8 @@ impl WavpackReader {
         Ok(true)
     }
 
+    /// Inserts a sorted seek checkpoint `(block_index, offset)` for `block_index` at byte `offset`
+    /// if capacity allows and the key is absent.
     fn record_checkpoint(&mut self, block_index: u64, offset: u64) {
         if self.checkpoints.len() >= Self::MAX_CHECKPOINTS {
             return;
@@ -263,6 +328,11 @@ impl WavpackReader {
         }
     }
 
+    /// Reads and decodes the next `"wvpk"` audio block into `self.pending_pcm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] on I/O errors, corrupt headers, or block decode failures.
     fn read_and_decode_next_block(&mut self) -> Result<bool, SymphoniaError> {
         loop {
             let block_offset = self
@@ -281,15 +351,33 @@ impl WavpackReader {
                 Ok(true) => {}
                 Ok(false) => return Ok(false),
                 Err(e) => {
+                    crate::map_log!(
+                        1,
+                        "[WAVPACK] Block header read error at offset {}: {:?}",
+                        block_offset,
+                        e
+                    );
                     let _ = self.source.seek(SeekFrom::Start(block_offset));
                     return Err(e);
                 }
             }
 
-            let hdr = BlockHeader::parse(&hdr_bytes)
-                .map_err(|_| SymphoniaError::DecodeError("corrupt WavPack block header"))?;
+            let hdr = BlockHeader::parse(&hdr_bytes).map_err(|_| {
+                crate::map_log!(
+                    1,
+                    "[WAVPACK] Corrupt block header at offset {}",
+                    block_offset
+                );
+                SymphoniaError::DecodeError("corrupt WavPack block header")
+            })?;
             let blen = hdr.block_len();
             if blen < HEADER_LEN {
+                crate::map_log!(
+                    1,
+                    "[WAVPACK] Invalid block length {} at offset {}",
+                    blen,
+                    block_offset
+                );
                 return Err(SymphoniaError::DecodeError("invalid WavPack block length"));
             }
 
@@ -309,12 +397,25 @@ impl WavpackReader {
                 &mut *self.source,
                 &mut self.block_buf[HEADER_LEN..blen],
             ) {
+                crate::map_log!(
+                    1,
+                    "[WAVPACK] Block payload read error at offset {}: {}",
+                    block_offset,
+                    e
+                );
                 let _ = self.source.seek(SeekFrom::Start(block_offset));
                 return Err(SymphoniaError::IoError(e));
             }
 
-            let decoded = decode_stream(&self.block_buf[..blen])
-                .map_err(|_| SymphoniaError::DecodeError("failed to decode WavPack block"))?;
+            let decoded = decode_stream(&self.block_buf[..blen]).map_err(|err| {
+                crate::map_log!(
+                    1,
+                    "[WAVPACK] Block decode failure at offset {}: {:?}",
+                    block_offset,
+                    err
+                );
+                SymphoniaError::DecodeError("failed to decode WavPack block")
+            })?;
             self.pending_pcm = WavpackStreamParser::normalize_samples(
                 &decoded.samples,
                 self.bits_per_sample,
@@ -337,6 +438,8 @@ impl WavpackReader {
         }
     }
 
+    /// Verifies that a valid `"wvpk"` block starts at `offset` and is followed by another valid
+    /// header, a trailing metadata tag, or stream end.
     fn verify_block_at(&mut self, offset: u64) -> Result<Option<(u64, BlockHeader)>, SymphoniaError> {
         self.source
             .seek(SeekFrom::Start(offset))
@@ -395,6 +498,8 @@ impl WavpackReader {
         }
     }
 
+    /// Scans forward from `start_off` (up to `upper_bound_off` and `MAX_SYNC_SCAN_BYTES`) to
+    /// locate and verify a `"wvpk"` block header.
     fn find_verified_block_near(
         &mut self,
         start_off: u64,
@@ -490,8 +595,8 @@ impl WavpackReader {
         ((self.current_block_range.0 as u128 * 1000) / self.sample_rate.max(1) as u128) as u64
     }
 
-    /// Seeds verified `(sample_index, byte_offset)` block boundaries cached in RAM so in-buffer
-    /// seeks resolve with zero HTTP Range probes.
+    /// Seeds verified `(sample_index, byte_offset)` block boundaries from `pts` cached in RAM so
+    /// in-buffer seeks resolve with zero HTTP Range probes.
     pub fn inject_checkpoints(&mut self, pts: &[(u64, u64)]) {
         for &(frame, off) in pts {
             self.record_checkpoint(frame, off);
@@ -499,6 +604,10 @@ impl WavpackReader {
     }
 
     /// Seeks cleanly to `position_ms` using sparse checkpoints and verified `"wvpk"` block sync.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] on stream I/O errors or corrupt blocks encountered during seek.
     pub fn seek_ms(&mut self, position_ms: u64) -> Result<(), SymphoniaError> {
         let target_frame =
             ((position_ms as u128 * self.sample_rate as u128) / 1000) as u64;
@@ -645,11 +754,22 @@ impl WavpackReader {
             self.current_frame = hdr.block_index + skip_frames as u64;
             self.record_checkpoint(hdr.block_index, cursor);
             self.record_checkpoint(block_end_frame, cursor + blen as u64);
+            crate::map_log!(
+                4,
+                "[WAVPACK] Seek to {}ms -> frame={}, block_range={:?}",
+                position_ms,
+                self.current_frame,
+                self.current_block_range
+            );
             return Ok(());
         }
     }
 
-    /// Emits the next chunk of decoded PCM frames into the output buffer.
+    /// Emits the next chunk of decoded PCM frames into `out_pcm` after clearing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SymphoniaError`] if reading or decoding the next block fails.
     pub fn decode_next_frame(&mut self, out_pcm: &mut Vec<f32>) -> Result<bool, SymphoniaError> {
         out_pcm.clear();
         let channels = self.channels as usize;

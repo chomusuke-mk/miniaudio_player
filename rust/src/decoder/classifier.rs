@@ -88,12 +88,14 @@ pub struct BoundaryInfo {
 }
 
 impl Default for BoundaryInfo {
+    /// Returns a default uninitialized [`BoundaryInfo`] with unknown container and `-1` bounds.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl BoundaryInfo {
+    /// Constructs a new [`BoundaryInfo`] initialized to [`ContainerFormat::Unknown`].
     pub const fn new() -> Self {
         Self {
             container: ContainerFormat::Unknown,
@@ -103,6 +105,8 @@ impl BoundaryInfo {
         }
     }
 
+    /// Populates `self` for `container` whose audio payload spans `[start, total_size]`, setting
+    /// `audio_start` to `start` and `audio_end` to `total_size`.
     #[inline]
     fn set_direct_container(&mut self, container: ContainerFormat, start: i64, total_size: i64) {
         self.container = container;
@@ -111,14 +115,22 @@ impl BoundaryInfo {
     }
 }
 
+/// Maximum number of leading stream bytes scanned when searching for container headers (`64 MiB`).
 const MAX_HEAD_SCAN: i64 = 64 * 1024 * 1024;
+/// Maximum byte distance scanned for MPEG/ADTS frame sync after any leading ID3v2 tags (`64 KiB`).
 const SYNC_SCAN_LIMIT: i64 = 65536;
 
+/// Sony Wave64 top-level RIFF chunk GUID.
 const W64_RIFF_MAGIC: [u8; 16] = [
     0x72, 0x69, 0x66, 0x66, 0x2e, 0x91, 0xcf, 0x11, 0xa5, 0xd6, 0x28, 0xdb, 0x04, 0xc1, 0x00, 0x00,
 ];
+/// Sony Wave64 WAVE form-type GUID.
 const W64_WAVE_MAGIC: [u8; 16] = [
     0x77, 0x61, 0x76, 0x65, 0xf3, 0xac, 0xd3, 0x11, 0x8c, 0xd1, 0x00, 0xc0, 0x4f, 0x8e, 0xdb, 0x8a,
+];
+/// Standard MPEG-4 ADTS sampling frequency lookup table indexed by the 4-bit header `sr_idx`.
+const ADTS_SAMPLE_RATES: [u32; 13] = [
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
 ];
 
 /// Classified stream region emitted by [`StreamClassifier`] during byte ingestion.
@@ -129,14 +141,20 @@ pub enum ClassifiedSlice<'a> {
     /// Framed audio payload (`Body`).
     AudioPayload(&'a [u8]),
     /// Metadata chunk (ID3, VorbisComment, RIFF INFO, MP4 moov, ICY) with its virtual stream offset (`Metadata`).
-    MetadataChunk { offset: u64, data: &'a [u8] },
+    MetadataChunk {
+        /// Virtual stream byte offset where `data` originates.
+        offset: u64,
+        /// Raw metadata slice bytes.
+        data: &'a [u8],
+    },
 }
 
 /// Zero-copy stream classifier separating container headers, pure audio payloads, and sparse metadata.
 pub struct StreamClassifier;
 
 impl StreamClassifier {
-    /// Classifies an initial stream buffer and optional trailing chunk into `Head`, `Body`, and `Metadata` slices.
+    /// Classifies `initial_data` and optional trailing `(tail_bytes, tail_offset)` in `tail_data`
+    /// for a stream of `total_size` bytes into `Head`, `Body`, and `Metadata` slices.
     pub fn classify_initial_stream<'a>(
         initial_data: &'a [u8],
         tail_data: Option<(&'a [u8], u64)>,
@@ -144,10 +162,11 @@ impl StreamClassifier {
     ) -> (BoundaryInfo, Vec<ClassifiedSlice<'a>>) {
         let mut slices = Vec::new();
         if initial_data.is_empty() {
+            crate::map_log!(2, "[CLASSIFIER] Empty initial_data passed to classify_initial_stream");
             return (BoundaryInfo::new(), slices);
         }
 
-        let (_status, boundary) = Self::detect_head_boundary(initial_data, total_size);
+        let (status, boundary) = Self::detect_head_boundary(initial_data, total_size);
         if boundary.audio_start > 0 {
             let head_len = (boundary.audio_start as usize).min(initial_data.len());
             let head_slice = &initial_data[..head_len];
@@ -200,9 +219,22 @@ impl StreamClassifier {
             }
         }
 
+        crate::map_log!(
+            4,
+            "[CLASSIFIER] Classified initial stream ({}B, total_size={}): status={:?}, container={:?}, audio_start={}, audio_end={}, slices={}",
+            initial_data.len(),
+            total_size,
+            status,
+            boundary.container,
+            boundary.audio_start,
+            boundary.audio_end,
+            slices.len()
+        );
+
         (boundary, slices)
     }
-    /// Extracts a normalized file extension hint from a path or URL (ignoring query strings).
+
+    /// Extracts a normalized file extension hint from a path or URL `source` (ignoring query strings).
     pub fn extract_extension_hint(source: &str) -> Option<&'static str> {
         let clean = source.split('?').next().unwrap_or(source);
         let ext = clean.rsplit('.').next()?;
@@ -228,7 +260,7 @@ impl StreamClassifier {
         }
     }
 
-    /// Whether this container format can contain trailing metadata or tags (ID3v1, APE, Lyrics3, Ogg trailer).
+    /// Whether `container` format can contain trailing metadata, tags, or seek cues.
     #[inline]
     pub fn container_needs_tail_scan(container: ContainerFormat) -> bool {
         matches!(
@@ -244,8 +276,38 @@ impl StreamClassifier {
         )
     }
 
-    /// Parses the pinned head bytes to determine the container format, audio payload start, and metadata bounds.
+    /// Parses the pinned head bytes `data` for a stream of `total_size` bytes to determine the
+    /// container format, audio payload start, and metadata bounds.
     pub fn detect_head_boundary(data: &[u8], total_size: i64) -> (BoundaryStatus, BoundaryInfo) {
+        let (status, info) = Self::detect_head_boundary_inner(data, total_size);
+        match status {
+            BoundaryStatus::Found => crate::map_log!(
+                4,
+                "[CLASSIFIER] Head boundary found: container={:?}, start={}, end={}",
+                info.container,
+                info.audio_start,
+                info.audio_end
+            ),
+            BoundaryStatus::NeedMore => crate::map_log!(
+                5,
+                "[CLASSIFIER] Head boundary needs more bytes: avail={}, needed={}, total_size={}",
+                data.len(),
+                info.needed_bytes,
+                total_size
+            ),
+            BoundaryStatus::Unsupported => crate::map_log!(
+                4,
+                "[CLASSIFIER] Head boundary unsupported/unrecognized (avail={}, total_size={})",
+                data.len(),
+                total_size
+            ),
+        }
+        (status, info)
+    }
+
+    /// Internal implementation of [`StreamClassifier::detect_head_boundary`] inspecting `data`
+    /// with total stream size `total_size`.
+    fn detect_head_boundary_inner(data: &[u8], total_size: i64) -> (BoundaryStatus, BoundaryInfo) {
         let mut info = BoundaryInfo::new();
         let avail = data.len();
 
@@ -354,6 +416,7 @@ impl StreamClassifier {
         )
     }
 
+    /// Matches leading lossless container magic bytes (`DSD `, `MAC `, `wvpk`) at the start of `slice`.
     fn match_lossless_magic(slice: &[u8]) -> Option<ContainerFormat> {
         if slice.starts_with(b"DSD ") {
             Some(ContainerFormat::Dsf)
@@ -366,6 +429,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Advances past any chained leading ID3v2 tags in `data` (bounded by `total_size`), updating
+    /// `info` (`info.needed_bytes`) if additional bytes are required.
     fn skip_id3v2_chain(
         data: &[u8],
         total_size: i64,
@@ -395,7 +460,9 @@ impl StreamClassifier {
         }
     }
 
-    /// Parses trailing bytes to strip ID3v1, APE, or Lyrics3 tags and compute the true audio payload end.
+    /// Parses trailing `tail` bytes starting at `tail_offset` for `container` (with total stream
+    /// size `total_size` and payload start `audio_start`) to strip ID3v1, APE, or Lyrics3 tags and
+    /// compute the true audio payload end.
     pub fn detect_tail_boundary(
         container: ContainerFormat,
         tail: &[u8],
@@ -459,9 +526,21 @@ impl StreamClassifier {
             break;
         }
 
+        if end != total_size {
+            crate::map_log!(
+                4,
+                "[CLASSIFIER] Stripped trailing tags for {:?}: total_size={} -> audio_end={}",
+                container,
+                total_size,
+                end
+            );
+        }
+
         (BoundaryStatus::Found, end)
     }
 
+    /// Strips a trailing ID3v1 (`TAG`) and optional ID3v1 Enhanced (`TAG+`) block ending at `end`
+    /// within `tail` (anchored at `tail_offset` and bounded below by `floor`).
     fn strip_id3v1_tail(
         tail: &[u8],
         tail_offset: i64,
@@ -488,6 +567,8 @@ impl StreamClassifier {
         Some(Ok(new_end))
     }
 
+    /// Strips a trailing `APETAGEX` footer/tag ending at `end` within `tail` (anchored at
+    /// `tail_offset` and bounded below by `floor`).
     fn strip_ape_tail(
         tail: &[u8],
         tail_offset: i64,
@@ -516,6 +597,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Strips a trailing Lyrics3v2 (`LYRICS200`) block ending at `end` within `tail` (anchored at
+    /// `tail_offset` and bounded below by `floor`).
     fn strip_lyrics3v2_tail(
         tail: &[u8],
         tail_offset: i64,
@@ -549,6 +632,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Strips an appended ID3v2.4 footer (`3DI`) tag ending at `end` within `tail` (anchored at
+    /// `tail_offset` and bounded below by `floor`).
     fn strip_id3v2_footer_tail(
         tail: &[u8],
         tail_offset: i64,
@@ -575,7 +660,8 @@ impl StreamClassifier {
         }
     }
 
-    /// Extracts stream duration from trailing Ogg Vorbis/Opus pages granule positions.
+    /// Extracts stream duration in milliseconds from trailing Ogg Vorbis/Opus page granule
+    /// positions in `tail` for `container` at `sample_rate` (forced to `48000` for Opus).
     pub fn extract_tail_duration_ms(
         container: ContainerFormat,
         sample_rate: u32,
@@ -614,7 +700,8 @@ impl StreamClassifier {
         None
     }
 
-    /// Inspects MPEG audio frames and Xing/VBRI headers to compute bitrate and estimated duration.
+    /// Inspects MPEG audio frames and Xing/VBRI headers in `data` (with optional `total_size`) to
+    /// compute `(bitrate_bps, estimated_duration_ms)`.
     pub fn sniff_mp3_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         let avail = data.len();
         if avail < 10 || Self::has_non_mpeg_magic(data) {
@@ -665,6 +752,7 @@ impl StreamClassifier {
         None
     }
 
+    /// Returns `true` if `data` starts with a known non-MPEG container magic signature.
     fn has_non_mpeg_magic(data: &[u8]) -> bool {
         if data.len() >= 4
             && (data.starts_with(b"RIFF")
@@ -678,6 +766,7 @@ impl StreamClassifier {
         data.len() >= 8 && &data[4..8] == b"ftyp"
     }
 
+    /// Returns `(clamped_offset, total_id3v2_bytes)` for a single leading ID3v2 header in `data`.
     fn initial_id3v2_skip(data: &[u8]) -> (usize, u32) {
         if data.starts_with(b"ID3") && data.len() >= 10 {
             let mut id3_total = 10 + synchsafe32(&data[6..10]);
@@ -690,6 +779,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Attempts to parse a Xing or Info VBR/CBR header inside `data` at `frame_offset` (within
+    /// `avail` bytes and optional stream `total_size`) using the parsed MPEG frame `hdr`.
     fn try_parse_xing_vbr(
         data: &[u8],
         frame_offset: usize,
@@ -724,6 +815,8 @@ impl StreamClassifier {
         Some((bitrate, duration_ms))
     }
 
+    /// Attempts to parse a Fraunhofer VBRI header inside `data` at `frame_offset` (within `avail`
+    /// bytes) using the parsed MPEG frame `hdr`.
     fn try_parse_vbri(
         data: &[u8],
         frame_offset: usize,
@@ -751,7 +844,8 @@ impl StreamClassifier {
         Some((bitrate, duration_ms))
     }
 
-    /// Reads Vorbis identification headers to determine nominal bitrate and stream duration.
+    /// Reads Vorbis identification headers from `data` (with optional `total_size`) to determine
+    /// nominal `(bitrate_bps, duration_ms)`.
     pub fn sniff_ogg_vorbis_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if data.len() < 40 || !data.starts_with(b"OggS") {
             return None;
@@ -796,7 +890,8 @@ impl StreamClassifier {
         None
     }
 
-    /// Reads OpusHead identification headers to determine bitrate and stream duration.
+    /// Reads `OpusHead` identification headers from `data` (with optional `total_size`) to
+    /// determine `(bitrate_bps, duration_ms)`.
     pub fn sniff_ogg_opus_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if data.len() < 40 || !data.starts_with(b"OggS") {
             return None;
@@ -827,14 +922,12 @@ impl StreamClassifier {
         None
     }
 
-    /// Inspects ADTS AAC headers to calculate stream bitrate and duration.
+    /// Inspects ADTS AAC headers in `data` (with stream `total_size`) to calculate
+    /// `(bitrate_bps, duration_ms)`.
     pub fn sniff_adts_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         if data.len() < 7 || total_size <= 0 {
             return None;
         }
-        const SAMPLE_RATES: [u32; 13] = [
-            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
-        ];
         let mut dummy = BoundaryInfo::new();
         let start_search = Self::skip_id3v2_chain(data, total_size, &mut dummy).unwrap_or(0);
         let scan_limit = data.len().saturating_sub(6).min(start_search + 4096);
@@ -842,7 +935,7 @@ impl StreamClassifier {
             let h = &data[i..];
             if is_adts_sync(h) {
                 let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
-                if let Some(&sr) = SAMPLE_RATES.get(sr_idx) {
+                if let Some(&sr) = ADTS_SAMPLE_RATES.get(sr_idx) {
                     let mut pos = i;
                     let mut total_samples = 0u64;
                     let mut total_frame_bytes = 0u64;
@@ -889,12 +982,10 @@ impl StreamClassifier {
         None
     }
 
-    /// Samples ADTS frame lengths at multiple interior offsets (`8%..88%`) of a seekable stream
-    /// to accurately estimate VBR ADTS duration without scanning every frame over the network.
+    /// Samples ADTS frame lengths across multiple interior offsets (`5%..94%`) of a seekable
+    /// `reader` with total length `total_bytes` to estimate `(sample_rate, channels, duration_ms)`
+    /// for VBR ADTS streams without scanning every frame over the network.
     pub fn sample_adts_duration_ms<R: Read + Seek>(reader: &mut R, total_bytes: u64) -> Option<(u32, u32, u64)> {
-        const SAMPLE_RATES: [u32; 13] = [
-            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
-        ];
         if total_bytes <= 512 * 1024 {
             return Self::scan_adts_stream(reader);
         }
@@ -938,7 +1029,7 @@ impl StreamClassifier {
         }
         let sr_idx = (head7[2] >> 2) & 0x0F;
         let ch_cfg = (((head7[2] & 0x01) << 2) | ((head7[3] >> 6) & 0x03)) as u32;
-        let sample_rate = *SAMPLE_RATES.get(sr_idx as usize)?;
+        let sample_rate = *ADTS_SAMPLE_RATES.get(sr_idx as usize)?;
         let channels = match ch_cfg {
             1..=6 => ch_cfg,
             7 => 8,
@@ -1025,18 +1116,23 @@ impl StreamClassifier {
         if total_frame_bytes > 0 && total_samples > 0 {
             let est_samples = (audio_len as f64 / total_frame_bytes as f64) * total_samples as f64;
             let dur_ms = (est_samples * 1000.0 / sample_rate as f64).round() as u64;
+            crate::map_log!(
+                4,
+                "[CLASSIFIER] Sampled ADTS duration: sr={}Hz, ch={}, dur_ms={}",
+                sample_rate,
+                channels,
+                dur_ms
+            );
             Some((sample_rate, channels, dur_ms))
         } else {
             None
         }
     }
 
-    /// Fast, seek-based exact ADTS frame scanner for seekable sources (files, memory cursors).
-    /// Scans frame headers by jumping payload lengths without decoding, computing exact sample count and duration.
+    /// Fast, seek-based exact ADTS frame scanner over seekable `reader` (files, memory cursors).
+    /// Scans frame headers by jumping payload lengths without decoding, returning
+    /// `(sample_rate, channels, duration_ms)`.
     pub fn scan_adts_stream<R: Read + Seek>(reader: &mut R) -> Option<(u32, u32, u64)> {
-        const SAMPLE_RATES: [u32; 13] = [
-            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
-        ];
         let start_pos = reader.stream_position().ok()?;
 
         let mut header = [0u8; 10];
@@ -1071,7 +1167,7 @@ impl StreamClassifier {
         }
 
         let sr_idx = ((h[2] >> 2) & 0x0F) as usize;
-        let sample_rate = *SAMPLE_RATES.get(sr_idx)?;
+        let sample_rate = *ADTS_SAMPLE_RATES.get(sr_idx)?;
         let ch_cfg = (((h[2] & 0x01) << 2) | ((h[3] >> 6) & 0x03)) as u32;
         let channels = match ch_cfg {
             1..=6 => ch_cfg,
@@ -1110,13 +1206,21 @@ impl StreamClassifier {
 
         if sample_rate > 0 && total_samples > 0 {
             let duration_ms = (total_samples * 1000) / sample_rate as u64;
+            crate::map_log!(
+                4,
+                "[CLASSIFIER] Scanned ADTS stream: sr={}Hz, ch={}, dur_ms={}",
+                sample_rate,
+                channels,
+                duration_ms
+            );
             Some((sample_rate, channels, duration_ms))
         } else {
             None
         }
     }
 
-    /// High-level sniffer combining format probes to extract nominal bitrate and duration in milliseconds.
+    /// High-level sniffer combining format probes over `data` and `total_size` to extract nominal
+    /// `(bitrate_bps, duration_ms)`.
     pub fn sniff_stream_info(data: &[u8], total_size: i64) -> Option<(u32, i64)> {
         Self::sniff_mp3_stream_info(data, total_size)
             .or_else(|| Self::sniff_adts_stream_info(data, total_size))
@@ -1124,7 +1228,8 @@ impl StreamClassifier {
             .or_else(|| Self::sniff_ogg_opus_stream_info(data, total_size))
     }
 
-    /// Detects the bitrate encoding mode (`CBR`, `VBR`, or `Unknown`) from stream headers and codec type.
+    /// Detects the bitrate encoding mode (`CBR`, `VBR`, or `Unknown`) from stream header `data`,
+    /// `container`, `codec`, and `lossless` hint.
     pub fn detect_bitrate_mode(
         data: &[u8],
         container: ContainerFormat,
@@ -1246,6 +1351,9 @@ impl StreamClassifier {
         RustBitrateMode::Unknown
     }
 
+    /// Requests `needed` total bytes in `out` when `needed` exceeds `available` (bounded by
+    /// `total_size` and `MAX_HEAD_SCAN`), returning [`BoundaryStatus::NeedMore`] or
+    /// [`BoundaryStatus::Unsupported`].
     fn need_more(
         out: &mut BoundaryInfo,
         needed: i64,
@@ -1266,6 +1374,8 @@ impl StreamClassifier {
         BoundaryStatus::NeedMore
     }
 
+    /// Walks RIFF / RF64 `WAVE` chunks in `d` (with stream size `total`) to populate `out` at the
+    /// `data` chunk payload boundary.
     fn detect_wav(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let rf64 = d.starts_with(b"RF64");
         let mut ds64_data: u64 = 0;
@@ -1312,6 +1422,7 @@ impl StreamClassifier {
         }
     }
 
+    /// Walks big-endian `RIFX` `WAVE` chunks in `d` (with stream size `total`) to populate `out`.
     fn detect_rifx(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let mut p: usize = 12;
 
@@ -1340,7 +1451,10 @@ impl StreamClassifier {
         }
     }
 
+    /// Walks AIFF / AIFF-C (`FORM`) chunks in `d` (with stream size `total`) to find `SSND` and
+    /// populate `out` with `audio_start = 0`.
     fn detect_aiff(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
+        /// Maximum AIFF header prefix scanned (`4 MiB`) before assuming offset `0..total`.
         const AIFF_MAX_HEADER_SCAN: usize = 4 * 1024 * 1024;
         // `AiffReader` requires reading from offset 0 (`FORM` -> `COMM` -> `SSND`).
         let found_at_start = |out: &mut BoundaryInfo| {
@@ -1390,7 +1504,10 @@ impl StreamClassifier {
         }
     }
 
+    /// Walks Apple Core Audio Format (`caff`) chunks in `d` (with stream size `total`) to locate
+    /// the `data` chunk payload and populate `out`.
     fn detect_caf(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
+        /// Maximum CAF header prefix scanned (`4 MiB`) before falling back to offset `0..total`.
         const CAF_MAX_HEADER_SCAN: usize = 4 * 1024 * 1024;
         if d.len() < 8 || &d[0..4] != b"caff" || u16::from_be_bytes([d[4], d[5]]) != 1 {
             out.set_direct_container(ContainerFormat::Caf, 0, total);
@@ -1456,6 +1573,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Reads an EBML variable-length integer at `pos` inside `d`, stripping the VINT marker bit
+    /// when `mask_leading` is `true`, and returns `(value, byte_width, is_all_ones_unknown)`.
     fn read_ebml_vint(d: &[u8], pos: usize, mask_leading: bool) -> Option<(u64, usize, bool)> {
         let &first = d.get(pos)?;
         if first == 0 {
@@ -1482,9 +1601,14 @@ impl StreamClassifier {
         Some((val, width, all_ones))
     }
 
+    /// Walks EBML/Matroska elements in `d` (with stream size `total`) to locate the first
+    /// `Cluster` element and populate `out`.
     fn detect_mkv(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
+        /// Maximum Matroska header prefix scanned (`8 MiB`) while searching for `Cluster`.
         const MKV_MAX_HEADER_SCAN: usize = 8 * 1024 * 1024;
+        /// EBML element ID for the top-level Matroska `Segment`.
         const MKV_SEGMENT_ID: u64 = 0x1853_8067;
+        /// EBML element ID for the first audio/video `Cluster`.
         const MKV_CLUSTER_ID: u64 = 0x1F43_B675;
         let fallback = |out: &mut BoundaryInfo| {
             out.set_direct_container(ContainerFormat::Matroska, 0, total);
@@ -1579,6 +1703,8 @@ impl StreamClassifier {
         fallback(out)
     }
 
+    /// Walks Sony Wave64 GUID chunks in `d` (with stream size `total`) to locate the `data` chunk
+    /// and populate `out`.
     fn detect_w64(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let mut p: usize = 40;
 
@@ -1611,6 +1737,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Walks FLAC metadata blocks in `d` starting at `p` (with stream size `total`) until the
+    /// `LAST_METADATA_BLOCK` flag, populating `out`.
     fn detect_flac(d: &[u8], total: i64, p: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let mut q = p + 4;
         let mut first = true;
@@ -1645,6 +1773,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Walks Ogg pages in `d` (with stream size `total`) past the required Vorbis (3) or Opus (2)
+    /// setup packets, populating `out`.
     fn detect_ogg(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let mut p: usize = 0;
         let mut serial: u32 = 0;
@@ -1714,6 +1844,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Walks ISO-BMFF/MP4 top-level atoms in `d` (with stream size `total`) to locate `mdat` or
+    /// `moof` and populate `out`.
     fn detect_mp4(d: &[u8], total: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let mut p: usize = 0;
         loop {
@@ -1788,6 +1920,8 @@ impl StreamClassifier {
         }
     }
 
+    /// Scans `d` starting at byte offset `p` (with stream size `total`) for consecutive ADTS or
+    /// MPEG Layer I/II/III sync headers, populating `out` and skipping Xing/Info/VBRI frames.
     fn detect_mpeg(d: &[u8], total: i64, p: i64, out: &mut BoundaryInfo) -> BoundaryStatus {
         let limit = (p + SYNC_SCAN_LIMIT).min(d.len() as i64);
 
@@ -1863,33 +1997,48 @@ impl StreamClassifier {
     }
 }
 
+/// Parsed 4-byte MPEG audio frame header fields used for frame size calculation and VBR sniffing.
 #[derive(Default)]
 struct MpegHeader {
+    /// Computed frame length in bytes.
     frame_size: u32,
+    /// Side information byte offset before optional Xing/Info tag.
     side_info: u32,
+    /// Encoded MPEG layer bits (`1` = Layer III, `2` = Layer II, `3` = Layer I).
     layer: u32,
+    /// Encoded MPEG version bits (`3` = MPEG-1, `2` = MPEG-2, `0` = MPEG-2.5).
     ver: u32,
+    /// Frame sampling rate in Hz.
     sample_rate: u32,
+    /// Frame bitrate in kbps.
     bitrate_kbps: u32,
+    /// `true` if the 16-bit CRC field immediately follows the 4-byte frame header.
     has_crc: bool,
 }
 
+/// Parses a 4-byte MPEG audio frame header from `h` into `out`, returning `true` if valid.
 fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
+    /// Bitrate table (kbps) for MPEG-1 Layer III.
     const MPEG1_L3: [u32; 16] = [
         0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
     ];
+    /// Bitrate table (kbps) for MPEG-1 Layer II.
     const MPEG1_L2: [u32; 16] = [
         0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0,
     ];
+    /// Bitrate table (kbps) for MPEG-1 Layer I.
     const MPEG1_L1: [u32; 16] = [
         0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0,
     ];
+    /// Bitrate table (kbps) for MPEG-2/2.5 Layer I.
     const MPEG2_L1: [u32; 16] = [
         0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0,
     ];
+    /// Bitrate table (kbps) for MPEG-2/2.5 Layer II and III.
     const MPEG2_L23: [u32; 16] = [
         0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
     ];
+    /// Sampling rate table (Hz) indexed by `[ver][sr_idx]`.
     const RATES: [[u32; 3]; 4] = [
         [11025, 12000, 8000],
         [0, 0, 0],
@@ -1967,6 +2116,7 @@ fn parse_mpeg_header(h: &[u8], out: &mut MpegHeader) -> bool {
     true
 }
 
+/// Returns `true` if `h` begins with a valid 3-byte ADTS AAC frame sync prefix.
 #[inline]
 fn is_adts_sync(h: &[u8]) -> bool {
     h.len() >= 3
@@ -1976,6 +2126,7 @@ fn is_adts_sync(h: &[u8]) -> bool {
         && ((h[2] >> 2) & 0x0F) <= 11
 }
 
+/// Decodes a 4-byte ID3v2 synchsafe big-endian integer from `b`.
 #[inline]
 fn synchsafe32(b: &[u8]) -> u32 {
     ((b[0] as u32 & 0x7F) << 21)
@@ -1984,21 +2135,25 @@ fn synchsafe32(b: &[u8]) -> u32 {
         | (b[3] as u32 & 0x7F)
 }
 
+/// Reads a little-endian `u32` from the first 4 bytes of `b`.
 #[inline]
 fn le32(b: &[u8]) -> u32 {
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
 }
 
+/// Reads a little-endian `u64` from the first 8 bytes of `b`.
 #[inline]
 fn le64(b: &[u8]) -> u64 {
     u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
 }
 
+/// Reads a big-endian `u32` from the first 4 bytes of `b`.
 #[inline]
 fn be32(b: &[u8]) -> u32 {
     u32::from_be_bytes([b[0], b[1], b[2], b[3]])
 }
 
+/// Reads a big-endian `u64` from the first 8 bytes of `b`.
 #[inline]
 fn be64(b: &[u8]) -> u64 {
     u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])

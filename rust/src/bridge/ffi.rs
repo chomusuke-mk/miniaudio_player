@@ -7,7 +7,8 @@ pub enum MapDeviceContextOpaque {}
 /// Type alias for the opaque device context pointer.
 pub type MapDeviceContext = MapDeviceContextOpaque;
 
-/// Canonical error codes for miniaudio_player.
+// Canonical error codes for miniaudio_player.
+
 /// Operation completed successfully.
 pub const MAP_SUCCESS: i32 = 0;
 /// Generic unspecified error.
@@ -44,13 +45,18 @@ pub struct MapDeviceInfo {
 /// Consolidated device collection holding both playback and capture devices in a single pass.
 #[repr(C)]
 pub struct MapAllDevices {
+    /// Pointer to the C-allocated array of playback [`MapDeviceInfo`] descriptors.
     pub playback_devices: *mut MapDeviceInfo,
+    /// Number of valid entries in `playback_devices`.
     pub playback_count: u32,
+    /// Pointer to the C-allocated array of capture [`MapDeviceInfo`] descriptors.
     pub capture_devices: *mut MapDeviceInfo,
+    /// Number of valid entries in `capture_devices`.
     pub capture_count: u32,
 }
 
 impl Default for MapAllDevices {
+    /// Returns an empty [`MapAllDevices`] with null pointers and zero counts.
     fn default() -> Self {
         Self {
             playback_devices: std::ptr::null_mut(),
@@ -62,6 +68,7 @@ impl Default for MapAllDevices {
 }
 
 impl Default for MapDeviceInfo {
+    /// Returns a zeroed [`MapDeviceInfo`] marked as automatic OS default.
     fn default() -> Self {
         Self {
             id: [0; 516],
@@ -87,6 +94,16 @@ pub struct MiniaudioBufferedRange {
 
 #[cfg(not(target_arch = "wasm32"))]
 extern "C" {
+    /// Creates and initializes a native miniaudio playback device context.
+    ///
+    /// Configures the device for `sample_rate` Hz, `channels` channels, and `period_size_in_frames`
+    /// frames per callback, targeting `playback_device_id` (or the default device if null/empty).
+    /// Passes `rust_user_data` to audio/notification callbacks and stores the status code in `out_result`.
+    ///
+    /// # Safety
+    ///
+    /// `playback_device_id` (if non-null) must be a valid NUL-terminated C string, `rust_user_data`
+    /// must remain valid for the device's lifetime, and `out_result` (if non-null) must be writable.
     pub fn map_device_create(
         sample_rate: u32,
         channels: u32,
@@ -96,6 +113,16 @@ extern "C" {
         out_result: *mut i32,
     ) -> *mut MapDeviceContext;
 
+    /// Creates and initializes a native miniaudio microphone capture device context.
+    ///
+    /// Configures the device for `sample_rate` Hz, `channels` channels, and `period_size_in_frames`
+    /// frames per callback, targeting `capture_device_id` (or the default device if null/empty).
+    /// Passes `rust_user_data` to capture callbacks and stores the status code in `out_result`.
+    ///
+    /// # Safety
+    ///
+    /// `capture_device_id` (if non-null) must be a valid NUL-terminated C string, `rust_user_data`
+    /// must remain valid for the device's lifetime, and `out_result` (if non-null) must be writable.
     pub fn map_capture_device_create(
         sample_rate: u32,
         channels: u32,
@@ -105,20 +132,70 @@ extern "C" {
         out_result: *mut i32,
     ) -> *mut MapDeviceContext;
 
+    /// Starts audio callbacks on the native device context `ctx`.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be a valid pointer returned by `map_device_create` or `map_capture_device_create`.
     pub fn map_device_start(ctx: *mut MapDeviceContext) -> i32;
+
+    /// Stops audio callbacks on the native device context `ctx`.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be a valid pointer returned by `map_device_create` or `map_capture_device_create`.
     pub fn map_device_stop(ctx: *mut MapDeviceContext) -> i32;
+
+    /// Stops and destroys the native device context `ctx`, freeing its C-side resources.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be a valid pointer (or null) and must not be used again after this call.
     pub fn map_device_destroy(ctx: *mut MapDeviceContext) -> i32;
 
+    /// Enumerates native playback devices into `out_devices` and writes the count to `out_count`.
+    ///
+    /// # Safety
+    ///
+    /// `out_devices` and `out_count` must be non-null writable pointers; the returned array must be
+    /// freed via [`map_device_free_devices`].
     pub fn map_device_enumerate_devices(
         out_devices: *mut *mut MapDeviceInfo,
         out_count: *mut u32,
     ) -> i32;
+
+    /// Enumerates native capture devices into `out_devices` and writes the count to `out_count`.
+    ///
+    /// # Safety
+    ///
+    /// `out_devices` and `out_count` must be non-null writable pointers; the returned array must be
+    /// freed via [`map_device_free_devices`].
     pub fn map_device_enumerate_capture_devices(
         out_devices: *mut *mut MapDeviceInfo,
         out_count: *mut u32,
     ) -> i32;
+
+    /// Frees a device descriptor array `devices` previously allocated by enumeration functions.
+    ///
+    /// # Safety
+    ///
+    /// `devices` must be null or a pointer returned by [`map_device_enumerate_devices`] or
+    /// [`map_device_enumerate_capture_devices`].
     pub fn map_device_free_devices(devices: *mut MapDeviceInfo);
+
+    /// Enumerates both playback and capture devices in one pass into `out_all`.
+    ///
+    /// # Safety
+    ///
+    /// `out_all` must be a non-null writable pointer to a [`MapAllDevices`] struct; results must be
+    /// freed via [`map_device_free_all`].
     pub fn map_device_enumerate_all(out_all: *mut MapAllDevices) -> i32;
+
+    /// Frees playback and capture arrays stored inside `all`.
+    ///
+    /// # Safety
+    ///
+    /// `all` must be null or a pointer previously populated by [`map_device_enumerate_all`].
     pub fn map_device_free_all(all: *mut MapAllDevices);
 }
 
@@ -130,19 +207,27 @@ pub mod wasm_audio_protocol {
 
     /// Mono capture ring buffer capacity in samples (~341 ms at 48 kHz).
     pub const WEB_CAPTURE_CAP_SAMPLES: usize = 16384;
+    /// Bitmask for fast power-of-two index wrapping within [`WEB_CAPTURE_CAP_SAMPLES`].
     pub const WEB_CAPTURE_MASK: usize = WEB_CAPTURE_CAP_SAMPLES - 1;
+    /// Maximum number of concurrent Web Audio capture slots allocated in WASM memory.
     pub const MAX_WEB_CAPTURE_SLOTS: usize = 8;
 
     /// Interleaved multi-channel linear PCM resampler shared across Web playback and capture paths.
     pub struct LinearPcmResampler<const CH: usize> {
+        /// Numerator (`in_sr`) of the last configured resampling ratio.
         last_ratio_num: u32,
+        /// Denominator (`out_sr`) of the last configured resampling ratio.
         last_ratio_den: u32,
+        /// Fractional input frame phase carried across consecutive [`Self::process`] calls.
         phase: f64,
+        /// Last frame from the previous chunk used to interpolate the boundary sample.
         prev: [f32; CH],
+        /// Whether [`Self::prev`] has been seeded with at least one input frame.
         initialized: bool,
     }
 
     impl<const CH: usize> LinearPcmResampler<CH> {
+        /// Creates a new uninitialized [`LinearPcmResampler`] with zeroed history.
         pub const fn new() -> Self {
             Self {
                 last_ratio_num: 44100,
@@ -153,6 +238,7 @@ pub mod wasm_audio_protocol {
             }
         }
 
+        /// Resamples interleaved `input` frames from `in_sr` Hz to `out_sr` Hz into `out`.
         pub fn process(&mut self, input: &[f32], in_sr: u32, out_sr: u32, out: &mut Vec<f32>) {
             out.clear();
             let in_frames = input.len() / CH;
@@ -208,22 +294,35 @@ pub mod wasm_audio_protocol {
         }
     }
 
+    /// Cache-line aligned shared-memory control header for a Web Audio microphone capture ring.
     #[repr(C, align(64))]
     pub struct WasmWebCaptureControl {
-        pub write_pos: AtomicU32,        // [0] Written by JS AudioWorklet/ScriptProcessor
-        pub read_pos: AtomicU32,         // [1] Written by Rust capture pump
-        pub host_sample_rate: AtomicU32, // [2] Browser AudioContext.sampleRate
-        pub channels: AtomicU32,         // [3] 1 (mono)
-        pub cap_samples: AtomicU32,      // [4] WEB_CAPTURE_CAP_SAMPLES (power of 2)
-        pub active: AtomicU32,           // [5] 1 while actively capturing, 0 otherwise
-        pub generation: AtomicU32,       // [6] Monotonic slot generation fence
-        pub overruns: AtomicU32,         // [7] Ring overflow drops in JS worklet
+        /// Producer write cursor in samples (written by JS AudioWorklet/ScriptProcessor).
+        pub write_pos: AtomicU32,
+        /// Consumer read cursor in samples (written by the Rust capture pump).
+        pub read_pos: AtomicU32,
+        /// Browser `AudioContext.sampleRate` reported for this capture stream.
+        pub host_sample_rate: AtomicU32,
+        /// Channel count (always `1` mono).
+        pub channels: AtomicU32,
+        /// Ring capacity in samples ([`WEB_CAPTURE_CAP_SAMPLES`], power of 2).
+        pub cap_samples: AtomicU32,
+        /// Active flag (`1` while capturing, `0` otherwise).
+        pub active: AtomicU32,
+        /// Monotonic slot generation fence preventing stale JS writes after device teardown.
+        pub generation: AtomicU32,
+        /// Count of overflow drops encountered while pushing into the ring.
+        pub overruns: AtomicU32,
     }
 
+    /// Shared WASM linear-memory SPSC capture ring slot paired with a [`WasmWebCaptureControl`].
     #[repr(C, align(64))]
     pub struct WasmWebCaptureSlot {
+        /// Atomic control header shared with JS capture worklets.
         pub ctrl: WasmWebCaptureControl,
+        /// Mono PCM sample storage buffer.
         pub data: UnsafeCell<[f32; WEB_CAPTURE_CAP_SAMPLES]>,
+        /// Reservation flag indicating whether this slot is currently assigned to a capture device.
         pub in_use: AtomicBool,
     }
 
@@ -231,6 +330,7 @@ pub mod wasm_audio_protocol {
     unsafe impl Send for WasmWebCaptureSlot {}
 
     impl WasmWebCaptureSlot {
+        /// Allocates a new boxed [`WasmWebCaptureSlot`] initialized with `default_sr` Hz.
         pub fn new_boxed(default_sr: u32) -> Box<Self> {
             Box::new(Self {
                 ctrl: WasmWebCaptureControl {
@@ -248,6 +348,7 @@ pub mod wasm_audio_protocol {
             })
         }
 
+        /// Resets cursors and overrun counters for a new `generation` with sample rate `default_sr`.
         pub fn reset_for_generation(&self, generation: u32, default_sr: u32) {
             self.ctrl.active.store(0, Ordering::Release);
             self.ctrl.generation.store(generation, Ordering::Release);
@@ -259,6 +360,7 @@ pub mod wasm_audio_protocol {
             self.ctrl.overruns.store(0, Ordering::Release);
         }
 
+        /// Pushes `mono` PCM samples into the ring if active and matching `generation`.
         pub fn push_mono(&self, generation: u32, mono: &[f32]) {
             if mono.is_empty()
                 || self.ctrl.active.load(Ordering::Acquire) == 0
@@ -290,6 +392,7 @@ pub mod wasm_audio_protocol {
                 .store(w.wrapping_add(to_write as u32), Ordering::Release);
         }
 
+        /// Drains all currently queued mono samples into `out`.
         pub fn pop_mono_all(&self, out: &mut Vec<f32>) {
             out.clear();
             let w = self.ctrl.write_pos.load(Ordering::Acquire);
@@ -316,6 +419,7 @@ pub mod wasm_audio_protocol {
     }
 }
 
+/// WebAssembly device bridge hosting Web Audio output/capture SPSC rings and `wasm_bindgen` entrypoints.
 #[cfg(target_arch = "wasm32")]
 mod wasm_device_bridge {
     use super::wasm_audio_protocol::*;
@@ -332,8 +436,11 @@ mod wasm_device_bridge {
 
     /// Power-of-two ring capacity in stereo frames (~371 ms at 44.1 kHz).
     pub const WEB_RING_CAP_FRAMES: usize = 16384;
+    /// Channel count of the shared Web Audio output ring (stereo).
     pub const WEB_RING_CHANNELS: usize = 2;
+    /// Total sample capacity of the shared Web Audio output ring.
     pub const WEB_RING_CAP_SAMPLES: usize = WEB_RING_CAP_FRAMES * WEB_RING_CHANNELS;
+    /// Power-of-two bitmask for wrapping sample indices inside [`WEB_RING_CAP_SAMPLES`].
     const WEB_RING_MASK: usize = WEB_RING_CAP_SAMPLES - 1;
     /// Target ahead-of-consumer buffer depth (~93 ms at 44.1 kHz) to absorb Web Worker jitter.
     pub const WEB_RING_TARGET_CUSHION_FRAMES: u32 = 4096;
@@ -343,30 +450,43 @@ mod wasm_device_bridge {
     /// Shared-memory lock-free control block mirrored as `Int32Array(buf, ctrlPtr, 8)` in JS.
     #[repr(C, align(64))]
     pub struct WasmWebAudioControl {
-        write_pos: AtomicU32,       // [0] Producer cursor (samples, wraps mod 2^32)
-        read_pos: AtomicU32,        // [1] Consumer cursor (samples, wraps mod 2^32)
-        sample_rate: AtomicU32,     // [2] Host AudioContext sample rate
-        channels: AtomicU32,        // [3] Always 2 (stereo)
-        cap_samples: AtomicU32,     // [4] WEB_RING_CAP_SAMPLES (power of 2)
-        underruns: AtomicU32,       // [5] Consumer underrun counter during active playback
-        frames_consumed: AtomicU32, // [6] Consumer render-quantum heartbeat counter
-        playing_hint: AtomicU32,    // [7] 1 while non-silent audio is actively flowing
+        /// Producer write cursor in samples (wraps modulo 2^32).
+        pub write_pos: AtomicU32,
+        /// Consumer read cursor in samples (wraps modulo 2^32).
+        pub read_pos: AtomicU32,
+        /// Host `AudioContext` sample rate in Hz.
+        pub sample_rate: AtomicU32,
+        /// Channel count (always `2` stereo).
+        pub channels: AtomicU32,
+        /// Ring buffer capacity in samples ([`WEB_RING_CAP_SAMPLES`], power of 2).
+        pub cap_samples: AtomicU32,
+        /// Consumer underrun counter incremented during active playback.
+        pub underruns: AtomicU32,
+        /// Consumer render-quantum heartbeat counter.
+        pub frames_consumed: AtomicU32,
+        /// Flag (`1`) indicating non-silent audio is actively flowing.
+        pub playing_hint: AtomicU32,
     }
 
     /// Static lock-free SPSC ring buffer inside shared WASM linear memory, read directly
     /// off the main UI thread by the `AudioWorklet` audio rendering thread.
     #[repr(C, align(64))]
     pub struct WasmWebAudioRing {
+        /// Atomic control header mirrored into JS shared memory.
         ctrl: WasmWebAudioControl,
+        /// Interleaved stereo PCM sample storage buffer.
         data: UnsafeCell<[f32; WEB_RING_CAP_SAMPLES]>,
     }
 
     unsafe impl Sync for WasmWebAudioRing {}
     unsafe impl Send for WasmWebAudioRing {}
 
+    /// Singleton Web Audio SPSC output ring instance.
     static WEB_AUDIO_RING: OnceLock<Box<WasmWebAudioRing>> = OnceLock::new();
+    /// Cached browser `AudioContext.sampleRate` in Hz.
     static HOST_AUDIO_SAMPLE_RATE: AtomicU32 = AtomicU32::new(44100);
 
+    /// Returns a static reference to the lazily initialized [`WasmWebAudioRing`].
     fn web_audio_ring() -> &'static WasmWebAudioRing {
         WEB_AUDIO_RING.get_or_init(|| {
             Box::new(WasmWebAudioRing {
@@ -386,6 +506,7 @@ mod wasm_device_bridge {
     }
 
     impl WasmWebAudioRing {
+        /// Returns the number of interleaved stereo samples currently queued in the ring.
         #[inline]
         fn queued_samples(&self) -> usize {
             let w = self.ctrl.write_pos.load(Ordering::Acquire);
@@ -393,6 +514,7 @@ mod wasm_device_bridge {
             (w.wrapping_sub(r) as usize).min(WEB_RING_CAP_SAMPLES)
         }
 
+        /// Pushes frame-aligned interleaved `stereo` samples into the ring, returning the sample count written.
         #[inline]
         fn push_stereo(&self, stereo: &[f32]) -> usize {
             if stereo.is_empty() {
@@ -428,6 +550,7 @@ mod wasm_device_bridge {
             to_write
         }
 
+        /// Pops stereo samples into `out`, zero-filling any shortfall and tracking underruns.
         #[inline]
         fn pop_stereo(&self, out: &mut [f32]) -> usize {
             let w = self.ctrl.write_pos.load(Ordering::Acquire);
@@ -465,42 +588,60 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Lifecycle and format metadata for an active Web Audio playback device handle.
     pub struct WasmDeviceState {
+        /// Configured device sample rate in Hz.
         sample_rate: u32,
+        /// Configured device channel count.
         channels: u32,
+        /// Raw address of the associated `OutputDeviceRenderer` passed as `rust_user_data`.
         user_data_addr: usize,
+        /// Whether this device has not yet been destroyed.
         alive: AtomicBool,
+        /// Whether this device is currently started and rendering PCM.
         active: AtomicBool,
     }
 
     impl WasmDeviceState {
+        /// Returns `true` if the device has not been destroyed.
         #[inline]
         fn is_alive(&self) -> bool {
             self.alive.load(Ordering::Relaxed)
         }
 
+        /// Returns `true` if the device is alive and actively started.
         #[inline]
         fn is_active(&self) -> bool {
             self.alive.load(Ordering::Relaxed) && self.active.load(Ordering::Relaxed)
         }
     }
 
+    /// Registry of active Web Audio playback devices pumped into [`WEB_AUDIO_RING`].
     static DEVICES: OnceLock<Mutex<Vec<Arc<WasmDeviceState>>>> = OnceLock::new();
 
+    /// Returns the lazily initialized playback device registry mutex.
     fn devices_registry() -> &'static Mutex<Vec<Arc<WasmDeviceState>>> {
         DEVICES.get_or_init(|| Mutex::new(Vec::new()))
     }
 
+    /// Reusable scratch buffers and resampler state for [`pump_devices_locked`].
     struct PumpState {
+        /// Scratch buffer receiving rendered frames from a single device.
         dev_scratch: Vec<f32>,
+        /// Interleaved stereo accumulation buffer summing all active devices.
         mix_buf: Vec<f32>,
+        /// Output buffer holding resampled stereo frames when `src_sr != host_sr`.
         resampled_buf: Vec<f32>,
+        /// Fallback output buffer used by the legacy `ScriptProcessorNode` path.
         fallback_buf: Vec<f32>,
+        /// Stereo linear PCM resampler adapting device sample rates to the host `AudioContext`.
         resampler: LinearPcmResampler<WEB_RING_CHANNELS>,
+        /// Remaining pump iterations to keep `playing_hint` asserted after silence begins.
         activity_hangover: u32,
     }
 
     impl PumpState {
+        /// Creates a zero-allocation [`PumpState`] ready for use in a static mutex.
         const fn new() -> Self {
             Self {
                 dev_scratch: Vec::new(),
@@ -517,17 +658,23 @@ mod wasm_device_bridge {
     // Web Audio Capture Slot Registry & Device Cache (Shared WASM Linear Memory)
     // =========================================================================
 
+    /// `BroadcastChannel` name used by background workers to forward Web capture commands to the main thread.
     const WEB_CAPTURE_CHANNEL_NAME: &str = "__miniaudio_web_capture_v1__";
 
+    /// Pool of shared-memory Web capture ring slots indexed by `slot_idx`.
     static CAPTURE_SLOTS: OnceLock<Mutex<Vec<Box<WasmWebCaptureSlot>>>> = OnceLock::new();
+    /// Monotonic generation counter assigned to newly acquired capture slots.
     static NEXT_CAPTURE_GENERATION: AtomicU32 = AtomicU32::new(1);
 
+    /// Invokes closure `f` on the capture slot at `slot_idx`, returning `None` if unavailable.
     fn with_capture_slot<R>(slot_idx: usize, f: impl FnOnce(&WasmWebCaptureSlot) -> R) -> Option<R> {
         let slots = CAPTURE_SLOTS.get()?;
         let guard = slots.lock().ok()?;
         guard.get(slot_idx).map(|s| f(s))
     }
 
+    /// Reserves or allocates a [`WasmWebCaptureSlot`] initialized with `default_sr`, returning
+    /// `(slot_idx, generation, ctrl_ptr, data_ptr)`.
     fn acquire_capture_slot(default_sr: u32) -> Option<(usize, u32, u32, u32)> {
         let slots_mtx = CAPTURE_SLOTS.get_or_init(|| Mutex::new(Vec::new()));
         let mut slots = slots_mtx.lock().ok()?;
@@ -558,14 +705,20 @@ mod wasm_device_bridge {
         Some((idx, gen, ctrl_ptr, data_ptr))
     }
 
+    /// Reusable scratch buffers and mono resampler owned by each [`WasmCaptureState`].
     struct WasmCapturePumpState {
+        /// Mono linear PCM resampler adapting browser `AudioContext` rate to target capture rate.
         resampler: LinearPcmResampler<1>,
+        /// Scratch buffer drained from the shared capture slot.
         scratch_in: Vec<f32>,
+        /// Scratch buffer receiving resampled mono frames.
         scratch_resampled: Vec<f32>,
+        /// Scratch buffer duplicating mono frames across multi-channel capture targets.
         scratch_interleaved: Vec<f32>,
     }
 
     impl WasmCapturePumpState {
+        /// Creates an empty [`WasmCapturePumpState`].
         fn new() -> Self {
             Self {
                 resampler: LinearPcmResampler::new(),
@@ -576,27 +729,42 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Lifecycle and routing state for an active Web Audio microphone capture device handle.
     pub struct WasmCaptureState {
+        /// Index of the assigned slot inside [`CAPTURE_SLOTS`].
         slot_idx: usize,
+        /// Monotonic generation fence matching the assigned capture slot.
         generation: u32,
+        /// Shared WASM linear-memory address of [`WasmWebCaptureControl`].
         ctrl_ptr: u32,
+        /// Shared WASM linear-memory address of the capture ring PCM data array.
         data_ptr: u32,
+        /// Target capture sample rate in Hz expected by the Rust capture receiver.
         sample_rate: u32,
+        /// Target capture channel count expected by the Rust capture receiver.
         channels: u32,
+        /// Requested browser media device identifier (or `"AUTO"`).
         requested_device_id: String,
+        /// Raw address of the associated `CaptureReceiver` header passed as `rust_user_data`.
         user_data_addr: usize,
+        /// Whether this capture handle has not yet been destroyed.
         alive: AtomicBool,
+        /// Whether capture is currently started.
         active: AtomicBool,
+        /// Whether the JS capture pipeline reported an unrecoverable error.
         failed: AtomicBool,
+        /// Per-device scratch buffers and resampler protected by a mutex.
         pump: Mutex<WasmCapturePumpState>,
     }
 
     impl WasmCaptureState {
+        /// Returns `true` if the capture handle has not been destroyed.
         #[inline]
         fn is_alive(&self) -> bool {
             self.alive.load(Ordering::Relaxed)
         }
 
+        /// Returns `true` if the capture handle is alive, started, and has not failed.
         #[inline]
         fn is_active(&self) -> bool {
             self.alive.load(Ordering::Relaxed)
@@ -605,32 +773,46 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Polymorphic handle boxed as `MapDeviceContext` on `wasm32` for playback and capture devices.
     enum WasmDeviceHandle {
+        /// Playback output device state.
         Output(Arc<WasmDeviceState>),
+        /// Microphone capture input device state.
         Capture(Arc<WasmCaptureState>),
     }
 
+    /// Registry of active Web Audio capture devices polled by [`wasm_pump_web_capture_rings`].
     static CAPTURE_DEVICES: OnceLock<Mutex<Vec<Arc<WasmCaptureState>>>> = OnceLock::new();
 
+    /// Returns the lazily initialized capture device registry mutex.
     fn capture_devices_registry() -> &'static Mutex<Vec<Arc<WasmCaptureState>>> {
         CAPTURE_DEVICES.get_or_init(|| Mutex::new(Vec::new()))
     }
 
+    /// Cached browser capture device entry populated from JS `navigator.mediaDevices.enumerateDevices()`.
     #[derive(Clone, PartialEq, Eq)]
     struct CachedWebDevice {
+        /// Opaque browser `deviceId` string.
         id: String,
+        /// Human-readable device label.
         name: String,
+        /// Whether this entry is marked as the default input device.
         is_default: bool,
     }
 
+    /// Snapshot cache of browser capture devices published by JS.
     static WEB_CAPTURE_DEVICES: OnceLock<Mutex<Vec<CachedWebDevice>>> = OnceLock::new();
+    /// Registered hardware-watcher condition variables woken when Web capture state changes.
     static WEB_DEVICE_TRIGGERS: OnceLock<Mutex<Vec<Weak<(Mutex<bool>, Condvar)>>>> = OnceLock::new();
+    /// Queue of error messages reported by [`wasm_notify_web_capture_failed`].
     static FAILED_CAPTURE_MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
+    /// Returns the lazily initialized Web capture device cache mutex.
     fn web_capture_devices_cache() -> &'static Mutex<Vec<CachedWebDevice>> {
         WEB_CAPTURE_DEVICES.get_or_init(|| Mutex::new(Vec::new()))
     }
 
+    /// Registers a hardware-watcher `trigger` pair to wake on Web capture device list or failure updates.
     pub fn register_web_device_trigger(trigger: Arc<(Mutex<bool>, Condvar)>) {
         let triggers = WEB_DEVICE_TRIGGERS.get_or_init(|| Mutex::new(Vec::new()));
         if let Ok(mut guard) = triggers.lock() {
@@ -639,6 +821,7 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Wakes all live registered Web device watcher triggers and prunes expired weak references.
     fn wake_web_device_watchers() {
         let Some(triggers) = WEB_DEVICE_TRIGGERS.get() else {
             return;
@@ -659,6 +842,7 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Posts a JS capture control command `obj` directly on the main thread or via `BroadcastChannel`.
     fn post_web_capture_cmd(obj: &Object) {
         let global = js_sys::global();
         if let Ok(val) = Reflect::get(&global, &JsValue::from_str("__miniaudioWebCaptureCmd")) {
@@ -670,18 +854,16 @@ mod wasm_device_bridge {
         // Background Web Worker path: forward command to window main thread via BroadcastChannel.
         if let Ok(bc_ctor) = Reflect::get(&global, &JsValue::from_str("BroadcastChannel")) {
             if bc_ctor.is_function() {
-                if let Ok(poster) = Function::new_with_args(
+                let _ = Function::new_with_args(
                     "channelName, msg",
                     "var ch = new BroadcastChannel(channelName); ch.postMessage(msg); ch.close();",
                 )
-                .call2(&JsValue::NULL, &JsValue::from_str(WEB_CAPTURE_CHANNEL_NAME), obj)
-                {
-                    let _ = poster;
-                }
+                .call2(&JsValue::NULL, &JsValue::from_str(WEB_CAPTURE_CHANNEL_NAME), obj);
             }
         }
     }
 
+    /// Posts a JS `startCapture` command describing `state` to the browser main thread.
     fn dispatch_start_capture_cmd(state: &WasmCaptureState) {
         let obj = Object::new();
         let _ = Reflect::set(&obj, &JsValue::from_str("cmd"), &JsValue::from_str("startCapture"));
@@ -728,6 +910,7 @@ mod wasm_device_bridge {
         post_web_capture_cmd(&obj);
     }
 
+    /// Posts a JS `stopCapture` command for `slot_idx` and `generation` to the browser main thread.
     fn dispatch_stop_capture_cmd(slot_idx: usize, generation: u32) {
         let obj = Object::new();
         let _ = Reflect::set(&obj, &JsValue::from_str("cmd"), &JsValue::from_str("stopCapture"));
@@ -744,6 +927,7 @@ mod wasm_device_bridge {
         post_web_capture_cmd(&obj);
     }
 
+    /// Copies UTF-8 bytes of `s` into a zero-padded fixed-size NUL-terminated buffer `dst`.
     fn copy_str_to_fixed<const N: usize>(s: &str, dst: &mut [u8; N]) {
         dst.fill(0);
         let bytes = s.as_bytes();
@@ -751,6 +935,7 @@ mod wasm_device_bridge {
         dst[..max_copy].copy_from_slice(&bytes[..max_copy]);
     }
 
+    /// Returns the currently cached browser microphone capture devices as [`MapDeviceInfo`] entries.
     pub fn cached_capture_device_infos() -> Vec<MapDeviceInfo> {
         let Ok(guard) = web_capture_devices_cache().lock() else {
             return Vec::new();
@@ -773,6 +958,7 @@ mod wasm_device_bridge {
             .collect()
     }
 
+    /// Updates the cached browser capture device list from JS `ids`, `names`, and `defaults` arrays.
     #[wasm_bindgen]
     pub fn wasm_set_web_capture_devices(ids: JsValue, names: JsValue, defaults: JsValue) {
         let ids_arr = Array::from(&ids);
@@ -795,6 +981,7 @@ mod wasm_device_bridge {
             });
         }
 
+        let dev_count = next.len();
         let changed = if let Ok(mut guard) = web_capture_devices_cache().lock() {
             if *guard != next {
                 *guard = next;
@@ -807,10 +994,16 @@ mod wasm_device_bridge {
         };
 
         if changed {
+            crate::map_log!(
+                3,
+                "[WASM_CAP] Web capture device list updated ({} device(s))",
+                dev_count
+            );
             wake_web_device_watchers();
         }
     }
 
+    /// Updates the browser `AudioContext.sampleRate` for capture slot `slot_idx` matching `generation` to `sample_rate`.
     #[wasm_bindgen]
     pub fn wasm_set_web_capture_sample_rate(slot_idx: u32, generation: u32, sample_rate: u32) {
         let _ = with_capture_slot(slot_idx as usize, |slot| {
@@ -822,6 +1015,7 @@ mod wasm_device_bridge {
         });
     }
 
+    /// Pushes mono PCM `samples` from JS (`sample_rate` Hz) into capture slot `slot_idx` if `generation` matches.
     #[wasm_bindgen]
     pub fn wasm_push_web_capture_pcm(
         slot_idx: u32,
@@ -843,8 +1037,16 @@ mod wasm_device_bridge {
         });
     }
 
+    /// Marks the capture device for `slot_idx` and `generation` as failed with `error_message` and wakes watchers.
     #[wasm_bindgen]
     pub fn wasm_notify_web_capture_failed(slot_idx: u32, generation: u32, error_message: String) {
+        crate::map_log!(
+            1,
+            "[WASM_CAP] Web capture failed (slot={}, gen={}): {}",
+            slot_idx,
+            generation,
+            error_message
+        );
         if let Ok(devs) = capture_devices_registry().lock() {
             for dev in devs.iter() {
                 if dev.slot_idx == slot_idx as usize && dev.generation == generation {
@@ -866,6 +1068,7 @@ mod wasm_device_bridge {
         wake_web_device_watchers();
     }
 
+    /// Returns `true` if `ctx` points to a Web capture device whose JS pipeline reported failure.
     pub fn wasm_is_capture_device_failed(ctx: *mut MapDeviceContext) -> bool {
         if ctx.is_null() {
             return false;
@@ -878,6 +1081,7 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Returns `true` if any live Web capture device is currently in a failed state.
     pub fn wasm_has_failed_capture_devices() -> bool {
         let Ok(devs) = capture_devices_registry().try_lock() else {
             return false;
@@ -886,6 +1090,7 @@ mod wasm_device_bridge {
             .any(|d| d.is_alive() && d.failed.load(Ordering::Acquire))
     }
 
+    /// Drains and returns all queued Web capture failure messages.
     pub fn wasm_take_failed_capture_messages() -> Vec<String> {
         let Some(msgs) = FAILED_CAPTURE_MESSAGES.get() else {
             return Vec::new();
@@ -896,6 +1101,7 @@ mod wasm_device_bridge {
         std::mem::take(&mut *guard)
     }
 
+    /// Drains all active Web capture slots, resamples from host rate to target rate, and delivers frames to Rust.
     pub fn wasm_pump_web_capture_rings() {
         let Ok(mut devs) = capture_devices_registry().try_lock() else {
             return;
@@ -959,18 +1165,22 @@ mod wasm_device_bridge {
         }
     }
 
+    /// Singleton pump state mutex protecting reusable Web Audio output scratch buffers.
     static PUMP_STATE: OnceLock<Mutex<PumpState>> = OnceLock::new();
 
+    /// Returns the lazily initialized [`PumpState`] mutex.
     fn pump_state() -> &'static Mutex<PumpState> {
         PUMP_STATE.get_or_init(|| Mutex::new(PumpState::new()))
     }
 
-    /// Mixes available PCM from all active Web output devices into the shared SPSC Web Audio ring.
+    /// Mixes available PCM from all active Web output devices `devs` into the shared SPSC Web Audio ring
+    /// using `st`, capping pre-unlock silence when `consumer_active` is `false`.
     fn pump_devices_locked(
         devs: &[Arc<WasmDeviceState>],
         st: &mut PumpState,
         consumer_active: bool,
     ) {
+        /// Maximum source frames mixed per iteration to bound stack/scratch work.
         const MAX_BATCH_FRAMES: usize = 2048;
         let ring = web_audio_ring();
         let host_sr = HOST_AUDIO_SAMPLE_RATE.load(Ordering::Relaxed).max(8000);
@@ -1085,7 +1295,8 @@ mod wasm_device_bridge {
     }
 
     /// Pumps all active Web output devices into the shared SPSC `WasmWebAudioRing`.
-    /// Called from the dedicated `map-engine-clock` Web Worker thread.
+    /// Called from the dedicated `map-engine-clock` Web Worker thread with `consumer_active`
+    /// indicating whether the browser `AudioWorklet` is actively draining frames.
     pub fn wasm_pump_web_audio_ring(consumer_active: bool) {
         let Ok(mut devs_guard) = devices_registry().lock() else {
             return;
@@ -1143,12 +1354,17 @@ mod wasm_device_bridge {
         HOST_AUDIO_SAMPLE_RATE.load(Ordering::Relaxed).max(8000)
     }
 
-    /// Records the actual browser `AudioContext.sampleRate` so Web pumping matches it cleanly.
+    /// Records the actual browser `AudioContext.sampleRate` (`sample_rate`) so Web pumping matches it cleanly.
     #[wasm_bindgen]
     pub fn wasm_set_web_audio_sample_rate(sample_rate: u32) {
         let sr = sample_rate.clamp(8000, 192000);
         HOST_AUDIO_SAMPLE_RATE.store(sr, Ordering::Relaxed);
         web_audio_ring().ctrl.sample_rate.store(sr, Ordering::Relaxed);
+        crate::map_log!(
+            3,
+            "[WASM_DEV] Web AudioContext sample rate set to {} Hz",
+            sr
+        );
     }
 
     /// Returns the number of stereo frames currently queued for Web Audio output.
@@ -1218,8 +1434,8 @@ mod wasm_device_bridge {
         obj.into()
     }
 
-    /// Legacy `ScriptProcessorNode` fallback consumer reading from `WasmWebAudioRing` without
-    /// throwing away buffered audio via prebuffering snap-backs.
+    /// Legacy `ScriptProcessorNode` fallback consumer rendering `frames` stereo frames from
+    /// `WasmWebAudioRing` without throwing away buffered audio via prebuffering snap-backs.
     #[wasm_bindgen]
     pub fn wasm_render_web_audio(frames: u32) -> Float32Array {
         let safe_frames = frames.clamp(64, 16384) as usize;
@@ -1242,6 +1458,14 @@ mod wasm_device_bridge {
         Float32Array::from(out.as_slice())
     }
 
+    /// Creates a WebAssembly playback device handle for `sample_rate` Hz and `channels` channels,
+    /// storing `MAP_SUCCESS` into `out_result` (ignoring `_period_size_in_frames` and `_playback_device_id`)
+    /// and binding `rust_user_data`.
+    ///
+    /// # Safety
+    ///
+    /// `out_result` (if non-null) must be aligned and writable, and `rust_user_data` must remain valid
+    /// until [`map_device_destroy`] is called.
     pub unsafe fn map_device_create(
         sample_rate: u32,
         channels: u32,
@@ -1270,9 +1494,23 @@ mod wasm_device_bridge {
             }
         }
 
+        crate::map_log!(
+            3,
+            "[WASM_DEV] Web playback device created (sr={}, ch={})",
+            sr,
+            ch
+        );
         Box::into_raw(Box::new(WasmDeviceHandle::Output(state))) as *mut MapDeviceContext
     }
 
+    /// Creates a WebAssembly capture device handle for `sample_rate` Hz, `channels` channels, and
+    /// `capture_device_id` (ignoring `_period_size_in_frames`), binding `rust_user_data` and writing status
+    /// into `out_result`.
+    ///
+    /// # Safety
+    ///
+    /// `capture_device_id` (if non-null) must be a valid NUL-terminated C string, `out_result` (if non-null)
+    /// must be writable, and `rust_user_data` must remain valid until [`map_device_destroy`].
     pub unsafe fn map_capture_device_create(
         sample_rate: u32,
         channels: u32,
@@ -1283,6 +1521,11 @@ mod wasm_device_bridge {
     ) -> *mut MapDeviceContext {
         let host_sr = HOST_AUDIO_SAMPLE_RATE.load(Ordering::Relaxed).max(8000);
         let Some((slot_idx, generation, ctrl_ptr, data_ptr)) = acquire_capture_slot(host_sr) else {
+            crate::map_log!(
+                1,
+                "[WASM_CAP] Failed to acquire Web capture slot (limit={})",
+                MAX_WEB_CAPTURE_SLOTS
+            );
             if !out_result.is_null() {
                 *out_result = MAP_ERROR_UNSUPPORTED;
             }
@@ -1302,13 +1545,25 @@ mod wasm_device_bridge {
             *out_result = MAP_SUCCESS;
         }
 
+        let sr = sample_rate.clamp(8000, 192000);
+        let ch = channels.clamp(1, 8);
+        crate::map_log!(
+            3,
+            "[WASM_CAP] Web capture device created (slot={}, gen={}, sr={}, ch={}, id={})",
+            slot_idx,
+            generation,
+            sr,
+            ch,
+            req_id
+        );
+
         let state = Arc::new(WasmCaptureState {
             slot_idx,
             generation,
             ctrl_ptr,
             data_ptr,
-            sample_rate: sample_rate.clamp(8000, 192000),
-            channels: channels.clamp(1, 8),
+            sample_rate: sr,
+            channels: ch,
             requested_device_id: req_id,
             user_data_addr: rust_user_data as usize,
             alive: AtomicBool::new(true),
@@ -1325,11 +1580,17 @@ mod wasm_device_bridge {
         Box::into_raw(Box::new(WasmDeviceHandle::Capture(state))) as *mut MapDeviceContext
     }
 
+    /// Starts audio rendering or capture on the WebAssembly device context `ctx`.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be null or a valid pointer returned by [`map_device_create`] or [`map_capture_device_create`].
     pub unsafe fn map_device_start(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
             match &*(ctx as *const WasmDeviceHandle) {
                 WasmDeviceHandle::Output(state) => {
                     state.active.store(true, Ordering::Release);
+                    crate::map_log!(3, "[WASM_DEV] Started Web playback device");
                 }
                 WasmDeviceHandle::Capture(cap) => {
                     cap.failed.store(false, Ordering::Release);
@@ -1339,6 +1600,12 @@ mod wasm_device_bridge {
                             slot.ctrl.active.store(1, Ordering::Release);
                         }
                     });
+                    crate::map_log!(
+                        3,
+                        "[WASM_CAP] Started Web capture device (slot={}, gen={})",
+                        cap.slot_idx,
+                        cap.generation
+                    );
                     dispatch_start_capture_cmd(cap);
                 }
             }
@@ -1346,11 +1613,17 @@ mod wasm_device_bridge {
         MAP_SUCCESS
     }
 
+    /// Stops audio rendering or capture on the WebAssembly device context `ctx`.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be null or a valid pointer returned by [`map_device_create`] or [`map_capture_device_create`].
     pub unsafe fn map_device_stop(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
             match &*(ctx as *const WasmDeviceHandle) {
                 WasmDeviceHandle::Output(state) => {
                     state.active.store(false, Ordering::Release);
+                    crate::map_log!(3, "[WASM_DEV] Stopped Web playback device");
                 }
                 WasmDeviceHandle::Capture(cap) => {
                     cap.active.store(false, Ordering::Release);
@@ -1359,6 +1632,12 @@ mod wasm_device_bridge {
                             slot.ctrl.active.store(0, Ordering::Release);
                         }
                     });
+                    crate::map_log!(
+                        3,
+                        "[WASM_CAP] Stopped Web capture device (slot={}, gen={})",
+                        cap.slot_idx,
+                        cap.generation
+                    );
                     dispatch_stop_capture_cmd(cap.slot_idx, cap.generation);
                 }
             }
@@ -1366,11 +1645,18 @@ mod wasm_device_bridge {
         MAP_SUCCESS
     }
 
+    /// Destroys the WebAssembly device context `ctx`, releasing its slot and unregistering it.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must be null or a valid pointer returned by [`map_device_create`] or
+    /// [`map_capture_device_create`] and must not be dereferenced again afterwards.
     pub unsafe fn map_device_destroy(ctx: *mut MapDeviceContext) -> i32 {
         if !ctx.is_null() {
             let handle = Box::from_raw(ctx as *mut WasmDeviceHandle);
             match *handle {
                 WasmDeviceHandle::Output(state) => {
+                    crate::map_log!(3, "[WASM_DEV] Destroying Web playback device");
                     if let Ok(mut devs) = devices_registry().lock() {
                         state.active.store(false, Ordering::Release);
                         state.alive.store(false, Ordering::Release);
@@ -1381,6 +1667,12 @@ mod wasm_device_bridge {
                     }
                 }
                 WasmDeviceHandle::Capture(cap) => {
+                    crate::map_log!(
+                        3,
+                        "[WASM_CAP] Destroying Web capture device (slot={}, gen={})",
+                        cap.slot_idx,
+                        cap.generation
+                    );
                     cap.active.store(false, Ordering::Release);
                     cap.alive.store(false, Ordering::Release);
                     let _ = with_capture_slot(cap.slot_idx, |slot| {
@@ -1400,7 +1692,7 @@ mod wasm_device_bridge {
         MAP_SUCCESS
     }
 
-    /// Polls up to `max_frames` of encoded PCM bytes into caller-owned `dst` without heap allocations.
+    /// Polls up to `max_frames` of encoded PCM bytes from `tap_id` into caller-owned `dst` without heap allocations.
     #[wasm_bindgen]
     pub fn wasm_poll_audio_tap_bytes(
         tap_id: u32,
@@ -1427,7 +1719,7 @@ mod wasm_device_bridge {
             .unwrap_or(0)
     }
 
-    /// Returns cumulative dropped frames observed by a Pull tap handle as an exact JS number (`<= 2^53`).
+    /// Returns cumulative dropped frames observed by Pull tap `tap_id` as an exact JS number (`<= 2^53`).
     #[wasm_bindgen]
     pub fn wasm_get_audio_tap_dropped_frames(tap_id: u32) -> f64 {
         crate::core::tap::lookup_pull_tap_nonblocking(tap_id)
@@ -1435,9 +1727,10 @@ mod wasm_device_bridge {
             .unwrap_or(0.0)
     }
 
-    /// Closes a Pull audio tap handle safely from Web JS (`try_read`/`try_write`, zero `Atomics.wait`).
+    /// Closes Pull audio tap `tap_id` safely from Web JS (`try_read`/`try_write`, zero `Atomics.wait`).
     #[wasm_bindgen]
     pub fn wasm_close_pull_audio_tap(tap_id: u32) {
+        crate::map_log!(4, "[WASM_TAP] Closing pull audio tap id={}", tap_id);
         crate::core::tap::close_global_pull_tap(tap_id);
     }
 }
@@ -1454,7 +1747,13 @@ pub struct PcmCaptureHeader {
     pub notif_fn: unsafe extern "C" fn(ptr: *mut c_void, notif: i32),
 }
 
-/// Global C trampoline called by miniaudio to pull rendered audio frames from Rust.
+/// Global C trampoline called by miniaudio to pull `frame_count` rendered audio frames into
+/// `output_frames` using `user_data`.
+///
+/// # Safety
+///
+/// `user_data` must point to a valid [`crate::core::renderer::PcmRendererHeader`], and
+/// `output_frames` must be writable for `frame_count * channels` floats.
 #[no_mangle]
 pub unsafe extern "C" fn rust_render_pcm_frames(
     user_data: *mut c_void,
@@ -1467,7 +1766,13 @@ pub unsafe extern "C" fn rust_render_pcm_frames(
     }
 }
 
-/// Global C trampoline called by miniaudio to deliver captured microphone frames to Rust.
+/// Global C trampoline called by miniaudio to deliver `frame_count` captured microphone frames from
+/// `input_frames` to Rust using `user_data`.
+///
+/// # Safety
+///
+/// `user_data` must point to a valid [`PcmCaptureHeader`], and `input_frames` must be readable
+/// for `frame_count * channels` floats.
 #[no_mangle]
 pub unsafe extern "C" fn rust_capture_pcm_frames(
     user_data: *mut c_void,
@@ -1480,7 +1785,12 @@ pub unsafe extern "C" fn rust_capture_pcm_frames(
     }
 }
 
-/// Global C trampoline notifying Rust when audio device state changes.
+/// Global C trampoline notifying Rust with `notification_type` when audio device state changes
+/// for `user_data`.
+///
+/// # Safety
+///
+/// `user_data` (if non-null) must point to a valid [`crate::core::renderer::PcmRendererHeader`].
 #[no_mangle]
 pub unsafe extern "C" fn rust_on_device_notification(
     user_data: *mut c_void,
@@ -1497,6 +1807,10 @@ pub unsafe extern "C" fn rust_on_device_notification(
 // =========================================================================
 
 /// Safely queries all playback and capture audio devices from the OS in a single pass.
+///
+/// # Errors
+///
+/// Returns the native `MAP_ERROR_*` code if device enumeration fails.
 pub fn safe_enumerate_all_devices() -> Result<(Vec<MapDeviceInfo>, Vec<MapDeviceInfo>), i32> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1507,6 +1821,11 @@ pub fn safe_enumerate_all_devices() -> Result<(Vec<MapDeviceInfo>, Vec<MapDevice
         let mut all = MapAllDevices::default();
         let res = unsafe { map_device_enumerate_all(&mut all) };
         if res != 0 {
+            crate::map_log!(
+                2,
+                "[FFI_DEV] map_device_enumerate_all failed with code {}",
+                res
+            );
             return Err(res);
         }
 
@@ -1529,11 +1848,21 @@ pub fn safe_enumerate_all_devices() -> Result<(Vec<MapDeviceInfo>, Vec<MapDevice
         };
 
         unsafe { map_device_free_all(&mut all) };
+        crate::map_log!(
+            5,
+            "[FFI_DEV] Enumerated {} playback and {} capture device(s)",
+            playback.len(),
+            capture.len()
+        );
         Ok((playback, capture))
     }
 }
 
 /// Safely queries all playback output devices.
+///
+/// # Errors
+///
+/// Returns the native `MAP_ERROR_*` code if playback enumeration fails.
 pub fn safe_enumerate_playback_devices() -> Result<Vec<MapDeviceInfo>, i32> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1545,6 +1874,11 @@ pub fn safe_enumerate_playback_devices() -> Result<Vec<MapDeviceInfo>, i32> {
         let mut ptr = std::ptr::null_mut();
         let res = unsafe { map_device_enumerate_devices(&mut ptr, &mut count) };
         if res != 0 {
+            crate::map_log!(
+                2,
+                "[FFI_DEV] map_device_enumerate_devices failed with code {}",
+                res
+            );
             return Err(res);
         }
         let devs = if !ptr.is_null() && count > 0 {
@@ -1556,11 +1890,20 @@ pub fn safe_enumerate_playback_devices() -> Result<Vec<MapDeviceInfo>, i32> {
         if !ptr.is_null() {
             unsafe { map_device_free_devices(ptr) };
         }
+        crate::map_log!(
+            5,
+            "[FFI_DEV] Enumerated {} playback device(s)",
+            devs.len()
+        );
         Ok(devs)
     }
 }
 
 /// Safely queries all capture input devices.
+///
+/// # Errors
+///
+/// Returns the native `MAP_ERROR_*` code if capture enumeration fails.
 pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1572,6 +1915,11 @@ pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
         let mut ptr = std::ptr::null_mut();
         let res = unsafe { map_device_enumerate_capture_devices(&mut ptr, &mut count) };
         if res != 0 {
+            crate::map_log!(
+                2,
+                "[FFI_DEV] map_device_enumerate_capture_devices failed with code {}",
+                res
+            );
             return Err(res);
         }
         let devs = if !ptr.is_null() && count > 0 {
@@ -1583,6 +1931,11 @@ pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
         if !ptr.is_null() {
             unsafe { map_device_free_devices(ptr) };
         }
+        crate::map_log!(
+            5,
+            "[FFI_DEV] Enumerated {} capture device(s)",
+            devs.len()
+        );
         Ok(devs)
     }
 }
@@ -1592,36 +1945,44 @@ pub fn safe_enumerate_capture_devices() -> Result<Vec<MapDeviceInfo>, i32> {
 // =============================================================================
 
 /// Native 8-byte aligned pinned byte buffer backing zero-allocation Pull audio tap reads in Dart FFI.
-#[repr(C)]
 pub struct MapTapBuffer {
+    /// 8-byte aligned heap backing storage exposed via [`map_tap_buffer_data_ptr`].
     words: Box<[u64]>,
-    byte_len: usize,
 }
 
 /// Allocates a zeroed pinned buffer of at least `byte_len` bytes on the C/Rust heap (8-byte aligned).
+///
+/// # Safety
+///
+/// The returned opaque handle must eventually be freed via [`map_tap_free_buffer`] or the
+/// [`map_tap_free_buffer_callback`] finalizer.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_alloc_buffer(byte_len: usize) -> *mut c_void {
     let clamped = byte_len.max(1);
     let word_count = (clamped + 7) / 8;
     let words = vec![0u64; word_count].into_boxed_slice();
-    Box::into_raw(Box::new(MapTapBuffer {
-        words,
-        byte_len: clamped,
-    })) as *mut c_void
+    Box::into_raw(Box::new(MapTapBuffer { words })) as *mut c_void
 }
 
-/// Returns the writable 8-byte aligned raw byte pointer inside a [`MapTapBuffer`] handle.
+/// Returns the writable 8-byte aligned raw byte pointer inside a [`MapTapBuffer`] handle `buf`.
+///
+/// # Safety
+///
+/// `buf` must be null or a valid pointer returned by [`map_tap_alloc_buffer`].
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_buffer_data_ptr(buf: *mut c_void) -> *mut u8 {
     if buf.is_null() {
         return std::ptr::null_mut();
     }
     let inner = &mut *(buf as *mut MapTapBuffer);
-    let _ = inner.byte_len;
     inner.words.as_mut_ptr() as *mut u8
 }
 
-/// Frees a [`MapTapBuffer`] allocated by [`map_tap_alloc_buffer`].
+/// Frees a [`MapTapBuffer`] `buf` allocated by [`map_tap_alloc_buffer`].
+///
+/// # Safety
+///
+/// `buf` must be null or a valid pointer returned by [`map_tap_alloc_buffer`] and not used afterwards.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_free_buffer(buf: *mut c_void) {
     if !buf.is_null() {
@@ -1630,12 +1991,21 @@ pub unsafe extern "C" fn map_tap_free_buffer(buf: *mut c_void) {
 }
 
 /// Returns the C finalizer function pointer for `dart:ffi` `NativeFinalizer`.
+///
+/// # Safety
+///
+/// The returned function pointer expects a single `*mut c_void` [`MapTapBuffer`] handle.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_free_buffer_callback() -> *mut c_void {
     map_tap_free_buffer as *const () as *mut c_void
 }
 
-/// Polls up to `max_frames` into `dst[..byte_len]` directly from the RT/fan-out ring (0 heap allocs).
+/// Polls up to `max_frames` from Pull tap `tap_id` into `dst[..byte_len]` directly from the RT/fan-out
+/// ring (0 heap allocs), writing cumulative dropped frames into `out_dropped` when non-null.
+///
+/// # Safety
+///
+/// If non-null, `dst` must be writable for `byte_len` bytes and `out_dropped` must be aligned and writable.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_poll_bytes(
     tap_id: u32,
@@ -1664,7 +2034,11 @@ pub unsafe extern "C" fn map_tap_poll_bytes(
     frames
 }
 
-/// Queries cumulative dropped frames for a Pull tap handle.
+/// Queries cumulative dropped frames for Pull tap `tap_id`.
+///
+/// # Safety
+///
+/// Safe to call with any `tap_id`; returns `0` if the tap does not exist.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_get_dropped(tap_id: u32) -> u64 {
     crate::core::tap::lookup_pull_tap_nonblocking(tap_id)
@@ -1672,20 +2046,38 @@ pub unsafe extern "C" fn map_tap_get_dropped(tap_id: u32) -> u64 {
         .unwrap_or(0)
 }
 
-/// Explicitly closes a Pull audio tap handle from Native Dart FFI.
+/// Explicitly closes Pull audio tap `tap_id` from Native Dart FFI.
+///
+/// # Safety
+///
+/// Safe to call with any `tap_id`; closing an already-closed tap is a no-op.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_close_pull(tap_id: u32) {
+    crate::map_log!(4, "[TAP_FFI] Closing pull audio tap id={}", tap_id);
     crate::core::tap::close_global_pull_tap(tap_id);
 }
 
-/// GC `NativeFinalizer` callback taking the Pull `tap_id` encoded as `Pointer.fromAddress(tapId)`.
+/// GC `NativeFinalizer` callback taking the Pull `tap_id` encoded inside `token` as `Pointer.fromAddress(tapId)`.
+///
+/// # Safety
+///
+/// `token` must encode a `u32` Pull tap identifier via pointer address provenance.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_close_pull_token(token: *mut c_void) {
     let tap_id = token as usize as u32;
+    crate::map_log!(
+        4,
+        "[TAP_FFI] Finalizer closing pull audio tap id={}",
+        tap_id
+    );
     crate::core::tap::close_global_pull_tap(tap_id);
 }
 
 /// Returns the `NativeFinalizer` callback address for automatic Pull handle cleanup.
+///
+/// # Safety
+///
+/// The returned function pointer expects a single `*mut c_void` token encoding a `tap_id`.
 #[no_mangle]
 pub unsafe extern "C" fn map_tap_close_pull_callback() -> *mut c_void {
     map_tap_close_pull_token as *const () as *mut c_void

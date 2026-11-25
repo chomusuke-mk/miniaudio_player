@@ -5,120 +5,230 @@ part of 'miniaudio_player.dart';
 /// In strict accordance with the stream-driven architecture, events originate from the native
 /// Rust event pipeline and are dispatched to UI observers without artificial intermediate filtering.
 class PlayerStream<T> {
+  /// Broadcast controller for [position].
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
+
+  /// Broadcast controller for [duration].
   final StreamController<Duration?> _durationController =
       StreamController<Duration?>.broadcast();
+
+  /// Broadcast controller for [audioInfo].
   final StreamController<AudioInfo?> _audioInfoController =
       StreamController<AudioInfo?>.broadcast();
+
+  /// Broadcast controller for [isPlaying].
   final StreamController<bool> _playingController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [isBuffering].
   final StreamController<bool> _bufferingController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [playbackState].
   final StreamController<PlaybackState> _playbackStateController =
       StreamController<PlaybackState>.broadcast();
+
+  /// Broadcast controller for [buffer].
   final StreamController<Buffer> _bufferController =
       StreamController<Buffer>.broadcast();
+
+  /// Broadcast controller for [metadata].
   final StreamController<AudioMetadata?> _metadataController =
       StreamController<AudioMetadata?>.broadcast();
+
+  /// Broadcast controller for [metadataEnabled].
   final StreamController<bool> _metadataEnabledController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [volume].
   final StreamController<double> _volumeController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [rate].
   final StreamController<double> _rateController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [pitch].
   final StreamController<double> _pitchController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [balance].
   final StreamController<double> _balanceController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [mono].
   final StreamController<bool> _monoController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [bufferSize].
   final StreamController<int> _bufferSizeController =
       StreamController<int>.broadcast();
+
+  /// Broadcast controller for [equalizer].
   final StreamController<Equalizer> _equalizerController =
       StreamController<Equalizer>.broadcast();
+
+  /// Broadcast controller for [outputs].
   final StreamController<Set<AudioOutput>> _outputsController =
       StreamController<Set<AudioOutput>>.broadcast();
+
+  /// Broadcast controller for [inputs].
   final StreamController<Set<AudioInput>> _inputsController =
       StreamController<Set<AudioInput>>.broadcast();
+
+  /// Broadcast controller for [globalOutputDevices].
   final StreamController<List<AudioDevice>> _globalOutputDevicesController =
       StreamController<List<AudioDevice>>.broadcast();
+
+  /// Broadcast controller for [globalInputDevices].
   final StreamController<List<AudioDevice>> _globalInputDevicesController =
       StreamController<List<AudioDevice>>.broadcast();
+
+  /// Broadcast controller for [pauseOnDeviceChange].
   final StreamController<bool> _pauseOnDeviceChangeController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [skipSilence].
   final StreamController<bool> _skipSilenceController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [silenceConfig].
   final StreamController<SilenceSkipConfig> _silenceConfigController =
       StreamController<SilenceSkipConfig>.broadcast();
+
+  /// Broadcast controller for [silenceSavedDuration].
   final StreamController<Duration> _silenceSavedDurationController =
       StreamController<Duration>.broadcast();
+
+  /// Broadcast controller for [visualizer].
   final StreamController<VisualizerData> _visualizerController =
       StreamController<VisualizerData>.broadcast();
+
+  /// Broadcast controller for [visualizerEnabled].
   final StreamController<bool> _visualizerEnabledController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [visualizerSource].
   final StreamController<AudioOutputSource> _visualizerSourceController =
       StreamController<AudioOutputSource>.broadcast();
+
+  /// Broadcast controller for [preamp].
   final StreamController<double> _preampController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [replayGain].
   final StreamController<ReplayGainConfig> _replayGainController =
       StreamController<ReplayGainConfig>.broadcast();
+
+  /// Broadcast controller for [replayGainMode].
   final StreamController<ReplayGainMode> _replayGainModeController =
       StreamController<ReplayGainMode>.broadcast();
+
+  /// Broadcast controller for [defaultReplayGain].
   final StreamController<double> _defaultReplayGainController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [crossfeed].
   final StreamController<Crossfeed> _crossfeedController =
       StreamController<Crossfeed>.broadcast();
+
+  /// Broadcast controller for [spatializerEnabled].
   final StreamController<bool> _spatializerEnabledController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [spatializerWidth].
   final StreamController<double> _spatializerWidthController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [reverb].
   final StreamController<Reverb> _reverbController =
       StreamController<Reverb>.broadcast();
+
+  /// Broadcast controller for [limiterEnabled].
   final StreamController<bool> _limiterEnabledController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [queue].
   final StreamController<List<AudioSource<T>>> _queueController =
       StreamController<List<AudioSource<T>>>.broadcast();
+
+  /// Broadcast controller for [currentIndex].
   final StreamController<int?> _currentIndexController =
       StreamController<int?>.broadcast();
+
+  /// Broadcast controller for [currentItem].
   final StreamController<AudioSource<T>?> _currentItemController =
       StreamController<AudioSource<T>?>.broadcast();
+
+  /// Broadcast controller for [loopMode].
   final StreamController<LoopMode> _loopModeController =
       StreamController<LoopMode>.broadcast();
+
+  /// Broadcast controller for [isShuffled].
   final StreamController<bool> _isShuffledController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [infiniteMix].
   final StreamController<InfiniteMixConfig> _infiniteMixController =
       StreamController<InfiniteMixConfig>.broadcast();
+
+  /// Broadcast controller for [infiniteMixEnabled].
   final StreamController<bool> _infiniteMixEnabledController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [isCrossfading].
   final StreamController<bool> _isCrossfadingController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [crossfadeConfig].
   final StreamController<CrossfadeConfig> _crossfadeConfigController =
       StreamController<CrossfadeConfig>.broadcast();
+
+  /// Broadcast controller for [isRecording].
   final StreamController<bool> _isRecordingController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [recordingSource].
   final StreamController<AudioOutputSource?> _recordingSourceController =
       StreamController<AudioOutputSource?>.broadcast();
+
+  /// Broadcast controller for [recordedDuration].
   final StreamController<Duration> _recordedDurationController =
       StreamController<Duration>.broadcast();
+
+  /// Broadcast controller for [isDuckingActive].
   final StreamController<bool> _isDuckingActiveController =
       StreamController<bool>.broadcast();
+
+  /// Broadcast controller for [micRmsLevel].
   final StreamController<double> _micRmsLevelController =
       StreamController<double>.broadcast();
+
+  /// Broadcast controller for [voiceCompleted].
   final StreamController<int> _voiceCompletedController =
       StreamController<int>.broadcast();
+
+  /// Broadcast controller for [activeVoicesCount].
   final StreamController<int> _activeVoicesCountController =
       StreamController<int>.broadcast();
+
+  /// Broadcast controller for [allocatedRamBytes].
   final StreamController<int> _allocatedRamBytesController =
       StreamController<int>.broadcast();
+
+  /// Broadcast controller for [loadedEffectIds].
   final StreamController<List<String>> _loadedEffectIdsController =
       StreamController<List<String>>.broadcast();
+
+  /// Broadcast controller for [errors].
   final StreamController<MiniaudioPlayerException> _errorsController =
       StreamController<MiniaudioPlayerException>.broadcast();
 
+  /// Optional owning player used to seed immediate-replay streams.
   final MiniaudioPlayer<T>? _player;
 
-  /// Creates a [PlayerStream] container with broadcast stream controllers.
+  /// Creates a [PlayerStream] container with broadcast stream controllers for [_player].
   PlayerStream([this._player]);
 
   /// Broadcast stream emitting the playback position within the active track.
@@ -173,14 +283,14 @@ class PlayerStream<T> {
 
   /// Reactive broadcast stream emitting this player's active output destinations.
   ///
-  /// Note: When both `'AUTO'` and a matching physical device ID are active simultaneously,
+  /// When both `'AUTO'` and a matching physical device ID are active simultaneously,
   /// the native Rust audio engine deduplicates the hardware endpoint (prioritizing `'AUTO'`),
   /// while this stream continues to emit the full declared set configured by the user.
   Stream<Set<AudioOutput>> get outputs => _outputsController.stream;
 
   /// Reactive broadcast stream emitting this player's active input sources.
   ///
-  /// Note: When both `'AUTO'` and a matching physical capture device ID are active simultaneously,
+  /// When both `'AUTO'` and a matching physical capture device ID are active simultaneously,
   /// the native Rust audio engine deduplicates the hardware endpoint (prioritizing `'AUTO'`),
   /// while this stream continues to emit the full declared set configured by the user.
   Stream<Set<AudioInput>> get inputs => _inputsController.stream;
@@ -203,6 +313,8 @@ class PlayerStream<T> {
         () => _player?.state.globalInputDevices ?? const [],
       );
 
+  /// Returns a broadcast stream that emits the snapshot from [currentGetter]
+  /// immediately on subscription before forwarding events from [source].
   Stream<R> _createImmediateReplayStream<R>(
     Stream<R> source,
     R Function() currentGetter,
@@ -234,10 +346,8 @@ class PlayerStream<T> {
 
   /// Reactive broadcast stream emitting real-time 10-band FFT spectrum visualizer metrics.
   ///
-  /// Note: In Dart, this stream is always open and ready for listeners, but for events
-  /// to actually be computed and emitted here, the visualizer must be activated by setting
-  /// [visualizerEnabled] to `true` (via `player.action.setVisualizerEnabled(true)`).
-  /// By default, [visualizerEnabled] is `false`.
+  /// This stream is always open for listeners, but events are only computed and emitted
+  /// when [visualizerEnabled] is set to `true` via [PlayerAction.setVisualizerEnabled].
   Stream<VisualizerData> get visualizer => _visualizerController.stream;
 
   /// Reactive broadcast stream emitting updates whenever the visualizer DSP calculation is enabled or disabled.
@@ -336,6 +446,7 @@ class PlayerStream<T> {
 
   /// Closes all internal broadcast stream controllers.
   Future<void> dispose() async {
+    MapLogger.debug('[PlayerStream] Disposing broadcast stream controllers.');
     await Future.wait([
       _positionController.close(),
       _durationController.close(),

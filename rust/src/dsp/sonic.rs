@@ -24,9 +24,12 @@ pub const SONIC_MIN_PITCH_SETTING: f32 = 0.05;
 /// Maximum pitch scale setting (20.0x).
 pub const SONIC_MAX_PITCH_SETTING: f32 = 20.0;
 
+/// Number of sinc filter taps used during pitch-rate interpolation.
 const SINC_FILTER_POINTS: usize = 12;
+/// Number of entries in the precomputed Q15 windowed sinc interpolation table.
 const SINC_TABLE_SIZE: usize = 601;
 
+/// Precomputed Q15 windowed sinc impulse response table for `SINC_FILTER_POINTS`-tap interpolation.
 static SINC_TABLE_I16: [i16; SINC_TABLE_SIZE] = [
     0, 0, 0, 0, 0, 0, 0, -1, -1, -2, -2, -3, -4, -6, -7, -9, -10, -12, -14, -17, -19, -21, -24,
     -26, -29, -32, -34, -37, -40, -42, -44, -47, -48, -50, -51, -52, -53, -53, -53, -52, -50, -48,
@@ -73,38 +76,59 @@ static SINC_TABLE_I16: [i16; SINC_TABLE_SIZE] = [
 /// Implements PICOLA / WSOLA (Waveform Similarity Overlap-Add) with equal-power
 /// crossfading and sinc-interpolated resampling.
 pub struct SonicStream {
+    /// Interleaved staging buffer for incoming audio frames.
     input_buffer: Vec<f32>,
+    /// Interleaved staging buffer for processed output frames ready to be read.
     output_buffer: Vec<f32>,
+    /// Intermediate interleaved buffer holding speed-adjusted frames prior to pitch resampling.
     pitch_buffer: Vec<f32>,
+    /// Mono downsampled scratch buffer used for two-stage AMDF pitch period estimation.
     down_sample_buffer: Vec<f32>,
 
+    /// Target time-stretch speed multiplier (`SONIC_MIN_SPEED..=SONIC_MAX_SPEED`).
     speed: f32,
+    /// Target pitch scale multiplier (`SONIC_MIN_PITCH_SETTING..=SONIC_MAX_PITCH_SETTING`).
     pitch: f32,
 
+    /// Input frame phase counter for rational pitch-rate resampling.
     old_rate_position: usize,
+    /// Output frame phase counter for rational pitch-rate resampling.
     new_rate_position: usize,
 
+    /// Number of interleaved audio channels (`1..=8`).
     num_channels: usize,
+    /// Operating sample rate in Hz (`8000..=192000`).
     sample_rate: usize,
+    /// Duration of a single audio frame in seconds (`1.0 / sample_rate`).
     sample_period: f64,
 
+    /// Minimum searchable pitch period in frames at `sample_rate`.
     min_period: usize,
+    /// Maximum searchable pitch period in frames at `sample_rate`.
     max_period: usize,
+    /// Minimum buffered input frames (`2 * max_period`) required before WSOLA processing.
     max_required: usize,
 
+    /// Pitch period detected in the previous WSOLA step (used for continuity hysteresis).
     prev_period: usize,
+    /// Normalized AMDF minimum difference observed for `prev_period`.
     prev_min_diff: usize,
 
+    /// Number of valid frames currently stored in `input_buffer`.
     num_input_samples: usize,
+    /// Number of valid frames currently stored in `output_buffer`.
     num_output_samples: usize,
+    /// Number of valid frames currently stored in `pitch_buffer`.
     num_pitch_samples: usize,
 
+    /// Expected play duration in seconds of the frames currently queued in `input_buffer`.
     input_play_time: f64,
+    /// Accumulated fractional timing error in seconds used to keep non-2x speed ratios drift-free.
     time_error: f64,
 }
 
 impl SonicStream {
-    /// Creates a new `SonicStream` configured for the specified sample rate and channel count.
+    /// Creates a new `SonicStream` configured for `sample_rate` and `num_channels`.
     pub fn new(sample_rate: u32, num_channels: usize) -> Self {
         let sr = (sample_rate as usize).clamp(8000, 192000);
         let ch = num_channels.clamp(1, 8);
@@ -147,12 +171,12 @@ impl SonicStream {
         }
     }
 
-    /// Sets the playback speed ratio (e.g. 1.0 = normal, 1.5 = 50% faster without pitch shift).
+    /// Sets the playback `speed` ratio (e.g. 1.0 = normal, 1.5 = 50% faster without pitch shift).
     pub fn set_speed(&mut self, speed: f32) {
         self.speed = speed.clamp(SONIC_MIN_SPEED, SONIC_MAX_SPEED);
     }
 
-    /// Sets the pitch scale factor (e.g. 1.0 = normal, 2.0 = one octave up).
+    /// Sets the `pitch` scale factor (e.g. 1.0 = normal, 2.0 = one octave up).
     pub fn set_pitch(&mut self, pitch: f32) {
         self.pitch = pitch.clamp(SONIC_MIN_PITCH_SETTING, SONIC_MAX_PITCH_SETTING);
     }
@@ -162,7 +186,7 @@ impl SonicStream {
         self.num_output_samples
     }
 
-    /// Writes interleaved float samples to the input buffer and processes them.
+    /// Writes interleaved float `samples` to the input buffer and processes them.
     pub fn write_float(&mut self, samples: &[f32]) -> bool {
         if samples.is_empty() {
             return true;
@@ -236,6 +260,7 @@ impl SonicStream {
     // Internal Core Engine
     // ------------------------------------------------------------------------
 
+    /// Ensures `input_buffer` can hold at least `num_frames` additional frames beyond `num_input_samples`.
     fn enlarge_input_buffer(&mut self, num_frames: usize) {
         let required = (self.num_input_samples + num_frames) * self.num_channels;
         if required > self.input_buffer.len() {
@@ -246,6 +271,7 @@ impl SonicStream {
         }
     }
 
+    /// Ensures `output_buffer` can hold at least `num_frames` additional frames beyond `num_output_samples`.
     fn enlarge_output_buffer(&mut self, num_frames: usize) {
         let required = (self.num_output_samples + num_frames) * self.num_channels;
         if required > self.output_buffer.len() {
@@ -256,6 +282,7 @@ impl SonicStream {
         }
     }
 
+    /// Ensures `pitch_buffer` can hold at least `num_frames` additional frames beyond `num_pitch_samples`.
     fn enlarge_pitch_buffer(&mut self, num_frames: usize) {
         let required = (self.num_pitch_samples + num_frames) * self.num_channels;
         if required > self.pitch_buffer.len() {
@@ -266,12 +293,14 @@ impl SonicStream {
         }
     }
 
+    /// Advances `num_input_samples` and `input_play_time` by `num_frames` at the active `speed / pitch` ratio.
     fn update_num_input_samples(&mut self, num_frames: usize) {
         let speed = (self.speed / self.pitch) as f64;
         self.num_input_samples += num_frames;
         self.input_play_time += (num_frames as f64 * self.sample_period) / speed;
     }
 
+    /// Runs the speed-change (PICOLA/WSOLA) and pitch-resampling stages over queued input samples.
     fn process_stream_input(&mut self) -> bool {
         let orig_output = self.num_output_samples;
         let rate = self.pitch;
@@ -304,6 +333,7 @@ impl SonicStream {
         true
     }
 
+    /// Copies `num_frames` directly from `input_buffer` to `output_buffer` when speed is unity.
     fn copy_input_to_output(&mut self, num_frames: usize) {
         self.enlarge_output_buffer(num_frames);
         let ch = self.num_channels;
@@ -314,6 +344,7 @@ impl SonicStream {
         self.remove_input_samples(num_frames);
     }
 
+    /// Shifts remaining unread input frames down to index 0 after consuming `position` frames.
     fn remove_input_samples(&mut self, position: usize) {
         let remaining = self.num_input_samples.saturating_sub(position);
         let ch = self.num_channels;
@@ -328,6 +359,7 @@ impl SonicStream {
         self.num_input_samples = remaining;
     }
 
+    /// Applies WSOLA time-stretching across `input_buffer` to achieve `speed` without changing pitch.
     fn change_speed(&mut self, speed: f32) {
         let num_samples = self.num_input_samples;
         let max_req = self.max_required;
@@ -375,6 +407,8 @@ impl SonicStream {
         self.remove_input_samples(position);
     }
 
+    /// Copies unmodified frames starting at `position` to compensate accumulated `time_error` at `speed`,
+    /// returning the number of frames copied.
     fn copy_unmodified_samples(&mut self, speed: f32, position: usize) -> isize {
         let available = self.num_input_samples - position;
         let input_to_copy =
@@ -405,6 +439,8 @@ impl SonicStream {
         new_samples as isize
     }
 
+    /// Skips one `period` at `position` via overlap-add to accelerate playback at `speed > 1.0`,
+    /// returning the number of output frames written.
     fn skip_pitch_period(&mut self, position: usize, speed: f32, period: usize) -> usize {
         let new_samples = if speed >= 2.0 {
             (period as f32 / (speed - 1.0)) as usize
@@ -430,6 +466,8 @@ impl SonicStream {
         new_samples
     }
 
+    /// Duplicates one `period` at `position` via overlap-add to slow down playback at `speed < 1.0`,
+    /// returning the number of inserted frames.
     fn insert_pitch_period(&mut self, position: usize, speed: f32, period: usize) -> usize {
         let new_samples = if speed <= 0.5 {
             ((period as f32 * speed) / (1.0 - speed)) as usize
@@ -463,6 +501,8 @@ impl SonicStream {
         new_samples
     }
 
+    /// Equal-power cosine/sine crossfade mixing `ramp_down` and `ramp_up` into `out`
+    /// over `num_samples` frames and `num_channels` channels.
     fn overlap_add(
         num_samples: usize,
         num_channels: usize,
@@ -487,6 +527,8 @@ impl SonicStream {
         }
     }
 
+    /// Estimates the fundamental pitch period at `position` using downsampled AMDF search
+    /// followed by full-rate refinement, honoring `prefer_new_period` hysteresis.
     fn find_pitch_period(&mut self, position: usize, prefer_new_period: bool) -> usize {
         let min_period = self.min_period;
         let max_period = self.max_period;
@@ -539,6 +581,8 @@ impl SonicStream {
         ret_period
     }
 
+    /// Mixes channels to mono and decimates `input_buffer` from `position` by factor `skip`
+    /// into `down_sample_buffer`.
     fn down_sample_input(&mut self, position: usize, skip: usize) {
         let num_samples = self.max_required / skip;
         let samples_per_val = self.num_channels * skip;
@@ -554,6 +598,8 @@ impl SonicStream {
         }
     }
 
+    /// Searches `samples` over `min_period..=max_period` using Average Magnitude Difference Function (AMDF),
+    /// returning `(best_period, normalized_min_diff, normalized_max_diff)`.
     fn find_pitch_period_in_range(
         samples: &[f32],
         min_period: usize,
@@ -587,6 +633,8 @@ impl SonicStream {
         (best_period, ret_min, ret_max)
     }
 
+    /// Returns `true` if `prev_period` remains a better match than the candidate with `min_diff` and `max_diff`,
+    /// taking `prefer_new` voice-onset hysteresis into account.
     fn prev_period_better(&self, min_diff: usize, max_diff: usize, prefer_new: bool) -> bool {
         if min_diff == 0 || self.prev_period == 0 {
             return false;
@@ -604,6 +652,7 @@ impl SonicStream {
         true
     }
 
+    /// Resamples newly emitted frames from `orig_output` onward by `rate` using windowed sinc interpolation.
     fn adjust_rate(&mut self, rate: f32, orig_output: usize) {
         if (rate - 1.0).abs() < 1e-4 || rate <= 0.01 {
             return;
@@ -655,6 +704,7 @@ impl SonicStream {
         self.remove_pitch_samples(position);
     }
 
+    /// Moves frames written past `orig_output` from `output_buffer` into `pitch_buffer` for resampling.
     fn move_new_samples_to_pitch_buffer(&mut self, orig_output: usize) {
         let num_samples = self.num_output_samples - orig_output;
         if num_samples == 0 {
@@ -672,6 +722,7 @@ impl SonicStream {
         self.num_pitch_samples += num_samples;
     }
 
+    /// Shifts remaining unread frames in `pitch_buffer` down by `num_samples` frames.
     fn remove_pitch_samples(&mut self, num_samples: usize) {
         if num_samples == 0 {
             return;
@@ -685,6 +736,8 @@ impl SonicStream {
         self.num_pitch_samples -= num_samples;
     }
 
+    /// Evaluates the 12-tap windowed sinc interpolation at `in_offset` in `pitch_buffer`
+    /// for rational rate ratio `old_srate / new_srate`.
     fn interpolate(&self, in_offset: usize, old_srate: usize, new_srate: usize) -> f32 {
         let ch = self.num_channels;
         let position = self.new_rate_position * old_srate;
@@ -708,6 +761,7 @@ impl SonicStream {
         total
     }
 
+    /// Linearly interpolates the sinc kernel coefficient for tap `i` at fractional offset `ratio / width`.
     fn find_sinc_coeff(i: usize, ratio: usize, width: usize) -> f32 {
         if width == 0 {
             return 0.0;

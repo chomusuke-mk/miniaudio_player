@@ -16,44 +16,68 @@ pub const OPFS_CTRL_WORDS: usize = 12;
 /// Maximum OPFS filename segment size in UTF-8 bytes.
 pub const OPFS_MAX_SEGMENT_UTF8_BYTES: usize = 255;
 
+/// Control word index holding the RPC slot lifecycle state (`STATE_*`).
 pub const CTRL_STATE: usize = 0;
+/// Control word index holding the requested RPC opcode (`OP_*`).
 pub const CTRL_OP: usize = 1;
+/// Control word index holding the resulting status code (`0` on success, negative `MAP_ERROR_*` on failure).
 pub const CTRL_STATUS: usize = 2;
+/// Control word index holding the virtual file descriptor (VFD) handle.
 pub const CTRL_VFD: usize = 3;
+/// Control word index holding the lower 32 bits of the 64-bit byte offset or length argument.
 pub const CTRL_ARG0_LO: usize = 4;
+/// Control word index holding the upper 32 bits of the 64-bit byte offset or length argument.
 pub const CTRL_ARG0_HI: usize = 5;
+/// Control word index holding the 32-bit payload/read-request byte length argument.
 pub const CTRL_ARG1_LEN: usize = 6;
+/// Control word index holding the lower 32 bits of the 64-bit RPC return value.
 pub const CTRL_RES0_LO: usize = 7;
+/// Control word index holding the upper 32 bits of the 64-bit RPC return value.
 pub const CTRL_RES0_HI: usize = 8;
+/// Control word index holding the UTF-8 byte length of any error message written to `err_buf`.
 pub const CTRL_ERR_LEN: usize = 9;
+/// Control word index set and notified by the JS worker to wake the waiting Rust thread.
 pub const CTRL_WAKE_RUST: usize = 10;
+/// Control word index holding a monotonic RPC sequence identifier for diagnostics.
 pub const CTRL_SEQ: usize = 11;
 
+/// Slot state: available for lease by a Rust worker thread.
 pub const STATE_IDLE: i32 = 0;
+/// Slot state: RPC request written and dispatched to the JS OPFS worker.
 pub const STATE_PENDING: i32 = 1;
+/// Slot state: RPC operation completed successfully with result in `CTRL_RES0_*`.
 pub const STATE_DONE: i32 = 2;
+/// Slot state: RPC operation failed with `MAP_ERROR_*` in `CTRL_STATUS` and text in `err_buf`.
 pub const STATE_ERROR: i32 = 3;
 
+/// RPC opcode: open an existing OPFS file for random-access reading.
 pub const OP_OPEN_READ: i32 = 1;
+/// RPC opcode: read up to `CTRL_ARG1_LEN` bytes starting at byte offset `CTRL_ARG0_*`.
 pub const OP_READ_AT: i32 = 2;
+/// RPC opcode: open or create/truncate an OPFS file for random-access writing.
 pub const OP_OPEN_WRITE: i32 = 3;
+/// RPC opcode: write `CTRL_ARG1_LEN` bytes from `data_buf` at byte offset `CTRL_ARG0_*`.
 pub const OP_WRITE_AT: i32 = 4;
+/// RPC opcode: truncate an open write handle to byte length `CTRL_ARG0_*`.
 pub const OP_TRUNCATE: i32 = 5;
+/// RPC opcode: flush buffered writes on an open write handle.
 pub const OP_FLUSH: i32 = 6;
+/// RPC opcode: flush and close an open OPFS VFD handle.
 pub const OP_CLOSE: i32 = 7;
 
+/// Windows DOS device names prohibited as OPFS path segment stems for cross-platform safety.
 const WINDOWS_RESERVED_NAMES: [&str; 22] = [
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
-/// Packs a 64-bit unsigned integer into two 32-bit little-endian `i32` control words.
+/// Packs a 64-bit unsigned integer `val` into two 32-bit little-endian `i32` control words `(lo, hi)`.
 #[inline]
 pub fn pack_u64(val: u64) -> (i32, i32) {
     ((val & 0xFFFF_FFFF) as i32, ((val >> 32) & 0xFFFF_FFFF) as i32)
 }
 
-/// Unpacks two 32-bit `i32` control words into a 64-bit unsigned integer.
+/// Unpacks two 32-bit `i32` control words (`lo`, `hi`) into a 64-bit unsigned integer.
 #[inline]
 pub fn unpack_u64(lo: i32, hi: i32) -> u64 {
     ((lo as u32) as u64) | (((hi as u32) as u64) << 32)
@@ -61,8 +85,11 @@ pub fn unpack_u64(lo: i32, hi: i32) -> u64 {
 
 /// Shared linear-memory RPC slot exchanged between WASM worker threads and `miniaudio-opfs-worker`.
 pub struct OpfsSlotShared {
+    /// Fixed array of 32-bit atomic control words (`CTRL_*`).
     pub ctrl: Box<[AtomicI32; OPFS_CTRL_WORDS]>,
+    /// Shared transfer buffer for path payloads, read results, and write chunks.
     pub data_buf: Box<[UnsafeCell<u8>]>,
+    /// Shared buffer receiving UTF-8 error details emitted by the JS OPFS worker.
     pub err_buf: Box<[UnsafeCell<u8>]>,
 }
 
@@ -79,6 +106,7 @@ impl Default for OpfsSlotShared {
 }
 
 impl OpfsSlotShared {
+    /// Allocates a zero-initialized [`OpfsSlotShared`] slot with `OPFS_XFER_CAP` data and `OPFS_ERR_CAP` error buffers.
     pub fn new() -> Self {
         let ctrl: Box<[AtomicI32; OPFS_CTRL_WORDS]> =
             Box::new(std::array::from_fn(|_| AtomicI32::new(0)));
@@ -97,16 +125,19 @@ impl OpfsSlotShared {
         }
     }
 
+    /// Returns the linear-memory byte offset of `ctrl` for `Int32Array` indexing in JS.
     #[inline]
     pub fn ctrl_ptr(&self) -> u32 {
         self.ctrl.as_ptr() as usize as u32
     }
 
+    /// Returns the linear-memory byte offset of `data_buf` for `Uint8Array` indexing in JS.
     #[inline]
     pub fn data_ptr(&self) -> u32 {
         self.data_buf.as_ptr() as usize as u32
     }
 
+    /// Returns the linear-memory byte offset of `err_buf` for `Uint8Array` indexing in JS.
     #[inline]
     pub fn err_ptr(&self) -> u32 {
         self.err_buf.as_ptr() as usize as u32
@@ -116,11 +147,13 @@ impl OpfsSlotShared {
 /// Canonical OPFS path normalization result (never retains `opfs://` or leading `/`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedOpfsPath {
+    /// Normalized slash-delimited relative OPFS path.
     pub canonical: String,
+    /// Whether the input originally included an `opfs://` URI prefix.
     pub had_opfs_prefix: bool,
 }
 
-/// Returns lowercase RFC 3986 URI scheme if present, ignoring Windows drive letters (`C:/...`).
+/// Returns the lowercase RFC 3986 URI scheme of `raw` if present, ignoring Windows drive letters (`C:/...`).
 pub fn extract_uri_scheme(raw: &str) -> Option<String> {
     let input = raw.trim_start();
     let bytes = input.as_bytes();
@@ -147,6 +180,7 @@ pub fn extract_uri_scheme(raw: &str) -> Option<String> {
     Some(input[..colon_idx].to_ascii_lowercase())
 }
 
+/// Returns `true` if `ch` is a control character, backslash, or filename-forbidden punctuation.
 #[inline]
 fn is_opfs_forbidden_char(ch: char) -> bool {
     let code = ch as u32;
@@ -155,6 +189,7 @@ fn is_opfs_forbidden_char(ch: char) -> bool {
         || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\')
 }
 
+/// Returns `true` if the stem of `seg` matches a reserved Windows DOS device name.
 #[inline]
 fn is_windows_reserved_segment(seg: &str) -> bool {
     let stem = seg.split('.').next().unwrap_or(seg);
@@ -163,6 +198,7 @@ fn is_windows_reserved_segment(seg: &str) -> bool {
         .any(|res| res.eq_ignore_ascii_case(stem))
 }
 
+/// Truncates `text` cleanly on a UTF-8 codepoint boundary so its byte length does not exceed `max_bytes`.
 fn truncate_utf8_to_bytes(text: &str, max_bytes: usize) -> &str {
     if text.len() <= max_bytes {
         return text;
@@ -178,6 +214,7 @@ fn truncate_utf8_to_bytes(text: &str, max_bytes: usize) -> &str {
     &text[..end]
 }
 
+/// Sanitizes a single OPFS path segment `raw_seg`, preserving the file extension when `is_leaf` is `true`.
 fn sanitize_opfs_segment(raw_seg: &str, is_leaf: bool) -> String {
     let mut cleaned = String::with_capacity(raw_seg.len());
     for ch in raw_seg.chars() {
@@ -221,6 +258,10 @@ fn sanitize_opfs_segment(raw_seg: &str, is_leaf: bool) -> String {
         .to_string()
 }
 
+/// Validates any URI scheme on `raw_path` using `context_label` in errors and returns `(path_body, had_opfs_prefix)`.
+///
+/// # Errors
+/// Returns `(MAP_ERROR_INVALID_ARGS | MAP_ERROR_UNSUPPORTED, message)` for empty paths, non-`opfs` schemes, or malformed `opfs:` URIs.
 fn extract_opfs_body<'a>(
     raw_path: &'a str,
     context_label: &str,
@@ -256,152 +297,177 @@ fn extract_opfs_body<'a>(
     Ok((trimmed, false))
 }
 
-/// Strictly validates a Web OPFS path for playback, analysis, and SFX without silently
+/// Strictly validates a Web OPFS `raw_path` for playback, analysis, and SFX without silently
 /// rewriting invalid segment names (mirrors Dart `parseOpfsPathStrict`).
+///
+/// # Errors
+/// Returns `(MAP_ERROR_INVALID_ARGS | MAP_ERROR_UNSUPPORTED, message)` if `raw_path` has an unsupported scheme,
+/// invalid characters, empty/traversal segments, reserved device names, or segments exceeding 255 UTF-8 bytes.
 pub fn parse_opfs_path_strict(raw_path: &str) -> Result<ParsedOpfsPath, (i32, String)> {
-    let (body, had_opfs_prefix) = extract_opfs_body(raw_path, "OPFS")?;
-    if body.contains('\\') {
-        return Err((
-            MAP_ERROR_INVALID_ARGS,
-            format!(
-                "Invalid backslash '\\' in OPFS path '{}'. Use forward slashes '/'.",
-                raw_path
-            ),
-        ));
-    }
-    let without_leading = body.trim_start_matches('/');
-    if without_leading.is_empty() {
-        return Err((
-            MAP_ERROR_INVALID_ARGS,
-            format!("OPFS path '{}' must name a file.", raw_path),
-        ));
-    }
-    if without_leading.ends_with('/') {
-        return Err((
-            MAP_ERROR_INVALID_ARGS,
-            format!(
-                "OPFS path '{}' cannot end with '/' (missing file name).",
-                raw_path
-            ),
-        ));
-    }
-    let segments: Vec<&str> = without_leading.split('/').collect();
-    for seg in &segments {
-        if seg.is_empty() {
+    let result = (|| {
+        let (body, had_opfs_prefix) = extract_opfs_body(raw_path, "OPFS")?;
+        if body.contains('\\') {
             return Err((
                 MAP_ERROR_INVALID_ARGS,
                 format!(
-                    "OPFS path '{}' contains empty '//' path segments.",
+                    "Invalid backslash '\\' in OPFS path '{}'. Use forward slashes '/'.",
                     raw_path
                 ),
             ));
         }
-        if *seg == "." || *seg == ".." {
+        let without_leading = body.trim_start_matches('/');
+        if without_leading.is_empty() {
+            return Err((
+                MAP_ERROR_INVALID_ARGS,
+                format!("OPFS path '{}' must name a file.", raw_path),
+            ));
+        }
+        if without_leading.ends_with('/') {
             return Err((
                 MAP_ERROR_INVALID_ARGS,
                 format!(
-                    "OPFS path '{}' cannot contain '.' or '..' segments.",
+                    "OPFS path '{}' cannot end with '/' (missing file name).",
                     raw_path
                 ),
             ));
         }
-        if seg.chars().any(is_opfs_forbidden_char) {
-            return Err((
-                MAP_ERROR_INVALID_ARGS,
-                format!(
-                    "Invalid character in OPFS segment '{}' of '{}'.",
-                    seg, raw_path
-                ),
-            ));
+        let segments: Vec<&str> = without_leading.split('/').collect();
+        for seg in &segments {
+            if seg.is_empty() {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "OPFS path '{}' contains empty '//' path segments.",
+                        raw_path
+                    ),
+                ));
+            }
+            if *seg == "." || *seg == ".." {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "OPFS path '{}' cannot contain '.' or '..' segments.",
+                        raw_path
+                    ),
+                ));
+            }
+            if seg.chars().any(is_opfs_forbidden_char) {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "Invalid character in OPFS segment '{}' of '{}'.",
+                        seg, raw_path
+                    ),
+                ));
+            }
+            if seg.ends_with('.') || seg.ends_with(' ') {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "OPFS path segment '{}' in '{}' cannot end with '.' or whitespace.",
+                        seg, raw_path
+                    ),
+                ));
+            }
+            if is_windows_reserved_segment(seg) {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "OPFS path segment '{}' in '{}' uses a reserved device name.",
+                        seg, raw_path
+                    ),
+                ));
+            }
+            if seg.len() > OPFS_MAX_SEGMENT_UTF8_BYTES {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "OPFS path segment '{}' in '{}' exceeds 255 UTF-8 bytes.",
+                        seg, raw_path
+                    ),
+                ));
+            }
         }
-        if seg.ends_with('.') || seg.ends_with(' ') {
-            return Err((
-                MAP_ERROR_INVALID_ARGS,
-                format!(
-                    "OPFS path segment '{}' in '{}' cannot end with '.' or whitespace.",
-                    seg, raw_path
-                ),
-            ));
-        }
-        if is_windows_reserved_segment(seg) {
-            return Err((
-                MAP_ERROR_INVALID_ARGS,
-                format!(
-                    "OPFS path segment '{}' in '{}' uses a reserved device name.",
-                    seg, raw_path
-                ),
-            ));
-        }
-        if seg.len() > OPFS_MAX_SEGMENT_UTF8_BYTES {
-            return Err((
-                MAP_ERROR_INVALID_ARGS,
-                format!(
-                    "OPFS path segment '{}' in '{}' exceeds 255 UTF-8 bytes.",
-                    seg, raw_path
-                ),
-            ));
-        }
+        Ok(ParsedOpfsPath {
+            canonical: segments.join("/"),
+            had_opfs_prefix,
+        })
+    })();
+    if let Err((code, ref msg)) = result {
+        crate::map_log!(4, "[OPFS] Strict path rejected (code={}): {}", code, msg);
     }
-    Ok(ParsedOpfsPath {
-        canonical: segments.join("/"),
-        had_opfs_prefix,
-    })
+    result
 }
 
-/// Parses and sanitizes a Web OPFS recording path (mirrors Dart `sanitizeOpfsRecordingPath`).
+/// Parses and sanitizes a Web OPFS recording `raw_path` (mirrors Dart `sanitizeOpfsRecordingPath`).
+///
+/// # Errors
+/// Returns `(MAP_ERROR_INVALID_ARGS | MAP_ERROR_UNSUPPORTED, message)` when `raw_path` is empty,
+/// uses an unsupported URI scheme, contains `..` traversal, or lacks a valid file name.
 pub fn sanitize_opfs_recording_path(raw_path: &str) -> Result<ParsedOpfsPath, (i32, String)> {
-    let (body, had_opfs_prefix) = extract_opfs_body(raw_path, "OPFS recording")?;
-    let slash_norm = body.replace('\\', "/");
-    if slash_norm.is_empty() || slash_norm.ends_with('/') {
-        return Err((
-            MAP_ERROR_INVALID_ARGS,
-            format!("OPFS recording path '{}' must specify a file name.", raw_path),
-        ));
-    }
-    let mut non_empty = Vec::new();
-    for part in slash_norm.trim_start_matches('/').split('/') {
-        if part.is_empty() || part == "." {
-            continue;
+    let result = (|| {
+        let (body, had_opfs_prefix) = extract_opfs_body(raw_path, "OPFS recording")?;
+        let slash_norm = body.replace('\\', "/");
+        if slash_norm.is_empty() || slash_norm.ends_with('/') {
+            return Err((
+                MAP_ERROR_INVALID_ARGS,
+                format!("OPFS recording path '{}' must specify a file name.", raw_path),
+            ));
         }
-        if part == ".." {
+        let mut non_empty = Vec::new();
+        for part in slash_norm.trim_start_matches('/').split('/') {
+            if part.is_empty() || part == "." {
+                continue;
+            }
+            if part == ".." {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "Path traversal '..' is not allowed in OPFS recording path '{}'.",
+                        raw_path
+                    ),
+                ));
+            }
+            non_empty.push(part);
+        }
+        if non_empty.is_empty() {
             return Err((
                 MAP_ERROR_INVALID_ARGS,
                 format!(
-                    "Path traversal '..' is not allowed in OPFS recording path '{}'.",
+                    "OPFS recording path '{}' does not contain a valid file name.",
                     raw_path
                 ),
             ));
         }
-        non_empty.push(part);
-    }
-    if non_empty.is_empty() {
-        return Err((
-            MAP_ERROR_INVALID_ARGS,
-            format!(
-                "OPFS recording path '{}' does not contain a valid file name.",
-                raw_path
-            ),
-        ));
-    }
-    let last_idx = non_empty.len() - 1;
-    let mut out_segments = Vec::with_capacity(non_empty.len());
-    for (idx, part) in non_empty.into_iter().enumerate() {
-        let clean = sanitize_opfs_segment(part, idx == last_idx);
-        if clean.is_empty() {
-            return Err((
-                MAP_ERROR_INVALID_ARGS,
-                format!(
-                    "OPFS recording segment '{}' in '{}' sanitizes to an empty name.",
-                    part, raw_path
-                ),
-            ));
+        let last_idx = non_empty.len() - 1;
+        let mut out_segments = Vec::with_capacity(non_empty.len());
+        for (idx, part) in non_empty.into_iter().enumerate() {
+            let clean = sanitize_opfs_segment(part, idx == last_idx);
+            if clean.is_empty() {
+                return Err((
+                    MAP_ERROR_INVALID_ARGS,
+                    format!(
+                        "OPFS recording segment '{}' in '{}' sanitizes to an empty name.",
+                        part, raw_path
+                    ),
+                ));
+            }
+            out_segments.push(clean);
         }
-        out_segments.push(clean);
+        Ok(ParsedOpfsPath {
+            canonical: out_segments.join("/"),
+            had_opfs_prefix,
+        })
+    })();
+    if let Err((code, ref msg)) = result {
+        crate::map_log!(
+            4,
+            "[OPFS] Recording path sanitization failed (code={}): {}",
+            code,
+            msg
+        );
     }
-    Ok(ParsedOpfsPath {
-        canonical: out_segments.join("/"),
-        had_opfs_prefix,
-    })
+    result
 }
 
 #[cfg(test)]
