@@ -325,25 +325,114 @@ void _configureWindowsEnv({
     args = _resolveVcvarsArchArgs(Architecture.current, targetArch);
   }
 
-  final argStr = args.isEmpty ? '' : ' ${args.join(' ')}';
-  final cmdRes = Process.runSync(
-    Platform.environment['COMSPEC'] ?? 'cmd.exe',
-    ['/d', '/s', '/c', 'call "$scriptPath"$argStr >nul && set'],
+  final batchEnv = extractBatchEnvironment(
+    scriptPath: scriptPath,
+    args: args,
+    baseEnvironment: env,
   );
-  if (cmdRes.exitCode != 0) {
-    throw BuildError(
-      message: 'Failed to initialize MSVC Developer Command Prompt '
-          '("$scriptPath"$argStr): ${cmdRes.stderr}',
-    );
+  for (final entry in batchEnv.entries) {
+    _putEnv(env, entry.key, entry.value);
   }
+}
 
-  for (final line in const LineSplitter().convert(cmdRes.stdout as String)) {
-    final eqIdx = line.indexOf('=');
-    if (eqIdx <= 0) continue;
-    final key = line.substring(0, eqIdx);
-    final val = line.substring(eqIdx + 1);
-    _putEnv(env, key, val);
+const _vcvarsEnvMarker = '__MINIAUDIO_VCVARS_ENV_START__';
+
+/// Runs a Windows batch script (such as `vcvars64.bat` or `vcvarsall.bat`) via
+/// a temporary wrapper `.cmd` file and returns the resulting environment map.
+///
+/// Writing a temporary wrapper avoids `dart:io`'s Win32 `\"` quoting rules
+/// corrupting paths with spaces inside `cmd.exe /c`, and preserves any prior
+/// modifications present in [baseEnvironment].
+Map<String, String> extractBatchEnvironment({
+  required String scriptPath,
+  List<String> args = const [],
+  Map<String, String>? baseEnvironment,
+}) {
+  final envForChild = Map<String, String>.from(
+    baseEnvironment ?? Platform.environment,
+  );
+  final tmpDir = Directory.systemTemp.createTempSync('map_vcvars_');
+  try {
+    final escapedScript = _escapeBatchText(scriptPath);
+    final formattedArgs = args.map(_formatBatchArg).join(' ');
+    final argSuffix = formattedArgs.isEmpty ? '' : ' $formattedArgs';
+    final wrapperContent = StringBuffer()
+      ..writeln('@echo off')
+      ..writeln('call "$escapedScript"$argSuffix')
+      ..writeln('if errorlevel 1 exit /b %errorlevel%')
+      ..writeln('@echo $_vcvarsEnvMarker')
+      ..writeln('@set');
+
+    final wrapperFile = File(p.join(tmpDir.path, 'run_vcvars.cmd'));
+    wrapperFile.writeAsStringSync(
+      wrapperContent.toString(),
+      encoding: systemEncoding,
+    );
+
+    final comspec = _readEnvCaseInsensitive(envForChild, 'COMSPEC') ??
+        _readEnvCaseInsensitive(Platform.environment, 'COMSPEC') ??
+        'cmd.exe';
+    final cmdRes = Process.runSync(
+      comspec,
+      ['/d', '/c', r'.\run_vcvars.cmd'],
+      workingDirectory: tmpDir.path,
+      environment: envForChild,
+    );
+
+    final stdoutStr = (cmdRes.stdout ?? '').toString();
+    final stderrStr = (cmdRes.stderr ?? '').toString();
+    if (cmdRes.exitCode != 0) {
+      final argDesc = args.isEmpty ? '' : ' ${args.join(' ')}';
+      final details = [stderrStr.trim(), stdoutStr.trim()]
+          .where((s) => s.isNotEmpty)
+          .join('\n');
+      throw BuildError(
+        message: 'Failed to initialize MSVC Developer Command Prompt '
+            '("$scriptPath"$argDesc, exit ${cmdRes.exitCode}): $details',
+      );
+    }
+
+    final lines = const LineSplitter().convert(stdoutStr);
+    final markerIdx = lines.lastIndexWhere(
+      (line) => line.trim() == _vcvarsEnvMarker,
+    );
+    if (markerIdx == -1) {
+      throw BuildError(
+        message: 'Failed to parse MSVC Developer Command Prompt output for '
+            '"$scriptPath": missing environment marker.',
+      );
+    }
+
+    final parsed = <String, String>{};
+    for (var i = markerIdx + 1; i < lines.length; i++) {
+      final line = lines[i];
+      final eqIdx = line.indexOf('=');
+      if (eqIdx <= 0) continue;
+      final key = line.substring(0, eqIdx);
+      final val = line.substring(eqIdx + 1);
+      _putEnv(parsed, key, val);
+    }
+    return parsed;
+  } finally {
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
   }
+}
+
+String _escapeBatchText(String value) => value.replaceAll('%', '%%');
+
+String _formatBatchArg(String arg) {
+  final escaped = _escapeBatchText(arg);
+  if (escaped.isEmpty ||
+      escaped.contains(' ') ||
+      escaped.contains('\t') ||
+      escaped.contains('&') ||
+      escaped.contains('(') ||
+      escaped.contains(')')) {
+    return '"$escaped"';
+  }
+  return escaped;
 }
 
 List<String> _resolveVcvarsArchArgs(Architecture host, Architecture target) {

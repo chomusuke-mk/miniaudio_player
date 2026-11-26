@@ -8,8 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks/hooks.dart';
 import 'package:miniaudio_player/miniaudio_player.dart';
 import 'package:miniaudio_player/src/loader/platform_loader.dart';
+import 'package:path/path.dart' as p;
 
 import '../hook/src/binary_validator.dart';
+import '../hook/src/cargo_env.dart';
 import '../hook/src/depfile_parser.dart';
 import '../hook/src/gzip_extractor.dart';
 import '../hook/src/target_triple.dart';
@@ -53,6 +55,9 @@ void main() {
           '.dart_tool/lib/miniaudio_player.dll',
           'rust/target/release/libminiaudio_player.so',
           'rust/target/debug/libminiaudio_player.so',
+          'rust/target/release/miniaudio_player.dll',
+          'rust/target/debug/miniaudio_player.dll',
+          'rust/target/x86_64-pc-windows-msvc/release/miniaudio_player.dll',
         ];
         final anyExists = candidatePaths.any((p) => File(p).existsSync());
         expect(
@@ -292,6 +297,115 @@ void main() {
       );
     });
 
+    test(
+      'extractBatchEnvironment handles paths with spaces/parentheses and preserves base PATH',
+      () {
+        final tmp = Directory.systemTemp.createTempSync('map_batch_test_');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+
+        final spacedDir = Directory(
+          p.join(tmp.path, 'Visual Studio (18) Test'),
+        )..createSync(recursive: true);
+
+        final goodBat = File(p.join(spacedDir.path, 'mock_vcvars.bat'))
+          ..writeAsStringSync(
+            '@echo off\r\n'
+            'echo Initializing mock MSVC env...\r\n'
+            'set MAP_TEST_VAR=ok_%~1\r\n'
+            'set "PATH=C:\\FakeMsvc\\bin;%PATH%"\r\n',
+          );
+
+        final failBat = File(p.join(spacedDir.path, 'fail_vcvars.bat'))
+          ..writeAsStringSync(
+            '@echo off\r\n'
+            'echo [ERROR:vcvarsall.bat] Unsupported architecture\r\n'
+            'exit /b 1\r\n',
+          );
+
+        final baseEnv = Map<String, String>.from(Platform.environment);
+        final existingPathKey = baseEnv.keys.firstWhere(
+          (k) => k.toLowerCase() == 'path',
+          orElse: () => 'PATH',
+        );
+        final existingPath = baseEnv.remove(existingPathKey) ?? '';
+        baseEnv['PATH'] = 'C:\\FakeCargo\\bin;$existingPath';
+
+        final resolved = extractBatchEnvironment(
+          scriptPath: goodBat.path,
+          args: ['x64'],
+          baseEnvironment: baseEnv,
+        );
+        expect(resolved['MAP_TEST_VAR'], 'ok_x64');
+        final resolvedPathEntry = resolved.entries.firstWhere(
+          (e) => e.key.toLowerCase() == 'path',
+        );
+        expect(resolvedPathEntry.value, contains(r'C:\FakeMsvc\bin'));
+        expect(resolvedPathEntry.value, contains(r'C:\FakeCargo\bin'));
+
+        expect(
+          () => extractBatchEnvironment(
+            scriptPath: failBat.path,
+            args: ['bad_arch'],
+            baseEnvironment: baseEnv,
+          ),
+          throwsA(
+            isA<BuildError>().having(
+              (e) => e.message,
+              'message',
+              contains('[ERROR:vcvarsall.bat] Unsupported architecture'),
+            ),
+          ),
+        );
+      },
+      skip: !Platform.isWindows ? 'Windows-only batch script test' : null,
+    );
+
+    test(
+      'registerSourceDependencies matches Windows .lib depfile targets for .dll outputs',
+      () {
+        final tmp = Directory.systemTemp.createTempSync('map_depfile_test_');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+
+        final rustRootDir = Directory(p.join(tmp.path, 'rust root'))
+          ..createSync(recursive: true);
+        final srcDir = Directory(p.join(rustRootDir.path, 'src'))
+          ..createSync(recursive: true);
+        final targetDir = Directory(p.join(tmp.path, 'cargo target'))
+          ..createSync(recursive: true);
+        final releaseDir = Directory(
+          p.join(targetDir.path, 'x86_64-pc-windows-msvc', 'release'),
+        )..createSync(recursive: true);
+
+        final libRs = File(p.join(srcDir.path, 'lib.rs'))
+          ..writeAsStringSync('// tracked via depfile\n');
+        final otherRs = File(p.join(srcDir.path, 'ignored.rs'))
+          ..writeAsStringSync('// only scanned on fallback\n');
+        final genRs = File(p.join(targetDir.path, 'generated.rs'))
+          ..writeAsStringSync('// inside cargo target dir\n');
+
+        final builtLibPath = p.join(releaseDir.path, 'miniaudio_player.dll');
+        final depTargetPath = p.join(releaseDir.path, 'miniaudio_player.lib');
+        String escapeMake(String path) => path.replaceAll(' ', r'\ ');
+
+        File(p.join(releaseDir.path, 'miniaudio_player.d')).writeAsStringSync(
+          '${escapeMake(depTargetPath)}: ${escapeMake(libRs.path)} ${escapeMake(genRs.path)}\n',
+        );
+
+        final output = BuildOutputBuilder();
+        registerSourceDependencies(
+          rustRoot: rustRootDir.uri,
+          cargoTargetDir: targetDir.path,
+          builtLibPath: builtLibPath,
+          output: output,
+        );
+
+        final deps = BuildOutput(output.json).dependencies;
+        expect(deps, contains(libRs.uri));
+        expect(deps, isNot(contains(otherRs.uri)));
+        expect(deps, isNot(contains(genRs.uri)));
+      },
+    );
+
     test('Web assets are clean in assets/web/ without web/pkg provisioning', () {
       expect(File('assets/web/miniaudio_player.js').existsSync(), isTrue);
       expect(File('assets/web/miniaudio_player_bg.wasm').existsSync(), isTrue);
@@ -311,10 +425,12 @@ void main() {
         final tmp = await Directory.systemTemp.createTemp('miniaudio_hook_e2e_');
         addTearDown(() => tmp.delete(recursive: true));
 
+        final dartExe = _resolveDartExecutable();
+
         // Compile hook once to kernel bytecode so 17 runs execute cleanly in ~1-2s.
         final hookDill = '${tmp.path}/build_hook.dill';
         final compileRes = await Process.run(
-          'dart',
+          dartExe,
           ['compile', 'kernel', 'hook/build.dart', '-o', hookDill],
         );
         expect(compileRes.exitCode, 0, reason: '${compileRes.stderr}');
@@ -464,7 +580,7 @@ void main() {
             );
           await inFile.writeAsString(jsonEncode(builder.json));
           return Process.run(
-            'dart',
+            dartExe,
             [hookDill, '--config=${inFile.path}'],
             environment: {
               ...Platform.environment,
@@ -563,4 +679,42 @@ Uint8List _makeFatMachOHeader(List<int> cpuTypes) {
     bd.setUint32(8 + i * 20, cpuTypes[i], Endian.big);
   }
   return bytes;
+}
+
+String _resolveDartExecutable() {
+  final direct = findExecutable('dart');
+  if (direct != null) return direct;
+
+  if (Platform.isWindows) {
+    final flutterRoot = Platform.environment['FLUTTER_ROOT'];
+    if (flutterRoot != null && flutterRoot.trim().isNotEmpty) {
+      final sdkDart = File(
+        p.join(flutterRoot.trim(), 'bin', 'cache', 'dart-sdk', 'bin', 'dart.exe'),
+      );
+      if (sdkDart.existsSync()) return sdkDart.path;
+    }
+
+    final pathEnv = Platform.environment['PATH'] ?? '';
+    for (final dir in pathEnv.split(';').where((d) => d.isNotEmpty)) {
+      final bat = File(p.join(dir, 'dart.bat'));
+      if (bat.existsSync()) {
+        final sdkDart = File(
+          p.join(dir, 'cache', 'dart-sdk', 'bin', 'dart.exe'),
+        );
+        if (sdkDart.existsSync()) return sdkDart.path;
+      }
+    }
+
+    final resolvedDir = File(Platform.resolvedExecutable).parent;
+    for (final candidate in [
+      p.join(resolvedDir.path, 'dart.exe'),
+      p.normalize(
+        p.join(resolvedDir.path, '..', '..', '..', 'dart-sdk', 'bin', 'dart.exe'),
+      ),
+    ]) {
+      if (File(candidate).existsSync()) return candidate;
+    }
+  }
+
+  return 'dart';
 }

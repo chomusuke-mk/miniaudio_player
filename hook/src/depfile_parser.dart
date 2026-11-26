@@ -26,8 +26,18 @@ void registerSourceDependencies({
       // Split on the FIRST ": " (with space) to preserve Windows C:\ drive letters.
       final sepIdx = trimmed.indexOf(': ');
       if (sepIdx == -1) continue;
-      final target = trimmed.substring(0, sepIdx).trim();
-      if (p.normalize(target) != p.normalize(builtLibPath)) continue;
+      final target = trimmed
+          .substring(0, sepIdx)
+          .trim()
+          .replaceAll(r'\ ', ' ');
+      final normTarget = p.normalize(target);
+      final normBuiltLib = p.normalize(builtLibPath);
+      final matchesTarget = p.equals(normTarget, normBuiltLib) ||
+          p.equals(
+            p.withoutExtension(normTarget),
+            p.withoutExtension(normBuiltLib),
+          );
+      if (!matchesTarget) continue;
 
       final depsRaw = trimmed.substring(sepIdx + 2).trim();
       for (final depPath in splitMakeDeps(depsRaw)) {

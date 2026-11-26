@@ -21,6 +21,7 @@ words:
   - Antho
   - APETAGEX
   - APIC
+  - archiver
   - ARCHMASK
   - armeabi
   - armv
@@ -86,6 +87,7 @@ words:
   - cdim
   - cdylib
   - cfgs
+  - CFLAGS
   - chomusuke
   - chpl
   - chromaprint
@@ -108,6 +110,8 @@ words:
   - coloured
   - COMBFILTER
   - COMMDEVICE
+  - comspec
+  - COMSPEC
   - Condvar
   - congruential
   - contig
@@ -118,6 +122,7 @@ words:
   - cosf
   - cosinusoidal
   - covr
+  - CPATH
   - crctable
   - credentialless
   - crossfade
@@ -134,6 +139,7 @@ words:
   - customscheme
   - cvar
   - CVBR
+  - CXXFLAGS
   - Dartminiaudio
   - darwin
   - DDART
@@ -228,6 +234,7 @@ words:
   - eosflag
   - Equalizador
   - EREAD
+  - errorlevel
   - Estebanez
   - etmp
   - evictable
@@ -254,6 +261,7 @@ words:
   - fivesize
   - flasheo
   - flen
+  - flink
   - floorlist
   - flto
   - fmaxf
@@ -340,7 +348,9 @@ words:
   - interruptible
   - iovecin
   - ipart
+  - iphoneos
   - IPHONEOS
+  - iphonesimulator
   - ISHLD
   - isqrt
   - isrc
@@ -362,11 +372,13 @@ words:
   - LBCF
   - lbrr
   - LBRR
+  - LDFLAGS
   - Leitgeb
   - lerp
   - Levinson
   - lgain
   - libart
+  - libgcc
   - libminiaudio
   - libmp
   - libnativehelper
@@ -377,6 +389,7 @@ words:
   - libopusurl
   - libpulse
   - libsonic
+  - libunwind
   - libvorbis
   - libvorbisfile
   - lieff
@@ -399,6 +412,7 @@ words:
   - LRINTF
   - LTWH
   - lufs
+  - lunwind
   - machiney
   - malloc
   - manxorist
@@ -514,6 +528,8 @@ words:
   - phdr
   - Pkcs
   - PLTE
+  - posix
+  - Posix
   - postf
   - postv
   - Pranckevicius
@@ -554,6 +570,7 @@ words:
   - quantisation
   - radiofrance
   - RAII
+  - ranlib
   - Raphson
   - Ravier
   - readelf
@@ -566,6 +583,7 @@ words:
   - redimensionar
   - redirections
   - reentrancia
+  - Reentrancy
   - reinicialización
   - Reinicialización
   - reinicios
@@ -610,9 +628,11 @@ words:
   - Rpcs
   - rsplit
   - rtrb
+  - rustc
   - rustfft
   - rustflags
   - rustls
+  - rustup
   - RUSTUP
   - safelisted
   - Sandboxed
@@ -760,6 +780,8 @@ words:
   - Vacia
   - varispeed
   - vbri
+  - vcvarsall
+  - vcvarsarm
   - Vectorización
   - Vectorizar
   - ventanado
