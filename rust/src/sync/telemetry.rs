@@ -362,36 +362,37 @@ impl CallbackRegistry {
 pub struct TelemetryDispatcher {
     /// Atomic lifecycle flag indicating whether the dispatcher is active.
     is_running: Arc<AtomicBool>,
+    /// Atomic fast-path guard set when a downstream callback is attached.
+    has_callback: Arc<AtomicBool>,
     /// Thread-safe callback holder shared with the background worker thread.
     callbacks: Arc<CallbackRegistry>,
     /// Cross-platform wakeup queue carrying pending [`TelemetryEvent`] batches.
     queue: Arc<crate::sync::WakeQueue<TelemetryEvent>>,
-    /// Join handle for the background `map-telemetry` worker thread.
+    /// Join handle for the lazily spawned background `map-telemetry` worker thread.
     worker_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl Default for TelemetryDispatcher {
-    /// Creates and starts a new [`TelemetryDispatcher`].
+    /// Creates a new [`TelemetryDispatcher`].
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl TelemetryDispatcher {
-    /// Creates a new [`TelemetryDispatcher`] initializing its background worker thread.
+    /// Creates a new [`TelemetryDispatcher`] whose worker thread spawns lazily when a callback is attached.
     pub fn new() -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
+        let has_callback = Arc::new(AtomicBool::new(false));
         let callbacks = Arc::new(CallbackRegistry::default());
         let queue = Arc::new(crate::sync::WakeQueue::new());
 
-        let worker_handle =
-            Self::spawn_worker(is_running.clone(), callbacks.clone(), queue.clone());
-
         Self {
             is_running,
+            has_callback,
             callbacks,
             queue,
-            worker_handle: Mutex::new(worker_handle),
+            worker_handle: Mutex::new(None),
         }
     }
 
@@ -435,6 +436,18 @@ impl TelemetryDispatcher {
     pub fn set_typed_callback(&self, callback: Option<TypedEventCallback>) {
         let is_set = callback.is_some();
         self.callbacks.set_typed(callback);
+        self.has_callback.store(is_set, Ordering::Release);
+        if is_set && self.is_running.load(Ordering::Acquire) {
+            if let Ok(mut guard) = self.worker_handle.lock() {
+                if guard.is_none() {
+                    *guard = Self::spawn_worker(
+                        self.is_running.clone(),
+                        self.callbacks.clone(),
+                        self.queue.clone(),
+                    );
+                }
+            }
+        }
         crate::map_log!(
             4,
             "[TELEMETRY] Typed telemetry callback {}",
@@ -444,7 +457,9 @@ impl TelemetryDispatcher {
 
     /// Primary deterministic telemetry dispatch entry point for `event`.
     pub fn post(&self, event: TelemetryEvent) {
-        if !self.is_running.load(Ordering::Relaxed) {
+        if !self.is_running.load(Ordering::Relaxed)
+            || !self.has_callback.load(Ordering::Acquire)
+        {
             return;
         }
         let _ = self.queue.send(event);
@@ -453,12 +468,18 @@ impl TelemetryDispatcher {
     /// Posts an untyped event by converting `(event_type, data)` into a [`TelemetryEvent`].
     #[inline]
     pub fn post_event(&self, event_type: EventType, data: MapEventData) {
+        if !self.is_running.load(Ordering::Relaxed)
+            || !self.has_callback.load(Ordering::Acquire)
+        {
+            return;
+        }
         self.post(TelemetryEvent::from_raw(event_type, &data));
     }
 
     /// Signals the dispatcher to stop all threads and release callbacks.
     pub fn stop(&self) {
         let was_running = self.is_running.swap(false, Ordering::SeqCst);
+        self.has_callback.store(false, Ordering::Release);
         if was_running {
             crate::map_log!(4, "[TELEMETRY] Stopping telemetry dispatcher");
         }

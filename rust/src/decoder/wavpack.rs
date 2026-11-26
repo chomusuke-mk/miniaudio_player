@@ -519,7 +519,7 @@ impl WavpackReader {
         }
         scan_end = scan_end.min(upper_bound_off);
 
-        let mut win = vec![0u8; 65536];
+        let mut win = vec![0u8; 192 * 1024];
         let mut cursor = clamped_start;
         let mut carry = 0usize;
 
@@ -655,24 +655,52 @@ impl WavpackReader {
             )
         };
 
-        let walk_threshold = (self.sample_rate as u64) * 6;
-        if hi_off < u64::MAX && hi_frame < u64::MAX && target_frame.saturating_sub(lo_frame) > walk_threshold
+        let walk_threshold = (self.sample_rate as u64) * 2;
+        if hi_off < u64::MAX
+            && hi_frame < u64::MAX
+            && target_frame.saturating_sub(lo_frame) > walk_threshold
         {
-            for _ in 0..8 {
-                if hi_off <= lo_off.saturating_add(HEADER_LEN as u64) {
+            let mut scan_upper = hi_off;
+            let mut est_block_bytes: u64 = 128 * 1024;
+            let mut consecutive_misses: u32 = 0;
+
+            for _ in 0..10 {
+                if scan_upper <= lo_off.saturating_add(HEADER_LEN as u64)
+                    || target_frame.saturating_sub(lo_frame) <= walk_threshold
+                {
                     break;
                 }
-                let frame_span = hi_frame.saturating_sub(lo_frame).max(1);
-                let byte_span = hi_off.saturating_sub(lo_off);
-                let rel = target_frame.saturating_sub(lo_frame).min(frame_span);
-                let mut guess = lo_off + ((byte_span as u128 * rel as u128) / frame_span as u128) as u64;
+                let mut guess = if consecutive_misses > 0 {
+                    let step = est_block_bytes
+                        .max(128 * 1024)
+                        .saturating_mul(1u64 << consecutive_misses.min(4));
+                    let back = scan_upper.saturating_sub(step);
+                    if back <= lo_off {
+                        lo_off + (scan_upper - lo_off) / 2
+                    } else {
+                        back
+                    }
+                } else {
+                    let frame_span = hi_frame.saturating_sub(lo_frame).max(1);
+                    let byte_span = hi_off.saturating_sub(lo_off);
+                    let rel = target_frame.saturating_sub(lo_frame).min(frame_span);
+                    let mut g =
+                        lo_off + ((byte_span as u128 * rel as u128) / frame_span as u128) as u64;
+                    let margin = est_block_bytes.saturating_add(32 * 1024).min(byte_span / 2);
+                    if scan_upper.saturating_sub(g) < margin {
+                        g = scan_upper.saturating_sub(margin);
+                    }
+                    g
+                };
                 guess = guess.clamp(
                     lo_off + 1,
-                    hi_off.saturating_sub(HEADER_LEN as u64).max(lo_off + 1),
+                    scan_upper.saturating_sub(HEADER_LEN as u64).max(lo_off + 1),
                 );
 
-                match self.find_verified_block_near(guess, hi_off)? {
-                    Some((found_off, hdr)) if found_off < hi_off => {
+                match self.find_verified_block_near(guess, scan_upper)? {
+                    Some((found_off, hdr)) if found_off < scan_upper => {
+                        consecutive_misses = 0;
+                        est_block_bytes = (hdr.block_len() as u64).max(32 * 1024);
                         self.record_checkpoint(hdr.block_index, found_off);
                         let end_f = hdr.block_index + hdr.block_samples as u64;
                         self.record_checkpoint(end_f, found_off + hdr.block_len() as u64);
@@ -687,14 +715,13 @@ impl WavpackReader {
                         } else {
                             hi_frame = hdr.block_index;
                             hi_off = found_off;
-                        }
-                        if target_frame.saturating_sub(lo_frame) <= walk_threshold {
-                            break;
+                            scan_upper = found_off;
                         }
                     }
                     _ => {
-                        // Narrow towards lower half if tail scan found no full block before hi_off.
-                        hi_off = guess;
+                        // Narrow upper bound and back off exponentially when landing inside a block.
+                        scan_upper = guess;
+                        consecutive_misses = consecutive_misses.saturating_add(1);
                     }
                 }
             }

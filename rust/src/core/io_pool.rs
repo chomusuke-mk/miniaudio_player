@@ -294,8 +294,8 @@ enum WorkerLane {
 /// Bounded interruptible thread pool separating fast local opens from slow network opens.
 ///
 /// Runs `1` dedicated `map-io-local` worker for file/memory/`custom://` tracks (0 ms wait)
-/// and `4` `map-io-net-*` workers for `http://`, `https://`, and `icy://` tracks with
-/// rapid-skip epoch coalescing.
+/// and `4` (`2` on `wasm32`) `map-io-net-*` workers for `http://`, `https://`, and `icy://`
+/// tracks with rapid-skip epoch coalescing.
 pub struct IoWorkerPool {
     /// Synchronized job mailbox and condition variable shared across all worker lanes.
     state: Arc<(Mutex<PoolMailbox>, Condvar)>,
@@ -319,6 +319,10 @@ pub struct IoWorkerPool {
 
 impl IoWorkerPool {
     /// Number of worker threads dedicated to network (`http://`, `https://`, `icy://`) opens.
+    #[cfg(target_arch = "wasm32")]
+    const NET_WORKERS: usize = 2;
+    /// Number of worker threads dedicated to network (`http://`, `https://`, `icy://`) opens.
+    #[cfg(not(target_arch = "wasm32"))]
     const NET_WORKERS: usize = 4;
     /// Quiet-window delay in milliseconds used to coalesce rapid network skips.
     const COALESCE_QUIET_MS: u64 = 18;
@@ -335,8 +339,8 @@ impl IoWorkerPool {
         !(s.starts_with("http://") || s.starts_with("https://") || s.starts_with("icy://"))
     }
 
-    /// Spawns the `IoWorkerPool` (`1` local worker and `4` network workers) backed by `reaper`
-    /// and delivering completed opens to `on_complete`.
+    /// Spawns the `IoWorkerPool` (`1` local worker and `NET_WORKERS` network workers) backed by
+    /// `reaper` and delivering completed opens to `on_complete`.
     pub fn spawn(reaper: ReaperHandle, on_complete: CompletionCallback) -> Arc<Self> {
         crate::map_log!(
             3,

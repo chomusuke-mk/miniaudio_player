@@ -1746,6 +1746,8 @@ class MiniaudioPlayer<T> {
       }
     }
     _customProviders.clear();
+    _sourceRegistry.clear();
+    _managedProviderIds.clear();
     await stream.dispose();
   }
 

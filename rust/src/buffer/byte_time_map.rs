@@ -361,6 +361,28 @@ impl ByteTimeMap {
         Some(byte.clamp(self.audio_start, self.audio_end))
     }
 
+    /// Returns the largest anchor byte offset whose timestamp precedes `time_ms`,
+    /// clamping to `[audio_start, audio_end]` and falling back to [`Self::estimate_byte_for_ms`]
+    /// when no explicit anchors are present.
+    pub fn floor_anchor_byte_for_ms(&self, time_ms: i64) -> Option<u64> {
+        if self.audio_end <= self.audio_start {
+            return None;
+        }
+        let target = time_ms.max(0);
+        if target == 0 {
+            return Some(self.audio_start);
+        }
+        if self.anchors.is_empty() {
+            return self.estimate_byte_for_ms(time_ms);
+        }
+        let idx = self.anchors.partition_point(|&(_, t)| t < target);
+        if idx == 0 {
+            Some(self.audio_start)
+        } else {
+            Some(self.anchors[idx - 1].0.clamp(self.audio_start, self.audio_end))
+        }
+    }
+
     /// Attempts to extract exact chunk/sample `(byte_offset, time_ms)` anchors from an MP4/M4A
     /// `moov` box contained in `slice` (works for both fast-start `head` and non-fast-start `tail`).
     pub fn extract_mp4_anchors(slice: &[u8]) -> Option<(i64, Vec<(u64, i64)>)> {

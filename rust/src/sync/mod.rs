@@ -392,15 +392,15 @@ pub mod thread {
                                 var url = URL.createObjectURL(blob);
                                 worker = new Worker(url);
                                 URL.revokeObjectURL(url);
+                                worker.onmessage = function(ev) {
+                                    if (ev && ev.data === 0) {
+                                        pool.push(worker);
+                                    } else {
+                                        try { worker.terminate(); } catch (_) {}
+                                    }
+                                };
                                 worker.postMessage([wasmMod, wasmMem]);
                             }
-                            worker.onmessage = function(ev) {
-                                if (ev && ev.data === 0) {
-                                    pool.push(worker);
-                                } else {
-                                    try { worker.terminate(); } catch (_) {}
-                                }
-                            };
                             worker.postMessage(ptr);
                             return true;
                         };
@@ -434,9 +434,10 @@ pub mod thread {
             let mut borrow = slot.borrow_mut();
             if borrow.is_none() {
                 let code = r#"
-                    var ch = new BroadcastChannel(channelName);
-                    ch.postMessage(taskPtr);
-                    ch.close();
+                    if (!self.__miniaudioSpawnerPostCh) {
+                        self.__miniaudioSpawnerPostCh = new BroadcastChannel(channelName);
+                    }
+                    self.__miniaudioSpawnerPostCh.postMessage(taskPtr);
                     return true;
                 "#;
                 *borrow = Some(Function::new_with_args("channelName, taskPtr", code));

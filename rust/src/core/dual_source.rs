@@ -116,297 +116,47 @@ fn extract_tail_metadata_slice(
     }
 }
 
-/// Container-specific VBR seek-anchor probe strategy used by [`spawn_vbr_probe_thread`].
-#[derive(Clone, Copy)]
-enum VbrProbeKind {
-    /// Ogg Vorbis/Opus page probe.
-    Ogg {
-        /// Bitstream serial number of the primary Ogg logical stream.
-        serial: u32,
-        /// Audio sample rate in Hz.
-        sample_rate: u32,
-        /// Opus/Vorbis pre-skip sample count.
-        pre_skip: u64,
-        /// Optional byte offset to scan forward for the first audio page.
-        find_first_audio_from: Option<u64>,
-    },
-    /// Raw FLAC frame header probe.
-    Flac {
-        /// Stream sample rate in Hz.
-        sample_rate: u32,
-        /// Minimum block size in samples.
-        min_bs: u16,
-        /// Maximum block size in samples.
-        max_bs: u16,
-    },
-    /// Matroska/WebM Cluster timestamp probe.
-    MkvCluster {
-        /// Matroska `TimecodeScale` in nanoseconds per tick.
-        timecode_scale_ns: u64,
-    },
-    /// WavPack block header probe.
-    WavPack {
-        /// Stream sample rate in Hz.
-        sample_rate: u32,
-    },
-}
+/// Result tuple from [`resolve_tail_metadata_with_fetcher`]:
+/// `(extracted_tail_metadata, resolved_audio_end, raw_tail_buffer_for_probe_cache)`.
+type TailMetadataResolution = (
+    Option<(Vec<u8>, u64)>,
+    Option<i64>,
+    Option<(Vec<u8>, u64)>,
+);
 
-/// Spawns a background worker that probes sparse HTTP byte ranges via `fetcher` to populate
-/// VBR byte-to-time anchors on `session` across `[session_audio_start, session_audio_end)`
-/// capped by `dur_cap` for the specified `kind`, stopping early if `abort_arc` is signalled.
-fn spawn_vbr_probe_thread(
-    session: StreamSession,
-    fetcher: Arc<dyn Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync>,
-    abort_arc: Arc<AtomicBool>,
-    session_audio_start: u64,
-    session_audio_end: u64,
-    dur_cap: i64,
-    kind: VbrProbeKind,
-) {
-    let span = session_audio_end.saturating_sub(session_audio_start);
-    if span <= 65_536 {
-        return;
-    }
-    crate::map_log!(
-        4,
-        "[VBR_PROBE] spawning background probe (audio_start={}, audio_end={}, dur_cap={}ms)",
-        session_audio_start,
-        session_audio_end,
-        dur_cap
-    );
-    if let Err(e) = thread::Builder::new()
-        .name("miniaudio-vbr-probe".to_string())
-        .spawn(move || {
-            let mut offsets: Vec<u64> = match kind {
-                VbrProbeKind::Flac { .. } => (1..=31u64)
-                    .map(|k| session_audio_start + (span * k) / 32)
-                    .collect(),
-                VbrProbeKind::Ogg { .. } => {
-                    let mut v = vec![
-                        session_audio_start + span / 40,
-                        session_audio_start + (span * 2) / 40,
-                    ];
-                    v.extend((1..=15u64).map(|k| session_audio_start + (span * k) / 16));
-                    v
-                }
-                VbrProbeKind::MkvCluster { .. } | VbrProbeKind::WavPack { .. } => (1..=15u64)
-                    .map(|k| session_audio_start + (span * k) / 16)
-                    .collect(),
-            };
-            offsets.sort_unstable();
-            offsets.dedup();
-
-            let slice_len_cap: usize = match kind {
-                VbrProbeKind::MkvCluster { .. } => 112 * 1024,
-                VbrProbeKind::WavPack { .. } => 48 * 1024,
-                VbrProbeKind::Ogg { .. } => 40 * 1024,
-                VbrProbeKind::Flac { .. } => 24 * 1024,
-            };
-
-            let next_task = std::sync::atomic::AtomicUsize::new(0);
-            let include_first_audio_scan =
-                matches!(kind, VbrProbeKind::Ogg { find_first_audio_from: Some(_), .. });
-            let total_tasks = offsets.len() + usize::from(include_first_audio_scan);
-            let results: Mutex<Vec<(u64, i64)>> = Mutex::new(Vec::with_capacity(64));
-            let flac_pts_acc: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::with_capacity(64));
-
-            let run_worker = || loop {
-                if abort_arc.load(Ordering::Acquire) || !session.supports_range() {
-                    return;
-                }
-                let idx = next_task.fetch_add(1, Ordering::Relaxed);
-                if idx >= total_tasks {
-                    return;
-                }
-                if include_first_audio_scan && idx == 0 {
-                    if let VbrProbeKind::Ogg {
-                        serial,
-                        sample_rate,
-                        pre_skip,
-                        find_first_audio_from: Some(scan_start),
-                    } = kind
-                    {
-                        let mut cur = scan_start;
-                        for _step in 0..4 {
-                            if abort_arc.load(Ordering::Acquire)
-                                || !session.supports_range()
-                                || cur >= session_audio_end
-                            {
-                                break;
-                            }
-                            let len = (session_audio_end - cur).min(262_144) as usize;
-                            let Some(sl) = fetcher(cur, len) else {
-                                break;
-                            };
-                            if let Some(first_pg) = ByteTimeMap::parse_ogg_first_audio_page(
-                                &sl, cur, serial, pre_skip,
-                            ) {
-                                session.refine_byte_time_audio_start(first_pg);
-                                let extra = ByteTimeMap::extract_ogg_anchors_in_slice(
-                                    &sl,
-                                    cur,
-                                    serial,
-                                    sample_rate,
-                                    pre_skip,
-                                );
-                                if !extra.is_empty() {
-                                    lock_unpoisoned(&results).extend(extra);
-                                }
-                                break;
-                            }
-                            cur = cur.saturating_add(len as u64).saturating_sub(4096);
-                        }
-                    }
-                    continue;
-                }
-                let off_idx = idx - usize::from(include_first_audio_scan);
-                let off = offsets[off_idx];
-                let max_len = (session_audio_end - off).min(slice_len_cap as u64) as usize;
-                if max_len < 32 {
-                    continue;
-                }
-                let Some(slice) = fetcher(off, max_len) else {
-                    continue;
-                };
-                if abort_arc.load(Ordering::Acquire) || !session.supports_range() {
-                    return;
-                }
-                match kind {
-                    VbrProbeKind::Ogg {
-                        serial,
-                        sample_rate,
-                        pre_skip,
-                        ..
-                    } => {
-                        let anchors = ByteTimeMap::extract_ogg_anchors_in_slice(
-                            &slice,
-                            off,
-                            serial,
-                            sample_rate,
-                            pre_skip,
-                        );
-                        if !anchors.is_empty() {
-                            lock_unpoisoned(&results).extend(anchors);
-                        }
-                    }
-                    VbrProbeKind::Flac {
-                        sample_rate,
-                        min_bs,
-                        max_bs,
-                    } => {
-                        let frames = ByteTimeMap::scan_flac_frames_in_slice(
-                            &slice,
-                            off,
-                            sample_rate,
-                            min_bs,
-                            max_bs,
-                            dur_cap,
-                        );
-                        if let Some(&(f_off, f_smp, f_ms)) = frames.first() {
-                            lock_unpoisoned(&results).push((f_off, f_ms));
-                            lock_unpoisoned(&flac_pts_acc).push((f_off, f_smp));
-                        }
-                    }
-                    VbrProbeKind::MkvCluster { timecode_scale_ns } => {
-                        if let Some(pt) = ByteTimeMap::extract_mkv_cluster_anchor_in_slice(
-                            &slice,
-                            off,
-                            timecode_scale_ns,
-                            dur_cap,
-                        ) {
-                            lock_unpoisoned(&results).push(pt);
-                        }
-                    }
-                    VbrProbeKind::WavPack { sample_rate } => {
-                        if let Some(pt) = ByteTimeMap::extract_wavpack_anchor_in_slice(
-                            &slice,
-                            off,
-                            sample_rate,
-                            dur_cap,
-                        ) {
-                            lock_unpoisoned(&results).push(pt);
-                        }
-                    }
-                }
-            };
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let worker_count = total_tasks.clamp(1, 6);
-                std::thread::scope(|scope| {
-                    for _ in 0..worker_count {
-                        scope.spawn(run_worker);
-                    }
-                });
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                // `wasm32` cannot spawn nested OS threads inside `std::thread::scope`;
-                // we are already executing inside the dedicated `miniaudio-vbr-probe` worker.
-                run_worker();
-            }
-
-            if abort_arc.load(Ordering::Acquire) {
-                crate::map_log!(4, "[VBR_PROBE] aborted before merge");
-                return;
-            }
-            let f_pts = std::mem::take(&mut *lock_unpoisoned(&flac_pts_acc));
-            if !f_pts.is_empty() {
-                crate::map_log!(4, "[VBR_PROBE] recorded {} FLAC seek points", f_pts.len());
-                session.record_flac_seek_points(&f_pts);
-            }
-            let mut raw_pts = std::mem::take(&mut *lock_unpoisoned(&results));
-            if !raw_pts.is_empty() {
-                raw_pts.sort_by_key(|&(b, _)| b);
-                let mut monotonic = Vec::with_capacity(raw_pts.len());
-                for pt in raw_pts {
-                    if !monotonic
-                        .last()
-                        .is_some_and(|&(pb, pt_ms)| pt.0 <= pb || pt.1 < pt_ms)
-                    {
-                        monotonic.push(pt);
-                    }
-                }
-                if !monotonic.is_empty() {
-                    crate::map_log!(
-                        4,
-                        "[VBR_PROBE] merged {} monotonic byte-time anchors",
-                        monotonic.len()
-                    );
-                    session.merge_byte_time_anchors(monotonic);
-                }
-            }
-        }) {
-        crate::map_log!(2, "[VBR_PROBE] failed to spawn probe thread: {:?}", e);
-    }
-}
-
+/// Container-specific tail metadata resolver helper.
 /// Probes trailing metadata tags for `container` within `[audio_start, total_size)` using `fetch_range`,
 /// starting with the final 64 KB and expanding up to 4 MB when trailing APEv2 / Lyrics3 / ID3v2
 /// footer tags exceed 64 KB (e.g. embedded cover art).
+///
+/// Returns `(extracted_tail_metadata, resolved_audio_end, raw_tail_buffer_for_probe_cache)`.
 fn resolve_tail_metadata_with_fetcher<F>(
     container: ContainerFormat,
     total_size: i64,
     audio_start: i64,
     mut fetch_range: F,
-) -> (Option<(Vec<u8>, u64)>, Option<i64>)
+) -> TailMetadataResolution
 where
     F: FnMut(i64, i64) -> Option<Vec<u8>>,
 {
     /// Maximum tail scan window (4 MB) when locating oversized trailing metadata tags.
     const MAX_TAIL_META_SCAN: i64 = 4 * 1024 * 1024;
     let floor = audio_start.max(0);
-    let probe_len = 65536i64.min(total_size - floor);
+    let initial_probe: i64 = match container {
+        ContainerFormat::Ape | ContainerFormat::WavPack => 192 * 1024,
+        _ => 65536,
+    };
+    let probe_len = initial_probe.min(total_size - floor);
     if probe_len <= 0 {
-        return (None, None);
+        return (None, None, None);
     }
 
     let mut tail_offset = total_size - probe_len;
     let Some(mut buf) = fetch_range(tail_offset, total_size - 1) else {
-        return (None, None);
+        return (None, None, None);
     };
     if buf.is_empty() {
-        return (None, None);
+        return (None, None, None);
     }
 
     let mut last_status = BoundaryStatus::Unsupported;
@@ -425,12 +175,17 @@ where
             && end_or_needed < tail_offset
             && (total_size - end_or_needed) <= MAX_TAIL_META_SCAN
         {
-            if let Some(prefix) = fetch_range(end_or_needed, tail_offset - 1) {
-                if prefix.len() as i64 == tail_offset - end_or_needed {
+            const NEED_MORE_MARGIN: i64 = 4096;
+            let fetch_start = end_or_needed
+                .saturating_sub(NEED_MORE_MARGIN)
+                .max(floor)
+                .max(total_size.saturating_sub(MAX_TAIL_META_SCAN));
+            if let Some(prefix) = fetch_range(fetch_start, tail_offset - 1) {
+                if prefix.len() as i64 == tail_offset - fetch_start {
                     let mut combined = prefix;
                     combined.extend_from_slice(&buf);
                     buf = combined;
-                    tail_offset = end_or_needed;
+                    tail_offset = fetch_start;
                     continue;
                 }
             }
@@ -452,9 +207,9 @@ where
             audio_end,
             extracted.as_ref().map_or(0, |(v, _)| v.len())
         );
-        return (extracted, Some(audio_end));
+        return (extracted, Some(audio_end), Some((buf, tail_offset as u64)));
     }
-    (None, None)
+    (None, None, Some((buf, tail_offset as u64)))
 }
 
 /// Infers a numeric encoding format code from the request `url` extension or HTTP `content_type`.
@@ -527,6 +282,21 @@ fn apply_http_headers(
             req = req.header(&h.key, &h.value);
         }
     }
+    req
+}
+
+/// Attaches a cooperative external abort flag to `req` on `wasm32` targets (no-op on native).
+#[inline]
+#[allow(unused_variables)]
+fn with_wasm_abort(
+    req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+    abort_flag: &Arc<AtomicBool>,
+) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return req.with_abort_flag(abort_flag.clone());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     req
 }
 
@@ -2209,8 +1979,11 @@ fn spawn_network_streamer_thread(
                         if !skipped_in_place {
                             let range_hdr = format!("bytes={}-", order.offset);
                             let agent = build_network_agent();
-                            let req = apply_http_headers(agent.get(&url), headers.as_deref())
-                                .header("Range", &range_hdr);
+                            let req = with_wasm_abort(
+                                apply_http_headers(agent.get(&url), headers.as_deref())
+                                    .header("Range", &range_hdr),
+                                &abort_stream,
+                            );
                             match req.call() {
                                 Ok(res) if res.status().as_u16() == 206 => {
                                     crate::map_log!(4, "[NET_STREAM] Range repositioned to {}", order.offset);
@@ -2286,7 +2059,10 @@ fn spawn_network_streamer_thread(
                         if need_reopen {
                             crate::map_log!(4, "[NET_STREAM] non-Range reopen from 0 -> target={}", order.offset);
                             let agent = build_network_agent();
-                            let req = apply_http_headers(agent.get(&url), headers.as_deref());
+                            let req = with_wasm_abort(
+                                apply_http_headers(agent.get(&url), headers.as_deref()),
+                                &abort_stream,
+                            );
                             match req.call() {
                                 Ok(res) if res.status().as_u16() < 400 => {
                                     reader = Box::new(res.into_body().into_reader());
@@ -2385,9 +2161,11 @@ fn spawn_network_streamer_thread(
                                 );
                                 let range_hdr = format!("bytes={}-", current_end);
                                 let agent = build_network_agent();
-                                let req =
+                                let req = with_wasm_abort(
                                     apply_http_headers(agent.get(&url), headers.as_deref())
-                                        .header("Range", &range_hdr);
+                                        .header("Range", &range_hdr),
+                                    &abort_stream,
+                                );
                                 match req.call() {
                                     Ok(res) if res.status().as_u16() == 206 => {
                                         reader = Box::new(res.into_body().into_reader());
@@ -2478,9 +2256,11 @@ fn spawn_network_streamer_thread(
                                 );
                                 let range_hdr = format!("bytes={}-", current_end);
                                 let agent = build_network_agent();
-                                let req =
+                                let req = with_wasm_abort(
                                     apply_http_headers(agent.get(&url), headers.as_deref())
-                                        .header("Range", &range_hdr);
+                                        .header("Range", &range_hdr),
+                                    &abort_stream,
+                                );
                                 match req.call() {
                                     Ok(res) if res.status().as_u16() == 206 => {
                                         reader = Box::new(res.into_body().into_reader());
@@ -2880,8 +2660,14 @@ struct DecoderWorker {
 impl DecoderWorker {
     /// Blocks on the decoder wake condition variable for up to `timeout_ms` milliseconds.
     fn wait_for_wake(&self, timeout_ms: u64) {
+        if !self.running.load(Ordering::Acquire) {
+            return;
+        }
         let (lock, cvar) = &*self.wake;
         let guard = lock_unpoisoned(lock);
+        if !self.running.load(Ordering::Acquire) {
+            return;
+        }
         let _ = wait_timeout_unpoisoned(cvar, guard, Duration::from_millis(timeout_ms));
     }
 
@@ -3274,14 +3060,14 @@ impl DecoderWorker {
             }
         }
 
-        // Path B: out-of-buffer bounded probe (1-3 reads) directly onto exact Ogg page `P`.
+        // Path B: out-of-buffer bounded probe (1-5 reads) directly onto exact Ogg page `P`.
         if chosen.is_none() && (session.has_probe_fetcher() || session.supports_range()) {
             let mut guess = session
                 .estimate_byte_for_ms(target_seek)
                 .unwrap_or(audio_start)
                 .max(audio_start)
                 .min(audio_end.saturating_sub(64));
-            for _hop in 0..4 {
+            for _hop in 0..6 {
                 if is_superseded() {
                     return None;
                 }
@@ -3322,7 +3108,10 @@ impl DecoderWorker {
                     let next_off = last.offset.saturating_add(last.len as u64);
                     guess = est.max(next_off);
                 } else if first.start_ms > target_seek && win_start > audio_start {
-                    guess = first.offset.saturating_sub(40 * 1024).max(audio_start);
+                    let est = session
+                        .estimate_byte_for_ms(target_seek)
+                        .unwrap_or_else(|| first.offset.saturating_sub(40 * 1024));
+                    guess = est.min(first.offset.saturating_sub(40 * 1024)).max(audio_start);
                 } else {
                     let est = session
                         .estimate_byte_for_ms(target_seek)
@@ -3496,7 +3285,7 @@ impl DecoderWorker {
                 .unwrap_or(first_cluster)
                 .max(first_cluster)
                 .min(audio_end.saturating_sub(64));
-            for _hop in 0..4 {
+            for _hop in 0..6 {
                 if is_superseded() {
                     return None;
                 }
@@ -3527,9 +3316,19 @@ impl DecoderWorker {
                 let first_c = clusters[0];
                 let last_c = *clusters.last().unwrap();
                 if first_c.1 > target_seek && win_start > first_cluster {
-                    guess = win_start.saturating_sub(96 * 1024).max(first_cluster);
+                    let est = session
+                        .estimate_byte_for_ms(target_seek)
+                        .unwrap_or_else(|| win_start.saturating_sub(96 * 1024));
+                    guess = est
+                        .min(win_start.saturating_sub(96 * 1024))
+                        .max(first_cluster);
                 } else if last_c.1 < target_seek {
-                    guess = last_c.0.saturating_add(64 * 1024).min(audio_end.saturating_sub(64));
+                    let est = session
+                        .estimate_byte_for_ms(target_seek)
+                        .unwrap_or_else(|| last_c.0.saturating_add(64 * 1024));
+                    guess = est
+                        .max(last_c.0.saturating_add(64 * 1024))
+                        .min(audio_end.saturating_sub(64));
                 } else {
                     break;
                 }
@@ -3584,14 +3383,14 @@ impl DecoderWorker {
             && (!session.supports_range()
                 || cur_est.is_none_or(|eb| eb < cur_r_end)
                 || session.is_eof());
-        let defer_reanchor = !in_ram && session.has_probe_fetcher();
         if in_ram {
             session.body.set_cursor(cl_off);
-        } else if !defer_reanchor {
+        } else {
             session.record_verified_byte_time_anchor(cl_off, cl_ms);
             session.reanchor_circular_after_probe_seek(cl_off, cl_off);
         }
 
+        let _suspend_probe = session.suspend_probe_mode();
         session.set_decoding_audio(false);
         let reader = session.create_reader();
         let opened = SymphoniaEngine::new_windowed_mkv(patched_head, cl_off, reader, ext_hint);
@@ -3608,18 +3407,7 @@ impl DecoderWorker {
                 return None;
             }
         }
-        let (now_r_start, now_r_end, _) = session.body_metrics();
-        let resume_cursor = session.probe_seek_tracking().1.max(cl_off);
-        if defer_reanchor {
-            session.record_verified_byte_time_anchor(cl_off, cl_ms);
-            session.reanchor_circular_after_probe_seek(cl_off, resume_cursor);
-        } else if in_ram {
-            if resume_cursor < now_r_start || resume_cursor > now_r_end {
-                session.reanchor_circular_after_probe_seek(cl_off, resume_cursor);
-            } else {
-                session.body.set_cursor(resume_cursor);
-            }
-        }
+        drop(_suspend_probe);
         new_eng.set_anchor_ms(effective_ms);
         *eng_lock = Some(new_eng);
         crate::map_log!(
@@ -4155,6 +3943,7 @@ impl DecoderWorker {
         let mut direct_or_ape_reanchored = false;
         let mut non_range_est_in_ram = true;
         let mut deferred_non_range_reanchor = false;
+        let mut is_mp4_stream = false;
 
         if let Ok(mut eng_lock) = self.engine_arc.lock() {
             if is_superseded() {
@@ -4476,6 +4265,7 @@ impl DecoderWorker {
                     None => {}
                 }
             }
+            is_mp4_stream = eng_lock.as_ref().is_some_and(|e| e.is_mp4_stream());
         }
         if let (Some(ref session), Some(actual_ms)) = (&session_opt, actual_seek_ms_opt) {
             if seek_ok {
@@ -4508,11 +4298,25 @@ impl DecoderWorker {
                         if let Some(ab) = target_byte_opt {
                             let (r_start, r_end, _) = session.body_metrics();
                             if ab < r_start || ab >= r_end {
-                                session.reanchor_circular_after_probe_seek(ab, probe_read_end);
+                                let reanchor_byte = if is_mp4_stream && probe_seek_opt.is_none() {
+                                    session
+                                        .floor_anchor_byte_for_ms(actual_ms as i64)
+                                        .unwrap_or(ab)
+                                        .min(ab)
+                                } else {
+                                    ab
+                                };
+                                session.reanchor_circular_after_probe_seek(
+                                    reanchor_byte,
+                                    probe_read_end,
+                                );
                                 if !session.has_byte_time_anchors()
-                                    || session.mapped_byte_to_ms(ab, true) > target_seek
+                                    || session.mapped_byte_to_ms(reanchor_byte, true) > target_seek
                                 {
-                                    session.record_verified_byte_time_anchor(ab, actual_ms as i64);
+                                    session.record_verified_byte_time_anchor(
+                                        reanchor_byte,
+                                        actual_ms as i64,
+                                    );
                                 }
                             } else {
                                 // Wake network streamer immediately for in-buffer seeks near the forward edge.
@@ -4831,7 +4635,7 @@ impl DecoderWorker {
         if !in_ram_bracket && !is_superseded() && session.has_probe_fetcher() {
             if let Some(mut est_byte) = session.estimate_byte_for_ms(target_seek_ms) {
                 let audio_end = session.audio_end_offset().unwrap_or(u64::MAX);
-                for _attempt in 0..2 {
+                for _attempt in 0..4 {
                     if is_superseded() {
                         break;
                     }
@@ -4858,25 +4662,38 @@ impl DecoderWorker {
                     if target_sample >= first_s && target_sample <= last_s {
                         break;
                     }
-                    // Extrapolate refinement using local sample density inside the probed page or average rate.
-                    let local_bps = if frames.len() >= 2 && last_s > first_s {
-                        let d_bytes = frames.last().unwrap().0.saturating_sub(frames[0].0) as f64;
-                        let d_smp = (last_s - first_s) as f64;
-                        (d_bytes / d_smp).max(0.1)
-                    } else if max_dur_ms > 0 && audio_end > first_frame && audio_end != u64::MAX {
-                        let tot_smp = (max_dur_ms as f64 / 1000.0) * sr as f64;
-                        ((audio_end - first_frame) as f64 / tot_smp.max(1.0)).max(0.1)
-                    } else {
-                        break;
-                    };
+                    // Extrapolate refinement via piecewise anchors for >2s gaps or local density nearby.
                     let ref_pt = if target_sample < first_s {
                         frames[0]
                     } else {
                         *frames.last().unwrap()
                     };
-                    let delta_smp = target_sample as i128 - ref_pt.1 as i128;
-                    let shift = (delta_smp as f64 * local_bps) as i64;
-                    let next_est = (ref_pt.0 as i64).saturating_add(shift).max(first_frame as i64) as u64;
+                    let gap_ms = (target_sample.abs_diff(ref_pt.1) * 1000) / sr.max(1) as u64;
+                    let next_est = if gap_ms > 2_000 {
+                        if let Some(global_est) = session.estimate_byte_for_ms(target_seek_ms) {
+                            global_est
+                        } else {
+                            break;
+                        }
+                    } else {
+                        let local_bps = if frames.len() >= 2 && last_s > first_s {
+                            let d_bytes =
+                                frames.last().unwrap().0.saturating_sub(frames[0].0) as f64;
+                            let d_smp = (last_s - first_s) as f64;
+                            (d_bytes / d_smp).max(0.1)
+                        } else if max_dur_ms > 0 && audio_end > first_frame && audio_end != u64::MAX
+                        {
+                            let tot_smp = (max_dur_ms as f64 / 1000.0) * sr as f64;
+                            ((audio_end - first_frame) as f64 / tot_smp.max(1.0)).max(0.1)
+                        } else {
+                            break;
+                        };
+                        let delta_smp = target_sample as i128 - ref_pt.1 as i128;
+                        let shift = (delta_smp as f64 * local_bps) as i64;
+                        (ref_pt.0 as i64)
+                            .saturating_add(shift)
+                            .max(first_frame as i64) as u64
+                    };
                     if next_est.abs_diff(probe_start + 32 * 1024) < 8_192 {
                         break;
                     }
@@ -5312,7 +5129,7 @@ impl DecoderWorker {
     /// Main background worker loop executing until `running` is cleared.
     fn run(&mut self) {
         crate::map_log!(4, "[DECODER] worker loop started");
-        while self.running.load(Ordering::Relaxed) {
+        while self.running.load(Ordering::Acquire) {
             self.poll_renderer_flags();
 
             if self.is_stream_arc.load(Ordering::Relaxed) {
@@ -6004,6 +5821,7 @@ impl StreamingDeck {
         }
         if let Ok(mut guard) = self.stream_session.write() {
             if let Some(ref session) = *guard {
+                session.set_probe_fetcher(None);
                 session.abort();
             }
             *guard = None;
@@ -6289,13 +6107,18 @@ impl StreamingDeck {
             Vec::new()
         };
         let is_analysis_deck = self.is_analysis;
+        let hls_ring_cap = if is_analysis_deck {
+            (1024 * 1024).max(first_audio.len())
+        } else {
+            4 * 1024 * 1024
+        };
         let mut attached_vod: Option<Arc<crate::buffer::HlsVodState>> = None;
         let res_code = self.open_stream_ex_with_setup(
             &first_audio,
             None,
             -1,
             is_live,
-            4 * 1024 * 1024,
+            hls_ring_cap,
             seg_fmt,
             |_, _, session, boundary, icy_slot| {
                 let a_start = boundary.audio_start.max(0) as u64;
@@ -6457,6 +6280,12 @@ impl StreamingDeck {
         self.open_generation.fetch_add(1, Ordering::AcqRel);
         crate::map_log!(3, "[DECK] open_network: connecting to url={}", url);
 
+        let stream_abort = Arc::new(AtomicBool::new(false));
+        let abort_for_cancel = stream_abort.clone();
+        let _cancel_guard = cancel.map(|c| {
+            c.on_cancel(move || abort_for_cancel.store(true, Ordering::Release))
+        });
+
         let agent = if cancel.is_some() {
             build_network_probe_agent()
         } else {
@@ -6466,6 +6295,7 @@ impl StreamingDeck {
         if should_send_initial_icy_header(headers, explicit_icy, cfg!(target_arch = "wasm32")) {
             req = req.header("Icy-MetaData", "1");
         }
+        let req = with_wasm_abort(req, &stream_abort);
 
         let res = match req.call() {
             Ok(r) => r,
@@ -6519,10 +6349,12 @@ impl StreamingDeck {
             icy_metaint
         );
 
+        #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
+        let mut has_icy_demux = icy_metaint > 0;
         let session_slot: Arc<Mutex<Option<StreamSession>>> = Arc::new(Mutex::new(None));
         let latest_icy: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
 
-        let mut reader: Box<dyn Read + Send> = if icy_metaint > 0 {
+        let mut reader: Box<dyn Read + Send> = if has_icy_demux {
             Box::new(IcyDemuxReader::new(
                 Box::new(res.into_body().into_reader()),
                 icy_metaint,
@@ -6574,6 +6406,7 @@ impl StreamingDeck {
 
         let mut tail_data: Option<Vec<u8>> = None;
         let mut forced_audio_end: Option<u64> = None;
+        let mut raw_tail_for_probe_cache: Option<(Vec<u8>, u64)> = None;
 
         if !reached_eof
             && effective_content_length > 0
@@ -6617,20 +6450,39 @@ impl StreamingDeck {
                 && boundary.audio_end < effective_content_length
                 && (effective_content_length - boundary.audio_end) <= 4 * 1024 * 1024
             {
-                if let Some(tail) = fetch_probe_range(boundary.audio_end, effective_content_length - 1)
-                {
-                    tail_data = Some(tail);
+                let aiff_ignore_pad = if boundary.container == ContainerFormat::Aiff {
+                    65536 + 4096
+                } else {
+                    0
+                };
+                let fetch_start = boundary
+                    .audio_end
+                    .saturating_sub(aiff_ignore_pad)
+                    .max(boundary.audio_start.max(0));
+                if let Some(raw) = fetch_probe_range(fetch_start, effective_content_length - 1) {
+                    let meta_rel = (boundary.audio_end - fetch_start).max(0) as usize;
+                    let tail = if meta_rel < raw.len() {
+                        raw[meta_rel..].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    if raw.len() <= 512 * 1024 {
+                        raw_tail_for_probe_cache = Some((raw, fetch_start as u64));
+                    }
+                    if !tail.is_empty() {
+                        tail_data = Some(tail);
+                    }
                     forced_audio_end = Some(boundary.audio_end as u64);
                     range_supported = true;
                 }
             } else if allow_tail_probe
                 && StreamClassifier::container_needs_tail_scan(boundary.container)
             {
-                let (extracted, ae_opt) = resolve_tail_metadata_with_fetcher(
+                let (extracted, ae_opt, raw_tail) = resolve_tail_metadata_with_fetcher(
                     boundary.container,
                     effective_content_length,
                     boundary.audio_start,
-                    |s, e| fetch_probe_range(s, e),
+                    fetch_probe_range,
                 );
                 if range_already_proven {
                     range_supported = true;
@@ -6640,6 +6492,9 @@ impl StreamingDeck {
                 }
                 if let Some(ae) = ae_opt {
                     forced_audio_end = Some(ae as u64);
+                }
+                if raw_tail.as_ref().is_some_and(|(b, _)| b.len() <= 512 * 1024) {
+                    raw_tail_for_probe_cache = raw_tail;
                 }
             }
             if range_rejected {
@@ -6666,7 +6521,7 @@ impl StreamingDeck {
                 tail_data = Some(initial_data[off..].to_vec());
                 forced_audio_end = Some(boundary.audio_end as u64);
             } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
-                let (extracted, ae_opt) = resolve_tail_metadata_with_fetcher(
+                let (extracted, ae_opt, _) = resolve_tail_metadata_with_fetcher(
                     boundary.container,
                     effective_content_length,
                     boundary.audio_start,
@@ -6721,9 +6576,12 @@ impl StreamingDeck {
                     .is_some_and(|hs| hs.iter().any(|h| h.key.eq_ignore_ascii_case("icy-metadata")))
             {
                 let up_agent = build_metadata_probe_agent();
-                let up_req = apply_http_headers(up_agent.get(url), headers)
-                    .header("Icy-MetaData", "1")
-                    .header(crate::net::wasm_ureq_protocol::HDR_ICY_STRICT, "1");
+                let up_req = with_wasm_abort(
+                    apply_http_headers(up_agent.get(url), headers)
+                        .header("Icy-MetaData", "1")
+                        .header(crate::net::wasm_ureq_protocol::HDR_ICY_STRICT, "1"),
+                    &stream_abort,
+                );
                 if let Ok(up_res) = up_req.call() {
                     let (up_metaint, up_meta_opt) = parse_icy_response_headers(&up_res);
                     if let Some(up_meta) = up_meta_opt {
@@ -6758,6 +6616,7 @@ impl StreamingDeck {
                         if !up_initial.is_empty() {
                             reader = up_reader;
                             initial_data = up_initial;
+                            has_icy_demux = true;
                         }
                     }
                 }
@@ -6778,6 +6637,11 @@ impl StreamingDeck {
 
         let mut preserved_icy = self.icy_metadata.read().ok().and_then(|g| g.clone());
         let is_analysis_deck = self.is_analysis;
+        let net_ring_cap = if is_analysis_deck {
+            (1024 * 1024).max(initial_data.len())
+        } else {
+            StreamSession::DEFAULT_RING_CAPACITY
+        };
         let mut reader_opt = Some(reader);
         let tail_ref = tail_data.as_deref();
         let forced_ae = forced_audio_end;
@@ -6786,7 +6650,7 @@ impl StreamingDeck {
             tail_ref,
             effective_content_length,
             is_live,
-            StreamSession::DEFAULT_RING_CAPACITY,
+            net_ring_cap,
             encoding_format,
             |abort_slot, dec_running, session, boundary, icy_slot| {
                 if let Some(icy) = preserved_icy.take() {
@@ -6797,10 +6661,10 @@ impl StreamingDeck {
                     let range_url = url.to_string();
                     let range_headers = headers.map(|h| h.to_vec());
                     let range_agent = build_network_probe_agent();
-                    let session_flag = session.clone();
+                    let supports_range_flag = session.supports_range_flag();
                     let tot_u64 = effective_content_length.max(0) as u64;
                     let fetcher: ProbeFetcherFn = Arc::new(move |offset, len| {
-                        if !session_flag.supports_range() || len == 0 {
+                        if !supports_range_flag.load(Ordering::Acquire) || len == 0 {
                             return None;
                         }
                         let max_end = if tot_u64 > 0 {
@@ -6823,17 +6687,20 @@ impl StreamingDeck {
                         ) {
                             Ok(bytes) => Some(bytes),
                             Err(RangeFetchError::CorsRangeBlocked) => {
-                                session_flag.set_supports_range(false);
+                                supports_range_flag.store(false, Ordering::Release);
                                 None
                             }
                             Err(RangeFetchError::Status(status)) if status != 416 => {
-                                session_flag.set_supports_range(false);
+                                supports_range_flag.store(false, Ordering::Release);
                                 None
                             }
                             Err(_) => None,
                         }
                     });
                     session.set_probe_fetcher(Some(fetcher));
+                    if let Some((raw_bytes, raw_off)) = raw_tail_for_probe_cache {
+                        session.seed_probe_cache(raw_off, raw_bytes);
+                    }
                 }
                 if let Some(ae) = forced_ae {
                     session.set_has_container_tail(
@@ -6858,8 +6725,10 @@ impl StreamingDeck {
                         session.set_icy_meta(icy_bytes);
                     }
                 }
-                if let Ok(mut slot) = session_slot.lock() {
-                    *slot = Some(session.clone());
+                if has_icy_demux {
+                    if let Ok(mut slot) = session_slot.lock() {
+                        *slot = Some(session.clone());
+                    }
                 }
 
                 if reached_eof && (initial_data.len() as i64) >= effective_content_length {
@@ -6878,7 +6747,7 @@ impl StreamingDeck {
                 }
 
                 abort_slot.store(true, Ordering::Release);
-                let new_abort = Arc::new(AtomicBool::new(false));
+                let new_abort = stream_abort.clone();
                 *abort_slot = new_abort.clone();
 
                 if let Some(net_reader) = reader_opt.take() {
@@ -7001,7 +6870,7 @@ impl StreamingDeck {
                     }
                 }
             } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
-                let (extracted, ae_opt) = resolve_tail_metadata_with_fetcher(
+                let (extracted, ae_opt, _) = resolve_tail_metadata_with_fetcher(
                     boundary.container,
                     total_size,
                     boundary.audio_start,
@@ -7259,7 +7128,7 @@ impl StreamingDeck {
                 let off = boundary.audio_end as usize;
                 tail_owned = Some((data[off..].to_vec(), Some(off as u64)));
             } else if StreamClassifier::container_needs_tail_scan(boundary.container) {
-                let (extracted, _) = resolve_tail_metadata_with_fetcher(
+                let (extracted, _, _) = resolve_tail_metadata_with_fetcher(
                     boundary.container,
                     total_size,
                     boundary.audio_start,
@@ -7377,6 +7246,7 @@ impl StreamingDeck {
                 Err(e) => {
                     drop(_probe);
                     self.network_streamer_abort.store(true, Ordering::Release);
+                    session.set_probe_fetcher(None);
                     session.abort();
                     crate::map_log!(
                         1,
@@ -7765,8 +7635,6 @@ impl StreamingDeck {
                             if let Some((_, _, Some(first_cluster))) = mkv_info {
                                 session.refine_byte_time_audio_start(first_cluster);
                             }
-                            let mkv_cues_complete =
-                                parsed_mkv_anchors.as_ref().is_some_and(|v| v.len() >= 4);
                             if let Some(pts) = parsed_mkv_anchors {
                                 session.set_byte_time_anchors(pts);
                             }
@@ -7825,63 +7693,6 @@ impl StreamingDeck {
                                 }
                             } else {
                                 session.set_buffered_boundary_kind(BufferedBoundaryKind::None);
-                            }
-
-                            if !self.is_analysis
-                                && !mkv_cues_complete
-                                && session_audio_end > session_audio_start + 65_536
-                                && !initial_data.is_empty()
-                            {
-                                if let Some(fetcher) = session.probe_fetcher() {
-                                    let probe_kind = if let Some((serial, ogg_sr, pre_skip)) =
-                                        ogg_info
-                                    {
-                                        let has_first = ByteTimeMap::parse_ogg_first_audio_page(
-                                            initial_data,
-                                            0,
-                                            serial,
-                                            pre_skip,
-                                        )
-                                        .is_some();
-                                        let scan_from = if has_first {
-                                            None
-                                        } else {
-                                            Some(initial_data.len().saturating_sub(32) as u64)
-                                        };
-                                        Some(VbrProbeKind::Ogg {
-                                            serial,
-                                            sample_rate: ogg_sr,
-                                            pre_skip,
-                                            find_first_audio_from: scan_from,
-                                        })
-                                    } else if let Some((flac_sr, min_bs, max_bs)) = flac_info {
-                                        Some(VbrProbeKind::Flac {
-                                            sample_rate: flac_sr,
-                                            min_bs,
-                                            max_bs,
-                                        })
-                                    } else if let Some((_, scale_ns, _)) = mkv_info {
-                                        Some(VbrProbeKind::MkvCluster {
-                                            timecode_scale_ns: scale_ns,
-                                        })
-                                    } else if wavpack_first.is_some() && sr > 0 {
-                                        Some(VbrProbeKind::WavPack { sample_rate: sr })
-                                    } else {
-                                        None
-                                    };
-
-                                    if let Some(kind) = probe_kind {
-                                        spawn_vbr_probe_thread(
-                                            session.clone(),
-                                            fetcher,
-                                            self.network_streamer_abort.clone(),
-                                            session_audio_start,
-                                            session_audio_end,
-                                            dur,
-                                            kind,
-                                        );
-                                    }
-                                }
                             }
                         }
                     }
@@ -8710,18 +8521,58 @@ impl StreamingDeck {
         self.network_streamer_abort.store(true, Ordering::Release);
         if let Ok(guard) = self.stream_session.read() {
             if let Some(ref session) = *guard {
+                session.set_probe_fetcher(None);
                 session.abort();
             }
         }
+        if let Some(ref handle) = *read_unpoisoned(&self.custom_source_handle) {
+            handle.abort();
+        }
         self.telemetry.stop();
-        self.decoder_running.store(false, Ordering::Relaxed);
-        let (_, cvar) = &*self.decoder_wake;
-        cvar.notify_all();
+        self.decoder_running.store(false, Ordering::Release);
+        {
+            let (lock, cvar) = &*self.decoder_wake;
+            let mut woke = lock_unpoisoned(lock);
+            *woke = true;
+            drop(woke);
+            cvar.notify_all();
+        }
 
         if let Some(handle) = self.decoder_thread.take() {
             let _ = handle.join();
         }
 
+        if let Ok(mut guard) = self.stream_session.write() {
+            if let Some(ref session) = *guard {
+                session.set_probe_fetcher(None);
+            }
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.engine.lock() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.cached_metadata.lock() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.reopen_local_fn.lock() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.symphonia_meta.write() {
+            *guard = crate::metadata::SymphoniaExtractedMeta::default();
+        }
+        if let Ok(mut guard) = self.icy_metadata.write() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.boundary_info.write() {
+            *guard = None;
+        }
+        *write_unpoisoned(&self.custom_source_handle) = None;
+        if let Ok(mut guard) = self.audio_producer.lock() {
+            *guard = None;
+        }
+        if let Ok(mut guard) = self.cmd_producer.lock() {
+            *guard = None;
+        }
         self.renderer = None;
     }
 }

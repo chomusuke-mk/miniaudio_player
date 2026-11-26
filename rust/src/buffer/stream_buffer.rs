@@ -1790,6 +1790,8 @@ pub struct StreamSession {
     supports_range: Arc<AtomicBool>,
     /// Active reentrant probe depth (container open or demuxer seek-table inspection).
     probe_depth: Arc<AtomicUsize>,
+    /// Nesting depth temporarily suspending isolated probe mode for sequential `Body` streaming.
+    probe_suspend_depth: Arc<AtomicUsize>,
     /// Optional on-demand range fetcher for isolated probe/seek reads.
     probe_fetcher: Arc<RwLock<Option<ProbeFetcherFn>>>,
     /// Bounded page cache backing isolated probe/seek reads without disturbing the `Body` ring.
@@ -2248,6 +2250,7 @@ impl StreamSession {
             is_decoding_audio: Arc::new(AtomicBool::new(false)),
             supports_range: Arc::new(AtomicBool::new(false)),
             probe_depth: Arc::new(AtomicUsize::new(0)),
+            probe_suspend_depth: Arc::new(AtomicUsize::new(0)),
             probe_fetcher: Arc::new(RwLock::new(None)),
             probe_cache: Arc::new(Mutex::new(ProbePageCache::default())),
             has_container_tail: Arc::new(AtomicBool::new(false)),
@@ -3166,6 +3169,12 @@ impl StreamSession {
         self.supports_range.store(supported, Ordering::Release);
     }
 
+    /// Returns a shared handle to the atomic `supports_range` flag without cloning the full [`StreamSession`].
+    #[inline]
+    pub fn supports_range_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.supports_range)
+    }
+
     /// Enters isolated probe mode (container open or demuxer seek-table inspection),
     /// returning an RAII guard that decrements the active depth on drop.
     #[inline]
@@ -3176,10 +3185,21 @@ impl StreamSession {
         }
     }
 
+    /// Temporarily suspends isolated probe mode so sequential reads stream directly from `Body`
+    /// without issuing per-page `ProbePageCache` HTTP Range requests, restoring on drop.
+    #[inline]
+    pub fn suspend_probe_mode(&self) -> ProbeGuard {
+        self.probe_suspend_depth.fetch_add(1, Ordering::AcqRel);
+        ProbeGuard {
+            depth: Arc::clone(&self.probe_suspend_depth),
+        }
+    }
+
     /// Returns whether one or more probe/seek scopes are currently active.
     #[inline]
     pub fn in_probe_mode(&self) -> bool {
         self.probe_depth.load(Ordering::Acquire) > 0
+            && self.probe_suspend_depth.load(Ordering::Acquire) == 0
     }
 
     /// Attaches or clears the on-demand range `fetcher` used during isolated probe/seek reads.
@@ -3207,6 +3227,14 @@ impl StreamSession {
         read_unpoisoned(&self.probe_fetcher).clone()
     }
 
+    /// Seeds an already-fetched byte slice into `probe_cache` so subsequent demuxer probes reuse it.
+    pub fn seed_probe_cache(&self, offset: u64, data: Vec<u8>) {
+        if data.is_empty() {
+            return;
+        }
+        lock_unpoisoned(&self.probe_cache).insert(offset, data);
+    }
+
     /// Serves an isolated probe/seek read at `offset` into `out` from the bounded probe cache
     /// or via HTTP Range without mutating or flushing the circular `Body` ring buffer.
     ///
@@ -3231,12 +3259,51 @@ impl StreamSession {
                 return Some(Ok(0));
             }
         }
-        if self.is_decoding_audio.load(Ordering::Acquire) {
+        let decoding = self.is_decoding_audio.load(Ordering::Acquire);
+        if decoding {
             let audio_end = self.audio_end.load(Ordering::Acquire);
             if audio_end != u64::MAX && offset >= audio_end {
                 return Some(Ok(0));
             }
         }
+        let logical_end = if decoding {
+            self.audio_end_offset().or(self.total_size)
+        } else {
+            self.total_size.or_else(|| self.audio_end_offset())
+        };
+        let desired_end = match logical_end {
+            Some(lim) => offset.saturating_add(out.len() as u64).min(lim),
+            None => offset.saturating_add(out.len() as u64),
+        };
+        if desired_end <= offset {
+            return Some(Ok(0));
+        }
+        let required_len = (desired_end - offset) as usize;
+
+        let head_len = self.head.linear_len() as u64;
+        if desired_end <= head_len {
+            if let Ok(n) = self.head.read_at(offset, out) {
+                if n > 0 {
+                    return Some(Ok(n));
+                }
+            }
+        }
+        if !decoding {
+            if let Ok(n) = self.metadata.read_at(offset, out) {
+                if n >= required_len {
+                    return Some(Ok(n));
+                }
+            }
+        }
+        let (r_start, r_end, _) = self.body.circular_metrics();
+        if offset >= r_start && (desired_end <= r_end || (self.body.is_eof() && offset < r_end)) {
+            if let Ok(n) = self.body.read_at(offset, out) {
+                if n > 0 {
+                    return Some(Ok(n));
+                }
+            }
+        }
+
         if !self.supports_range() {
             return None;
         }
@@ -3251,8 +3318,7 @@ impl StreamSession {
         }
 
         let page_align: u64 = 16 * 1024;
-        let head_len = self.head.linear_len() as u64;
-        let mut fetch_start = if out.len() <= ProbePageCache::PAGE_SIZE {
+        let mut fetch_start = if out.len() <= 16 * 1024 {
             offset & !(page_align - 1)
         } else {
             offset
@@ -3420,6 +3486,11 @@ impl StreamSession {
     /// Estimates the file byte offset for `time_ms` using [`ByteTimeMap`].
     pub fn estimate_byte_for_ms(&self, time_ms: i64) -> Option<u64> {
         read_unpoisoned(&self.byte_time_map).estimate_byte_for_ms(time_ms)
+    }
+
+    /// Returns the largest anchor byte offset whose timestamp precedes `time_ms` via [`ByteTimeMap`].
+    pub fn floor_anchor_byte_for_ms(&self, time_ms: i64) -> Option<u64> {
+        read_unpoisoned(&self.byte_time_map).floor_anchor_byte_for_ms(time_ms)
     }
 
     /// Returns true when [`ByteTimeMap`] already holds container, segment, or probed anchors.

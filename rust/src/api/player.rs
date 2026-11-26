@@ -3,6 +3,7 @@
 //! Exposes `RustMiniaudioPlayer` orchestrating music decks, RAM sound effects,
 //! multi-destination output matrix, and microphone capture sidechain.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use crate::sync::thread::{self, JoinHandle};
@@ -282,14 +283,52 @@ impl AtomicTelemetryFilter {
     }
 }
 
+/// Maximum number of unconsumed events retained when no Dart stream sink is attached.
+#[flutter_rust_bridge::frb(ignore)]
+const MAX_PENDING_EVENTS: usize = 64;
+
+/// Returns `true` when newer instances of `event` supersede older queued instances while
+/// waiting for a Dart stream subscriber.
+#[flutter_rust_bridge::frb(ignore)]
+#[inline]
+fn is_coalescable_pending_event(event: &RustPlayerEvent) -> bool {
+    matches!(
+        event,
+        RustPlayerEvent::AudioMetadata(_)
+            | RustPlayerEvent::Visualizer(_)
+            | RustPlayerEvent::AudioInfo(_)
+            | RustPlayerEvent::Position(_)
+            | RustPlayerEvent::Buffer(_)
+            | RustPlayerEvent::PlaybackState(_)
+            | RustPlayerEvent::IsPlaying(_)
+            | RustPlayerEvent::IsBuffering(_)
+            | RustPlayerEvent::IsCrossfading(_)
+            | RustPlayerEvent::IsRecording(_)
+            | RustPlayerEvent::RecordedDuration(_)
+            | RustPlayerEvent::IsDuckingActive(_)
+            | RustPlayerEvent::MicRmsLevel(_)
+            | RustPlayerEvent::CurrentIndex(_)
+            | RustPlayerEvent::ReplayGain(_)
+            | RustPlayerEvent::ActiveVoices(_)
+            | RustPlayerEvent::Outputs(_)
+            | RustPlayerEvent::Inputs(_)
+            | RustPlayerEvent::OutputDevices(_)
+            | RustPlayerEvent::InputDevices(_)
+            | RustPlayerEvent::VisualizerSource(_)
+            | RustPlayerEvent::IsShuffled(_)
+            | RustPlayerEvent::PauseOnDeviceChange(_)
+            | RustPlayerEvent::Queue { .. }
+    )
+}
+
 /// Internal stream sink and pre-subscription queue protected by `EventReporter::sink_state`.
 #[flutter_rust_bridge::frb(ignore)]
 #[derive(Default)]
 struct EventSinkState {
     /// Active Flutter Rust Bridge stream sink when subscribed.
     sink: Option<StreamSink<RustPlayerEvent>>,
-    /// Buffered events accumulated before a sink is attached.
-    pending: Vec<RustPlayerEvent>,
+    /// Bounded buffer of coalesced events accumulated before a sink is attached.
+    pending: VecDeque<RustPlayerEvent>,
 }
 
 /// Dispatches engine events to the Flutter Rust Bridge stream sink with deduplication filtering.
@@ -317,6 +356,7 @@ impl EventReporter {
         for ev in state.pending.drain(..) {
             let _ = sink.add(ev);
         }
+        state.pending.shrink_to_fit();
         state.sink = Some(sink);
         map_log!(
             4,
@@ -325,10 +365,13 @@ impl EventReporter {
         );
     }
 
-    /// Detaches the active stream sink.
+    /// Detaches the active stream sink, releases any queued pre-subscription payloads, and resets filters.
     pub fn clear_sink(&self) {
         let mut state = lock_unpoisoned(&self.sink_state);
         state.sink = None;
+        state.pending.clear();
+        state.pending.shrink_to_fit();
+        self.filter.reset();
         map_log!(4, "[EVENT] Cleared event stream sink");
     }
 
@@ -344,7 +387,14 @@ impl EventReporter {
             if let Some(ref sink) = state.sink {
                 let _ = sink.add(event);
             } else {
-                state.pending.push(event);
+                if is_coalescable_pending_event(&event) {
+                    let disc = std::mem::discriminant(&event);
+                    state.pending.retain(|prev| std::mem::discriminant(prev) != disc);
+                }
+                while state.pending.len() >= MAX_PENDING_EVENTS {
+                    state.pending.pop_front();
+                }
+                state.pending.push_back(event);
             }
         }
     }
@@ -2818,6 +2868,9 @@ impl RustMiniaudioPlayer {
             let _ = jh.join();
         }
         self.engine.shutdown();
+        // Re-clear after all background threads and the engine actor have stopped
+        // so late shutdown ticks cannot leave unconsumed events queued.
+        self.reporter.clear_sink();
         map_log!(3, "[API:DISPOSE] RustMiniaudioPlayer disposed cleanly.");
     }
 }

@@ -9,7 +9,7 @@ use symphonia::core::codecs::audio::{
 };
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::probe::{Hint, Probe};
 use symphonia::core::formats::{
     well_known as format_wk, FormatId, FormatOptions, FormatReader, SeekMode, SeekTo,
 };
@@ -42,6 +42,28 @@ pub fn shared_codec_registry() -> &'static CodecRegistry {
     /// Process-wide lazily initialized Symphonia codec registry.
     static REGISTRY: std::sync::OnceLock<CodecRegistry> = std::sync::OnceLock::new();
     REGISTRY.get_or_init(create_codec_registry)
+}
+
+/// Returns a cached `Probe` registering all container formats and leading `Id3v2Reader` metadata
+/// without trailing `Id3v1Reader`/`ApeReader` anchors, avoiding extra HTTP tail `206` seeks on streams
+/// whose tail metadata was already resolved upfront.
+fn shared_streaming_probe() -> &'static Probe {
+    /// Process-wide lazily initialized streaming Symphonia probe without trailing tag anchors.
+    static STREAM_PROBE: std::sync::OnceLock<Probe> = std::sync::OnceLock::new();
+    STREAM_PROBE.get_or_init(|| {
+        let mut probe = Probe::default();
+        probe.register_format::<symphonia::default::formats::AdtsReader<'_>>();
+        probe.register_format::<symphonia::default::formats::CafReader<'_>>();
+        probe.register_format::<symphonia::default::formats::FlacReader<'_>>();
+        probe.register_format::<symphonia::default::formats::IsoMp4Reader<'_>>();
+        probe.register_format::<symphonia::default::formats::MpaReader<'_>>();
+        probe.register_format::<symphonia::default::formats::AiffReader<'_>>();
+        probe.register_format::<symphonia::default::formats::WavReader<'_>>();
+        probe.register_format::<symphonia::default::formats::OggReader<'_>>();
+        probe.register_format::<symphonia::default::formats::MkvReader<'_>>();
+        probe.register_metadata::<symphonia::default::meta::Id3v2Reader<'_>>();
+        probe
+    })
 }
 
 /// Maps a Symphonia `codec` identifier and optional `explicit_bps` bit depth to
@@ -195,6 +217,7 @@ impl SymphoniaTrackSession {
     fn open(
         source: Box<dyn MediaSource>,
         hint_extension: Option<&str>,
+        allow_trailing_probe: bool,
     ) -> Result<Self, SymphoniaError> {
         let mut hint = Hint::new();
         if let Some(ext) = hint_extension {
@@ -202,7 +225,12 @@ impl SymphoniaTrackSession {
         }
 
         let mss = MediaSourceStream::new(source, MediaSourceStreamOptions::default());
-        let mut format_reader = symphonia::default::get_probe()
+        let probe = if allow_trailing_probe {
+            symphonia::default::get_probe()
+        } else {
+            shared_streaming_probe()
+        };
+        let mut format_reader = probe
             .probe(
                 &hint,
                 mss,
@@ -837,7 +865,8 @@ impl SymphoniaEngine {
             None
         };
 
-        let mut session = SymphoniaTrackSession::open(boxed_source, hint_extension)?;
+        let mut session =
+            SymphoniaTrackSession::open(boxed_source, hint_extension, allow_full_stream_scan)?;
         if let Some((_sr, _ch, exact_dur)) = adts_info {
             session.duration_ms = Some(exact_dur);
         }

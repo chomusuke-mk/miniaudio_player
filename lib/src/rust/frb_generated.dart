@@ -8557,7 +8557,7 @@ class EventReporterImpl extends RustOpaque implements EventReporter {
         RustLib.instance.api.rust_arc_decrement_strong_count_EventReporterPtr,
   );
 
-  /// Detaches the active stream sink.
+  /// Detaches the active stream sink, releases any queued pre-subscription payloads, and resets filters.
   Future<void> clearSink() =>
       RustLib.instance.api.crateApiPlayerEventReporterClearSink(
         that: this,

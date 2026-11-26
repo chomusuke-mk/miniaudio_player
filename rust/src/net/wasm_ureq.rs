@@ -146,6 +146,7 @@ var netCh = null;
 var pageOrigin = '';
 var pageHref = '';
 var streams = new Map();
+var textEncoder = new TextEncoder();
 
 var STATE_HEADERS_READY = 1;
 var STATE_EOF = 2;
@@ -233,13 +234,12 @@ function wakeRust(ctrlPtr) {
     Atomics.notify(c, CTRL_WAKE_RUST);
 }
 function writeResponseHeaders(res, reqUrl, ctrlPtr, hdrPtr, hdrCap) {
-    var enc = new TextEncoder();
     var buf = getBuf(hdrPtr, hdrCap);
     var off = 0;
     function writePair(k, v) {
         var cleanK = String(k).toLowerCase().replace(/[\r\n\0]/g, '');
         var cleanV = String(v).replace(/[\r\n\0]/g, ' ');
-        var b = enc.encode(cleanK + '\0' + cleanV + '\n');
+        var b = textEncoder.encode(cleanK + '\0' + cleanV + '\n');
         if (off + b.byteLength <= hdrCap) {
             buf.set(b, off);
             off += b.byteLength;
@@ -345,6 +345,7 @@ async function fetchWithHeaderFallback(url, hdrPairs, ac) {
                     signal: ac.signal
                 });
                 if (rRes.status === 0) {
+                    if (rRes.body) { try { rRes.body.cancel(); } catch (_) {} }
                     if (rOpt.range) optRangeFailed = true;
                     continue;
                 }
@@ -410,6 +411,7 @@ async function fetchWithHeaderFallback(url, hdrPairs, ac) {
                 signal: ac.signal
             });
             if (res.status === 0) {
+                if (res.body) { try { res.body.cancel(); } catch (_) {} }
                 if (opt.icy) icyFailed = true;
                 continue;
             }
@@ -939,6 +941,7 @@ impl Agent {
             cfg: self.cfg.clone(),
             url: url.to_string(),
             headers: Vec::new(),
+            external_abort: None,
             _state: std::marker::PhantomData,
         }
     }
@@ -952,11 +955,19 @@ pub struct RequestBuilder<S> {
     url: String,
     /// Outgoing `(name, value)` request headers.
     headers: Vec<(String, String)>,
+    /// Optional external cooperative abort flag checked during connect and blocking reads.
+    external_abort: Option<Arc<AtomicBool>>,
     /// Zero-sized typestate marker `S`.
     _state: std::marker::PhantomData<S>,
 }
 
 impl<S> RequestBuilder<S> {
+    /// Attaches an external cooperative abort `flag` checked during connection and blocking reads.
+    pub fn with_abort_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.external_abort = Some(flag);
+        self
+    }
+
     /// Appends a request header `(key, value)` to the outgoing fetch request.
     pub fn header<K: AsRef<str>, V: AsRef<str>>(mut self, key: K, value: V) -> Self {
         self.headers
@@ -972,6 +983,14 @@ impl<S> RequestBuilder<S> {
     pub fn call(self) -> Result<http::Response<Body>, Error> {
         reap_exited_streams();
         ensure_network_worker_ready()?;
+
+        if self
+            .external_abort
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
+            return Err(Error::Transport("wasm fetch aborted".to_string()));
+        }
 
         let id = NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed);
         crate::map_log!(4, "[NET-WASM] HTTP GET id={} url={}", id, self.url);
@@ -1004,6 +1023,7 @@ impl<S> RequestBuilder<S> {
         for (k, v) in fields {
             if Reflect::set(&cmd, &JsValue::from_str(k), &v).is_err() {
                 crate::map_log!(1, "[NET-WASM] Failed to build open command id={}", id);
+                lock_unpoisoned(streams_registry()).remove(&id);
                 abort_shared_stream(&shared);
                 return Err(Error::Transport("failed to build open command".to_string()));
             }
@@ -1016,6 +1036,7 @@ impl<S> RequestBuilder<S> {
                 id,
                 self.url
             );
+            lock_unpoisoned(streams_registry()).remove(&id);
             abort_shared_stream(&shared);
             return Err(Error::Transport(
                 "failed to post open command to wasm network worker".to_string(),
@@ -1029,6 +1050,17 @@ impl<S> RequestBuilder<S> {
         let start = MonotonicInstant::now();
 
         loop {
+            if self
+                .external_abort
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+            {
+                crate::map_log!(3, "[NET-WASM] External abort during connect id={}", id);
+                abort_shared_stream(&shared);
+                drop(shared);
+                reap_exited_streams();
+                return Err(Error::Transport("wasm fetch aborted".to_string()));
+            }
             let wake_seq = shared.ctrl[CTRL_WAKE_RUST].load(Ordering::Acquire);
             let state = shared.ctrl[CTRL_STATE].load(Ordering::Acquire);
             if state != STATE_CONNECTING {
@@ -1044,6 +1076,8 @@ impl<S> RequestBuilder<S> {
                     open_timeout
                 );
                 abort_shared_stream(&shared);
+                drop(shared);
+                reap_exited_streams();
                 return Err(Error::Transport(format!(
                     "connect/response timeout after {:?}",
                     open_timeout
@@ -1138,6 +1172,7 @@ impl<S> RequestBuilder<S> {
             body: Body {
                 shared: Some(shared),
                 per_read_timeout: self.cfg.per_read_timeout,
+                external_abort: self.external_abort,
             },
         })
     }
@@ -1149,6 +1184,8 @@ pub struct Body {
     shared: Option<Arc<WasmStreamShared>>,
     /// Per-read timeout propagated to [`WasmHttpReader`].
     per_read_timeout: Duration,
+    /// Optional external cooperative abort flag propagated to [`WasmHttpReader`].
+    external_abort: Option<Arc<AtomicBool>>,
 }
 
 impl Body {
@@ -1159,8 +1196,9 @@ impl Body {
             .take()
             .expect("Body::into_reader called on consumed body");
         WasmHttpReader {
-            shared,
+            shared: Some(shared),
             per_read_timeout: self.per_read_timeout,
+            external_abort: self.external_abort.take(),
         }
     }
 }
@@ -1178,9 +1216,11 @@ impl Drop for Body {
 /// Progressive blocking `Read + Send` adapter draining a JS `ReadableStream` SPSC ring.
 pub struct WasmHttpReader {
     /// Shared SPSC ring and atomic control block for the active fetch stream.
-    shared: Arc<WasmStreamShared>,
+    shared: Option<Arc<WasmStreamShared>>,
     /// Maximum wait duration before a stalled read returns `ErrorKind::TimedOut`.
     per_read_timeout: Duration,
+    /// Optional external cooperative abort flag stopping blocked reads promptly.
+    external_abort: Option<Arc<AtomicBool>>,
 }
 
 impl Read for WasmHttpReader {
@@ -1188,12 +1228,33 @@ impl Read for WasmHttpReader {
         if out.is_empty() {
             return Ok(0);
         }
+        let shared = self
+            .shared
+            .as_ref()
+            .expect("WasmHttpReader read called after drop");
         let start = MonotonicInstant::now();
 
         loop {
-            let wake_seq = self.shared.ctrl[CTRL_WAKE_RUST].load(Ordering::Acquire);
-            let w = self.shared.ctrl[CTRL_WRITE_POS].load(Ordering::Acquire) as u32;
-            let r = self.shared.ctrl[CTRL_READ_POS].load(Ordering::Relaxed) as u32;
+            if self
+                .external_abort
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+            {
+                crate::map_log!(
+                    3,
+                    "[NET-WASM] Stream read aborted by external flag id={}",
+                    shared.id
+                );
+                abort_shared_stream(shared);
+                return Err(IoError::new(
+                    ErrorKind::ConnectionAborted,
+                    "wasm fetch stream aborted",
+                ));
+            }
+
+            let wake_seq = shared.ctrl[CTRL_WAKE_RUST].load(Ordering::Acquire);
+            let w = shared.ctrl[CTRL_WRITE_POS].load(Ordering::Acquire) as u32;
+            let r = shared.ctrl[CTRL_READ_POS].load(Ordering::Relaxed) as u32;
             let avail = ring_available(w, r);
 
             if avail > 0 {
@@ -1203,7 +1264,7 @@ impl Read for WasmHttpReader {
                 // Safety: `w` loaded with Acquire guarantees JS finished writing `[r_ring..]` slots
                 // and will not overwrite unread slots until we Release-store `CTRL_READ_POS`.
                 unsafe {
-                    let ring_ptr = self.shared.ring.as_ptr() as *const u8;
+                    let ring_ptr = shared.ring.as_ptr() as *const u8;
                     std::ptr::copy_nonoverlapping(ring_ptr.add(r_ring), out.as_mut_ptr(), first);
                     if to_copy > first {
                         std::ptr::copy_nonoverlapping(
@@ -1214,33 +1275,33 @@ impl Read for WasmHttpReader {
                     }
                 }
                 let next_r = advance_ring_pos(r, to_copy);
-                self.shared.ctrl[CTRL_READ_POS].store(next_r as i32, Ordering::Release);
+                shared.ctrl[CTRL_READ_POS].store(next_r as i32, Ordering::Release);
 
                 if avail >= RING_CAP / 2 {
-                    self.shared.ctrl[CTRL_WAKE_JS].fetch_add(1, Ordering::AcqRel);
-                    wasm_atomics_notify(self.shared.ctrl_ptr(), CTRL_WAKE_JS);
-                    if self.shared.ctrl[CTRL_JS_WAIT_FALLBACK].swap(0, Ordering::AcqRel) != 0 {
-                        post_stream_cmd("drain", self.shared.id);
+                    shared.ctrl[CTRL_WAKE_JS].fetch_add(1, Ordering::AcqRel);
+                    wasm_atomics_notify(shared.ctrl_ptr(), CTRL_WAKE_JS);
+                    if shared.ctrl[CTRL_JS_WAIT_FALLBACK].swap(0, Ordering::AcqRel) != 0 {
+                        post_stream_cmd("drain", shared.id);
                     }
                 }
                 return Ok(to_copy);
             }
 
-            let state = self.shared.ctrl[CTRL_STATE].load(Ordering::Acquire);
+            let state = shared.ctrl[CTRL_STATE].load(Ordering::Acquire);
             if state == STATE_EOF {
-                let w2 = self.shared.ctrl[CTRL_WRITE_POS].load(Ordering::Acquire) as u32;
+                let w2 = shared.ctrl[CTRL_WRITE_POS].load(Ordering::Acquire) as u32;
                 if w2 != r {
                     continue;
                 }
-                crate::map_log!(4, "[NET-WASM] Stream EOF id={}", self.shared.id);
+                crate::map_log!(4, "[NET-WASM] Stream EOF id={}", shared.id);
                 return Ok(0);
             }
             if state == STATE_ERROR {
-                crate::map_log!(1, "[NET-WASM] Stream read error id={}", self.shared.id);
+                crate::map_log!(1, "[NET-WASM] Stream read error id={}", shared.id);
                 return Err(IoError::other("wasm fetch stream error"));
             }
-            if self.shared.ctrl[CTRL_ABORTED].load(Ordering::Acquire) != 0 {
-                crate::map_log!(3, "[NET-WASM] Stream read aborted id={}", self.shared.id);
+            if shared.ctrl[CTRL_ABORTED].load(Ordering::Acquire) != 0 {
+                crate::map_log!(3, "[NET-WASM] Stream read aborted id={}", shared.id);
                 return Err(IoError::new(
                     ErrorKind::ConnectionAborted,
                     "wasm fetch stream aborted",
@@ -1252,7 +1313,7 @@ impl Read for WasmHttpReader {
                 crate::map_log!(
                     2,
                     "[NET-WASM] Stream read timeout id={} after {:?}",
-                    self.shared.id,
+                    shared.id,
                     self.per_read_timeout
                 );
                 return Err(IoError::new(
@@ -1261,13 +1322,17 @@ impl Read for WasmHttpReader {
                 ));
             }
             let rem_ms = (self.per_read_timeout - elapsed).as_millis().clamp(1, 100) as u64;
-            wasm_atomics_wait(self.shared.ctrl_ptr(), CTRL_WAKE_RUST, wake_seq, rem_ms);
+            wasm_atomics_wait(shared.ctrl_ptr(), CTRL_WAKE_RUST, wake_seq, rem_ms);
         }
     }
 }
 
 impl Drop for WasmHttpReader {
     fn drop(&mut self) {
-        abort_shared_stream(&self.shared);
+        if let Some(shared) = self.shared.take() {
+            abort_shared_stream(&shared);
+            drop(shared);
+            reap_exited_streams();
+        }
     }
 }

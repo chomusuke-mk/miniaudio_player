@@ -1046,8 +1046,15 @@ impl StreamClassifier {
         let mut total_frame_bytes = 0u64;
         let mut total_samples = 0u64;
 
-        for pct in [5u64, 14, 23, 32, 41, 50, 59, 68, 77, 86, 94] {
-            let probe_off = first_frame_pos + (audio_len * pct) / 100;
+        let quarter = audio_len / 4;
+        let probe_offsets = [
+            first_frame_pos + (audio_len * 10) / 100,
+            first_frame_pos + quarter,
+            first_frame_pos + quarter * 2,
+            first_frame_pos + quarter * 3,
+            first_frame_pos + (audio_len * 90) / 100,
+        ];
+        for probe_off in probe_offsets {
             if probe_off + 1024 >= total_bytes {
                 continue;
             }

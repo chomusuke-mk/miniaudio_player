@@ -337,6 +337,7 @@ words:
   - interbloqueos
   - Intercepción
   - interprocedural
+  - interruptible
   - iovecin
   - ipart
   - IPHONEOS
@@ -471,7 +472,9 @@ words:
   - Newtypes
   - nlacing
   - nocapture
+  - nonrange
   - nontrapping
+  - norange
   - normalisation
   - normalise
   - Normalise
